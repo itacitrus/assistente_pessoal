@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"strings"
+	"sync"
+	"time"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -12,13 +14,20 @@ import (
 )
 
 type Handler struct {
-	client       *whatsmeow.Client
-	db           *DB
-	orchestrator *Orchestrator
+	client         *whatsmeow.Client
+	db             *DB
+	orchestrator   *Orchestrator
+	unknownReplied map[string]time.Time // rate limit: one reply per unknown number per hour
+	unknownMu      sync.Mutex
 }
 
 func NewHandler(client *whatsmeow.Client, db *DB, orchestrator *Orchestrator) *Handler {
-	return &Handler{client: client, db: db, orchestrator: orchestrator}
+	return &Handler{
+		client:         client,
+		db:             db,
+		orchestrator:   orchestrator,
+		unknownReplied: make(map[string]time.Time),
+	}
 }
 
 func (h *Handler) HandleEvent(evt interface{}) {
@@ -31,8 +40,24 @@ func (h *Handler) HandleEvent(evt interface{}) {
 func (h *Handler) handleMessage(msg *events.Message) {
 	sender := msg.Info.Sender.User
 
+	// Ignore messages from self (the bot's own number)
+	if msg.Info.IsFromMe {
+		return
+	}
+
 	user, err := h.db.GetUserByPhone(sender)
 	if err == ErrUserNotFound {
+		// Rate limit: only reply once per hour per unknown number
+		h.unknownMu.Lock()
+		lastReply, exists := h.unknownReplied[sender]
+		if exists && time.Since(lastReply) < time.Hour {
+			h.unknownMu.Unlock()
+			return
+		}
+		h.unknownReplied[sender] = time.Now()
+		h.unknownMu.Unlock()
+
+		log.Printf("Unknown number: %s", sender)
 		h.sendText(msg.Info.Sender, "Nao te conheço ainda. Peca ao administrador para te cadastrar.")
 		return
 	}
