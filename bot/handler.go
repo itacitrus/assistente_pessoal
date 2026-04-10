@@ -34,6 +34,8 @@ func (h *Handler) HandleEvent(evt interface{}) {
 	switch v := evt.(type) {
 	case *events.Message:
 		h.handleMessage(v)
+	default:
+		log.Printf("DEBUG_EVENT: type=%T", evt)
 	}
 }
 
