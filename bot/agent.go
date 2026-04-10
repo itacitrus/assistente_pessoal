@@ -263,6 +263,7 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"new_title": {"type": "string", "description": "Novo titulo (opcional)"},
 					"new_date": {"type": "string", "description": "Nova data YYYY-MM-DD (opcional)"},
 					"new_time": {"type": "string", "description": "Novo horario HH:MM (opcional)"},
+					"new_duration_minutes": {"type": "integer", "description": "Nova duracao em minutos (opcional)"},
 					"new_location": {"type": "string", "description": "Novo local (opcional)"}
 				},
 				"required": ["search_query"]

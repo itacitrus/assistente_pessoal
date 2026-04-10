@@ -101,11 +101,12 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 }
 
 type editarEventoParams struct {
-	SearchQuery string `json:"search_query"`
-	NewTitle    string `json:"new_title"`
-	NewDate     string `json:"new_date"`
-	NewTime     string `json:"new_time"`
-	NewLocation string `json:"new_location"`
+	SearchQuery     string `json:"search_query"`
+	NewTitle        string `json:"new_title"`
+	NewDate         string `json:"new_date"`
+	NewTime         string `json:"new_time"`
+	NewDurationMins int    `json:"new_duration_minutes"`
+	NewLocation     string `json:"new_location"`
 }
 
 func handleEditarEvento(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
@@ -128,14 +129,26 @@ func handleEditarEvento(ctx context.Context, agent *Agent, user *User, params js
 	if p.NewTitle != "" {
 		updated.Title = p.NewTitle
 	}
-	if p.NewDate != "" && p.NewTime != "" {
-		loc := time.Now().Location()
-		newStart, parseErr := time.ParseInLocation("2006-01-02 15:04", p.NewDate+" "+p.NewTime, loc)
+	loc := time.Now().Location()
+	if p.NewDate != "" || p.NewTime != "" {
+		// Keep existing date/time if only one is provided
+		dateStr := ev.Start.Format("2006-01-02")
+		timeStr := ev.Start.Format("15:04")
+		if p.NewDate != "" {
+			dateStr = p.NewDate
+		}
+		if p.NewTime != "" {
+			timeStr = p.NewTime
+		}
+		newStart, parseErr := time.ParseInLocation("2006-01-02 15:04", dateStr+" "+timeStr, loc)
 		if parseErr == nil {
 			duration := ev.End.Sub(ev.Start)
 			updated.Start = newStart
 			updated.End = newStart.Add(duration)
 		}
+	}
+	if p.NewDurationMins > 0 {
+		updated.End = updated.Start.Add(time.Duration(p.NewDurationMins) * time.Minute)
 	}
 	if p.NewLocation != "" {
 		updated.Location = p.NewLocation
