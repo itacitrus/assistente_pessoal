@@ -72,13 +72,13 @@ func runBot() {
 	clientLog := waLog.Stdout("Client", "WARN", true)
 	waClient := whatsmeow.NewClient(deviceStore, clientLog)
 
-	claude := NewClaudeClient(cfg.AnthropicAPIKey)
 	cal := NewCalendarClient(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRedirectURI)
 	transcription := NewTranscriptionClient(cfg.TranscriptionURL)
-	orchestrator := NewOrchestrator(claude, cal, transcription, db, cfg, nil)
+	agent := NewAgent(cfg.AnthropicAPIKey, cal, db, cfg, nil)
+	orchestrator := NewOrchestrator(agent, transcription, db)
 
 	handler := NewHandler(waClient, db, orchestrator)
-	orchestrator.sendMsg = handler.SendTextToPhone
+	agent.sendMsg = handler.SendTextToPhone
 	waClient.AddEventHandler(handler.HandleEvent)
 
 	if waClient.Store.ID == nil {

@@ -175,6 +175,31 @@ type ConversationMessage struct {
 	CreatedAt time.Time
 }
 
+func (db *DB) SearchConversationHistory(userID int64, query string, limit int) ([]ConversationMessage, error) {
+	rows, err := db.conn.Query(
+		`SELECT role, content, created_at FROM conversation_history
+		 WHERE user_id = ? AND content LIKE ? ORDER BY created_at DESC LIMIT ?`,
+		userID, "%"+query+"%", limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []ConversationMessage
+	for rows.Next() {
+		var m ConversationMessage
+		if err := rows.Scan(&m.Role, &m.Content, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+	}
+	// Reverse to chronological order
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+	return msgs, rows.Err()
+}
+
 func (db *DB) CreateUser(u *User) error {
 	result, err := db.conn.Exec(
 		`INSERT INTO users (phone_number, name, google_calendar_id, google_credentials,
