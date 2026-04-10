@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     env_file: .env
     volumes:
-      - bot-data:/app/data
+      - ./data:/app/data
     depends_on:
       transcription:
         condition: service_healthy
@@ -36,5 +36,3 @@ services:
         max-size: "10m"
         max-file: "5"
 
-volumes:
-  bot-data:

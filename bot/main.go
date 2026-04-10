@@ -59,7 +59,7 @@ func runBot() {
 	defer db.Close()
 
 	dbLog := waLog.Stdout("Database", "WARN", true)
-	container, err := sqlstore.New(context.Background(), "sqlite", "file:data/whatsmeow.db?_pragma=foreign_keys(1)", dbLog)
+	container, err := sqlstore.New(context.Background(), "sqlite", "file:data/whatsmeow.db?_pragma=foreign_keys(1)&_pragma=busy_timeout(10000)&_pragma=journal_mode(wal)", dbLog)
 	if err != nil {
 		log.Fatalf("Failed to init whatsmeow store: %v", err)
 	}
