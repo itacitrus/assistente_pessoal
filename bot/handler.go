@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -137,6 +138,16 @@ func (h *Handler) handleMessage(msg *events.Message) {
 		text = textMsg
 	} else if extMsg := msg.Message.GetExtendedTextMessage(); extMsg != nil {
 		text = extMsg.GetText()
+	} else if contactMsg := msg.Message.GetContactMessage(); contactMsg != nil {
+		// Extract contact info from vCard
+		text = h.parseContactMessage(contactMsg)
+	} else if contactsMsg := msg.Message.GetContactsArrayMessage(); contactsMsg != nil {
+		// Multiple contacts shared
+		var parts []string
+		for _, c := range contactsMsg.GetContacts() {
+			parts = append(parts, h.parseContactMessage(c))
+		}
+		text = strings.Join(parts, "\n")
 	}
 
 	if text == "" {
@@ -188,4 +199,34 @@ func (h *Handler) SendTextToPhone(phone, text string) error {
 		Conversation: &text,
 	})
 	return err
+}
+
+// parseContactMessage extracts name and phone from a shared WhatsApp contact vCard.
+func (h *Handler) parseContactMessage(contact *waE2E.ContactMessage) string {
+	name := contact.GetDisplayName()
+	vcard := contact.GetVcard()
+
+	// Extract phone number from vCard TEL field
+	phone := ""
+	for _, line := range strings.Split(vcard, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(strings.ToUpper(line), "TEL") {
+			// Format: TEL;type=CELL:+5561981012927 or TEL:+5561981012927
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				phone = strings.TrimSpace(parts[1])
+				phone = strings.ReplaceAll(phone, "+", "")
+				phone = strings.ReplaceAll(phone, " ", "")
+				phone = strings.ReplaceAll(phone, "-", "")
+				break
+			}
+		}
+	}
+
+	if phone != "" && name != "" {
+		return fmt.Sprintf("[Contato compartilhado] Nome: %s, Telefone: %s", name, phone)
+	} else if name != "" {
+		return fmt.Sprintf("[Contato compartilhado] Nome: %s", name)
+	}
+	return "[Contato compartilhado — nao consegui extrair os dados]"
 }

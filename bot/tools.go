@@ -17,6 +17,7 @@ var toolHandlers = map[string]ToolHandler{
 	"buscar_historico":           handleBuscarHistorico,
 	"criar_evento_outro_usuario": handleCriarEventoOutroUsuario,
 	"gerar_link_meet":            handleGerarLinkMeet,
+	"convidar_externo":           handleConvidarExterno,
 }
 
 type buscarAgendaParams struct {
@@ -346,4 +347,58 @@ func handleGerarLinkMeet(ctx context.Context, agent *Agent, user *User, params j
 
 	agent.audit.Log(user.ID, "gerar_meet", "", ev.Title)
 	return fmt.Sprintf("Link do Meet para *%s*: %s", ev.Title, meetLink), nil
+}
+
+type convidarExternoParams struct {
+	Phone       string `json:"phone"`
+	Name        string `json:"name"`
+	EventTitle  string `json:"event_title"`
+	EventDate   string `json:"event_date"`
+	EventTime   string `json:"event_time"`
+	MeetLink    string `json:"meet_link"`
+	Location    string `json:"location"`
+}
+
+func handleConvidarExterno(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
+	var p convidarExternoParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "", fmt.Errorf("parse params: %w", err)
+	}
+
+	// Normalize phone number (add 55 if needed)
+	phone := strings.ReplaceAll(p.Phone, " ", "")
+	phone = strings.ReplaceAll(phone, "-", "")
+	phone = strings.ReplaceAll(phone, "(", "")
+	phone = strings.ReplaceAll(phone, ")", "")
+	phone = strings.ReplaceAll(phone, "+", "")
+	if !strings.HasPrefix(phone, "55") {
+		phone = "55" + phone
+	}
+
+	// Build invite message
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Ola, %s! Sou o assistente da Itacitrus.\n\n", p.Name))
+	sb.WriteString(fmt.Sprintf("*%s* te convidou para:\n", user.Name))
+	sb.WriteString(fmt.Sprintf("*%s*\n", p.EventTitle))
+	sb.WriteString(fmt.Sprintf("Data: %s as %s\n", p.EventDate, p.EventTime))
+	if p.Location != "" {
+		sb.WriteString(fmt.Sprintf("Local: %s\n", p.Location))
+	}
+	if p.MeetLink != "" {
+		sb.WriteString(fmt.Sprintf("\nLink da reuniao: %s\n", p.MeetLink))
+	}
+	sb.WriteString("\nQualquer duvida, fale diretamente com " + user.Name + ".")
+
+	if agent.sendMsg == nil {
+		return "Erro: nao consigo enviar mensagens no momento.", nil
+	}
+
+	err := agent.sendMsg(phone, sb.String())
+	if err != nil {
+		return "", fmt.Errorf("send invite: %w", err)
+	}
+
+	agent.audit.Log(user.ID, "convidar_externo", p.Name, p.EventTitle)
+	log.Printf("[%s] Sent invite to %s (%s) for %s", user.Name, p.Name, phone, p.EventTitle)
+	return fmt.Sprintf("Convite enviado para %s (%s) via WhatsApp.", p.Name, p.Phone), nil
 }

@@ -321,6 +321,23 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 			}`),
 		},
 		{
+			Name:        "convidar_externo",
+			Description: "Envia convite via WhatsApp para uma pessoa externa (nao cadastrada). Usa quando o usuario quer convidar alguem por numero de telefone.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"phone": {"type": "string", "description": "Numero de telefone do convidado (com DDD)"},
+					"name": {"type": "string", "description": "Nome do convidado"},
+					"event_title": {"type": "string", "description": "Titulo do evento"},
+					"event_date": {"type": "string", "description": "Data do evento (DD/MM/YYYY ou descritivo)"},
+					"event_time": {"type": "string", "description": "Horario do evento (HH:MM)"},
+					"meet_link": {"type": "string", "description": "Link do Google Meet (opcional, se existir)"},
+					"location": {"type": "string", "description": "Local do evento (opcional)"}
+				},
+				"required": ["phone", "name", "event_title", "event_date", "event_time"]
+			}`),
+		},
+		{
 			Name:        "gerar_link_meet",
 			Description: "Gera um link do Google Meet para um evento existente.",
 			InputSchema: json.RawMessage(`{
