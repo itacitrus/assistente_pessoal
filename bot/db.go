@@ -119,9 +119,60 @@ func (db *DB) migrate() error {
 		status       TEXT NOT NULL DEFAULT 'pending',
 		created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
+	CREATE TABLE IF NOT EXISTS conversation_history (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id    INTEGER NOT NULL REFERENCES users(id),
+		role       TEXT NOT NULL,
+		content    TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
 	`
 	_, err := db.conn.Exec(schema)
 	return err
+}
+
+func (db *DB) AddConversationMessage(userID int64, role, content string) error {
+	_, err := db.conn.Exec(
+		`INSERT INTO conversation_history (user_id, role, content) VALUES (?, ?, ?)`,
+		userID, role, content)
+	if err != nil {
+		return err
+	}
+	// Keep only last 20 messages per user
+	db.conn.Exec(`DELETE FROM conversation_history WHERE user_id = ? AND id NOT IN (
+		SELECT id FROM conversation_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 20
+	)`, userID, userID)
+	return nil
+}
+
+func (db *DB) GetConversationHistory(userID int64, limit int) ([]ConversationMessage, error) {
+	rows, err := db.conn.Query(
+		`SELECT role, content, created_at FROM conversation_history
+		 WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []ConversationMessage
+	for rows.Next() {
+		var m ConversationMessage
+		if err := rows.Scan(&m.Role, &m.Content, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+	}
+	// Reverse to chronological order
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+	return msgs, rows.Err()
+}
+
+type ConversationMessage struct {
+	Role      string
+	Content   string
+	CreatedAt time.Time
 }
 
 func (db *DB) CreateUser(u *User) error {

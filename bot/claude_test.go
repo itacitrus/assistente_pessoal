@@ -70,14 +70,14 @@ func TestParseIntentResponse_Confirmar(t *testing.T) {
 }
 
 func TestBuildIntentPrompt(t *testing.T) {
-	prompt := BuildIntentPrompt("Waldyr", "marcar reuniao com Joao amanha as 15h")
+	prompt := BuildIntentPrompt("Waldyr", "")
 	if prompt == "" {
 		t.Fatal("expected non-empty prompt")
 	}
 	if !strings.Contains(prompt, "Waldyr") {
 		t.Fatal("prompt should contain user name")
 	}
-	if !strings.Contains(prompt, "marcar reuniao") {
-		t.Fatal("prompt should contain the message")
+	if !strings.Contains(prompt, "criar_evento") {
+		t.Fatal("prompt should contain intent instructions")
 	}
 }

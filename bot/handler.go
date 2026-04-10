@@ -167,6 +167,8 @@ func (h *Handler) handleMessage(msg *events.Message) {
 	}
 
 	if response != "" {
+		// Save bot response to conversation history
+		h.db.AddConversationMessage(user.ID, "assistant", response)
 		h.sendText(msg.Info.Sender, response)
 	}
 }

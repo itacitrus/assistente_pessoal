@@ -36,7 +36,13 @@ func NewOrchestrator(claude *ClaudeClient, cal *CalendarClient, transcription *T
 }
 
 func (o *Orchestrator) Process(ctx context.Context, user *User, message string) (string, error) {
-	intent, err := o.claude.ExtractIntent(ctx, user.Name, message)
+	// Get conversation history for context
+	history, _ := o.db.GetConversationHistory(user.ID, 10)
+
+	// Save user message to history
+	o.db.AddConversationMessage(user.ID, "user", message)
+
+	intent, err := o.claude.ExtractIntent(ctx, user.Name, message, history)
 	if err != nil {
 		return "", fmt.Errorf("extract intent: %w", err)
 	}
