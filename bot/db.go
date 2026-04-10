@@ -93,6 +93,15 @@ func (db *DB) migrate() error {
 		sent_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(user_id, event_id)
 	);
+
+	CREATE TABLE IF NOT EXISTS action_log (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id     INTEGER NOT NULL REFERENCES users(id),
+		action      TEXT NOT NULL,
+		target_user TEXT,
+		details     TEXT NOT NULL,
+		created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
 	`
 	_, err := db.conn.Exec(schema)
 	return err
