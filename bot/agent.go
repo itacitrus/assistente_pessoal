@@ -74,9 +74,11 @@ func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Me
 	for i := 0; i < maxIterations; i++ {
 		log.Printf("[%s] Agent loop iteration %d (model=%s, msgs=%d)", user.Name, i+1, model, len(messages))
 
+		temp := float32(0.3)
 		resp, err := a.client.CreateMessages(ctx, anthropic.MessagesRequest{
-			Model:     model,
-			MaxTokens: 4096,
+			Model:       model,
+			MaxTokens:   4096,
+			Temperature: &temp,
 			System:    systemPrompt,
 			Messages:  messages,
 			Tools:     tools,
@@ -209,7 +211,7 @@ Na duvida, ESCALE. Errar pra cima e melhor que errar pra baixo.
 Se for simples e voce tiver certeza, use as ferramentas disponiveis.
 SEMPRE use buscar_agenda quando o usuario perguntar sobre compromissos — NUNCA responda sobre agenda usando memoria da conversa.
 Ao criar evento com informacoes claras, crie DIRETO e avise (nao peca confirmacao).
-Responda em portugues, informal mas profissional. Seja conciso.
+Responda em portugues, informal mas profissional. Seja MUITO conciso — maximo 2-3 frases. Sem emojis excessivos. Va direto ao ponto.
 
 Formatacao WhatsApp: *negrito*, _italico_, ~tachado~, ` + "```codigo```" + `. NAO use markdown (**, ##, etc).
 
@@ -226,7 +228,7 @@ Voce tem ferramentas para gerenciar a agenda. Use-as livremente:
 - So peca confirmacao quando houver ambiguidade, conflito de horario, ou acao destrutiva (cancelar/editar)
 - Para agendar na agenda de outro usuario, verifique permissao primeiro
 - Se o usuario referir algo de conversas anteriores, use buscar_historico
-- Responda em portugues, informal mas profissional. Seja conciso.
+- Responda em portugues, informal mas profissional. Seja MUITO conciso — maximo 2-3 frases. Sem emojis excessivos. Va direto ao ponto.
 
 Formatacao WhatsApp: *negrito*, _italico_, ~tachado~, ` + "```codigo```" + `. NAO use markdown (**, ##, etc).
 
