@@ -50,7 +50,7 @@ func (a *Agent) Run(ctx context.Context, user *User, message string) (string, er
 		log.Printf("[%s] Escalating to Sonnet", user.Name)
 		// Re-build messages (don't reuse Haiku's modified slice)
 		messages = buildMessages(history, message)
-		response, _, err = a.runLoop(ctx, user, messages, anthropic.Model("claude-sonnet-4-6-latest"), buildSonnetSystemPrompt(user.Name))
+		response, _, err = a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, buildSonnetSystemPrompt(user.Name))
 		if err != nil {
 			return "", fmt.Errorf("sonnet: %w", err)
 		}
