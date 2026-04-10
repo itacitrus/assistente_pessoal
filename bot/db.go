@@ -102,6 +102,23 @@ func (db *DB) migrate() error {
 		details     TEXT NOT NULL,
 		created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
+
+	CREATE TABLE IF NOT EXISTS calendar_permissions (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		grantor_id INTEGER NOT NULL REFERENCES users(id),
+		grantee_id INTEGER NOT NULL REFERENCES users(id),
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(grantor_id, grantee_id)
+	);
+
+	CREATE TABLE IF NOT EXISTS pending_permission_requests (
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		requester_id INTEGER NOT NULL REFERENCES users(id),
+		target_id    INTEGER NOT NULL REFERENCES users(id),
+		event_data   TEXT NOT NULL DEFAULT '',
+		status       TEXT NOT NULL DEFAULT 'pending',
+		created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
 	`
 	_, err := db.conn.Exec(schema)
 	return err
@@ -246,6 +263,123 @@ func (db *DB) MarkReminderSent(userID int64, eventID string) error {
 		`INSERT OR IGNORE INTO sent_reminders (user_id, event_id) VALUES (?, ?)`,
 		userID, eventID)
 	return err
+}
+
+func (db *DB) GetUserByName(name string) (*User, error) {
+	u := &User{}
+	err := db.conn.QueryRow(
+		`SELECT id, phone_number, name, google_calendar_id, google_credentials,
+		 daily_summary_time, weekly_summary_day, weekly_summary_time,
+		 reminder_before, auto_confirm_timeout, is_active, created_at
+		 FROM users WHERE name = ? AND is_active = 1 LIMIT 1`, name,
+	).Scan(&u.ID, &u.PhoneNumber, &u.Name, &u.GoogleCalendarID, &u.GoogleCredentials,
+		&u.DailySummaryTime, &u.WeeklySummaryDay, &u.WeeklySummaryTime,
+		&u.ReminderBefore, &u.AutoConfirmTimeout, &u.IsActive, &u.CreatedAt)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	return u, err
+}
+
+func (db *DB) GetUserByID(id int64) (*User, error) {
+	u := &User{}
+	err := db.conn.QueryRow(
+		`SELECT id, phone_number, name, google_calendar_id, google_credentials,
+		 daily_summary_time, weekly_summary_day, weekly_summary_time,
+		 reminder_before, auto_confirm_timeout, is_active, created_at
+		 FROM users WHERE id = ?`, id,
+	).Scan(&u.ID, &u.PhoneNumber, &u.Name, &u.GoogleCalendarID, &u.GoogleCredentials,
+		&u.DailySummaryTime, &u.WeeklySummaryDay, &u.WeeklySummaryTime,
+		&u.ReminderBefore, &u.AutoConfirmTimeout, &u.IsActive, &u.CreatedAt)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	return u, err
+}
+
+// PermissionRequest represents a pending cross-user calendar access request.
+type PermissionRequest struct {
+	ID            int64
+	RequesterID   int64
+	TargetID      int64
+	EventData     string
+	Status        string
+	CreatedAt     time.Time
+	RequesterName  string
+	RequesterPhone string
+	TargetName    string
+	TargetPhone   string
+}
+
+func (db *DB) CreatePermissionRequest(req *PermissionRequest) error {
+	// Cancel any previous pending request from same requester to same target
+	db.conn.Exec(
+		`UPDATE pending_permission_requests SET status = 'cancelled'
+		 WHERE requester_id = ? AND target_id = ? AND status = 'pending'`,
+		req.RequesterID, req.TargetID)
+
+	result, err := db.conn.Exec(
+		`INSERT INTO pending_permission_requests (requester_id, target_id, event_data, status)
+		 VALUES (?, ?, ?, 'pending')`,
+		req.RequesterID, req.TargetID, req.EventData)
+	if err != nil {
+		return err
+	}
+	req.ID, _ = result.LastInsertId()
+	return nil
+}
+
+func (db *DB) GetPendingPermissionRequest(targetID int64) (*PermissionRequest, error) {
+	req := &PermissionRequest{}
+	err := db.conn.QueryRow(
+		`SELECT ppr.id, ppr.requester_id, ppr.target_id, ppr.event_data, ppr.status, ppr.created_at,
+		 ru.name, ru.phone_number, tu.name, tu.phone_number
+		 FROM pending_permission_requests ppr
+		 JOIN users ru ON ru.id = ppr.requester_id
+		 JOIN users tu ON tu.id = ppr.target_id
+		 WHERE ppr.target_id = ? AND ppr.status = 'pending'
+		 ORDER BY ppr.created_at DESC LIMIT 1`, targetID,
+	).Scan(&req.ID, &req.RequesterID, &req.TargetID, &req.EventData, &req.Status, &req.CreatedAt,
+		&req.RequesterName, &req.RequesterPhone, &req.TargetName, &req.TargetPhone)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNoPendingConfirmation
+	}
+	return req, err
+}
+
+func (db *DB) ResolvePermissionRequest(id int64, status string) error {
+	_, err := db.conn.Exec(
+		`UPDATE pending_permission_requests SET status = ? WHERE id = ?`, status, id)
+	return err
+}
+
+func (db *DB) GetExpiredPermissionRequests(timeout time.Duration) ([]PermissionRequest, error) {
+	cutoff := time.Now().UTC().Add(-timeout)
+	rows, err := db.conn.Query(
+		`SELECT ppr.id, ppr.requester_id, ppr.target_id, ppr.event_data, ppr.status, ppr.created_at,
+		 ru.name, ru.phone_number, tu.name, tu.phone_number
+		 FROM pending_permission_requests ppr
+		 JOIN users ru ON ru.id = ppr.requester_id
+		 JOIN users tu ON tu.id = ppr.target_id
+		 WHERE ppr.status = 'pending' AND ppr.created_at <= ?`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []PermissionRequest
+	for rows.Next() {
+		var req PermissionRequest
+		if err := rows.Scan(&req.ID, &req.RequesterID, &req.TargetID, &req.EventData, &req.Status, &req.CreatedAt,
+			&req.RequesterName, &req.RequesterPhone, &req.TargetName, &req.TargetPhone); err != nil {
+			return nil, err
+		}
+		results = append(results, req)
+	}
+	return results, rows.Err()
 }
 
 func defaultStr(val, fallback string) string {

@@ -21,8 +21,11 @@ func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: bot <command>")
 		fmt.Println("Commands:")
-		fmt.Println("  run        Start the WhatsApp bot")
-		fmt.Println("  add-user   Add a new user")
+		fmt.Println("  run            Start the WhatsApp bot")
+		fmt.Println("  add-user       Add a new user")
+		fmt.Println("  grant-access   Grant a user permission to schedule on another's calendar")
+		fmt.Println("  revoke-access  Revoke a user's permission to schedule on another's calendar")
+		fmt.Println("  list-access    List users a given user can schedule for")
 		os.Exit(1)
 	}
 
@@ -31,6 +34,12 @@ func main() {
 		runBot()
 	case "add-user":
 		addUser()
+	case "grant-access":
+		grantAccess()
+	case "revoke-access":
+		revokeAccess()
+	case "list-access":
+		listAccess()
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])
 		os.Exit(1)
@@ -66,9 +75,10 @@ func runBot() {
 	claude := NewClaudeClient(cfg.AnthropicAPIKey)
 	cal := NewCalendarClient(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRedirectURI)
 	transcription := NewTranscriptionClient(cfg.TranscriptionURL)
-	orchestrator := NewOrchestrator(claude, cal, transcription, db, cfg)
+	orchestrator := NewOrchestrator(claude, cal, transcription, db, cfg, nil)
 
 	handler := NewHandler(waClient, db, orchestrator)
+	orchestrator.sendMsg = handler.SendTextToPhone
 	waClient.AddEventHandler(handler.HandleEvent)
 
 	if waClient.Store.ID == nil {
@@ -188,4 +198,101 @@ func addUser() {
 
 	fmt.Printf("User %s created (ID: %d)\n", *name, user.ID)
 	fmt.Printf("\nSend this link to %s to authorize Google Calendar:\n%s\n", *name, authURL)
+}
+
+func openDBForCLI() *DB {
+	db, err := NewDB("data/bot.db")
+	if err != nil {
+		log.Fatalf("Failed to init database: %v", err)
+	}
+	return db
+}
+
+func grantAccess() {
+	fs := flag.NewFlagSet("grant-access", flag.ExitOnError)
+	grantee := fs.String("grantee", "", "Phone of user who gets access")
+	grantor := fs.String("grantor", "", "Phone of user whose calendar is being shared")
+	fs.Parse(os.Args[2:])
+
+	if *grantee == "" || *grantor == "" {
+		fmt.Println("Usage: bot grant-access --grantee=PHONE --grantor=PHONE")
+		os.Exit(1)
+	}
+
+	db := openDBForCLI()
+	defer db.Close()
+
+	granteeUser, err := db.GetUserByPhone(*grantee)
+	if err != nil {
+		log.Fatalf("Grantee not found: %v", err)
+	}
+	grantorUser, err := db.GetUserByPhone(*grantor)
+	if err != nil {
+		log.Fatalf("Grantor not found: %v", err)
+	}
+
+	pm := NewPermissionManager(db)
+	if err := pm.Grant(granteeUser.ID, grantorUser.ID); err != nil {
+		log.Fatalf("Failed to grant access: %v", err)
+	}
+
+	fmt.Printf("Granted %s permission to schedule on %s's calendar.\n", granteeUser.Name, grantorUser.Name)
+}
+
+func revokeAccess() {
+	fs := flag.NewFlagSet("revoke-access", flag.ExitOnError)
+	grantee := fs.String("grantee", "", "Phone of user whose access is revoked")
+	grantor := fs.String("grantor", "", "Phone of user whose calendar was being shared")
+	fs.Parse(os.Args[2:])
+
+	if *grantee == "" || *grantor == "" {
+		fmt.Println("Usage: bot revoke-access --grantee=PHONE --grantor=PHONE")
+		os.Exit(1)
+	}
+
+	db := openDBForCLI()
+	defer db.Close()
+
+	granteeUser, err := db.GetUserByPhone(*grantee)
+	if err != nil {
+		log.Fatalf("Grantee not found: %v", err)
+	}
+	grantorUser, err := db.GetUserByPhone(*grantor)
+	if err != nil {
+		log.Fatalf("Grantor not found: %v", err)
+	}
+
+	pm := NewPermissionManager(db)
+	if err := pm.Revoke(granteeUser.ID, grantorUser.ID); err != nil {
+		log.Fatalf("Failed to revoke access: %v", err)
+	}
+
+	fmt.Printf("Revoked %s's permission to schedule on %s's calendar.\n", granteeUser.Name, grantorUser.Name)
+}
+
+func listAccess() {
+	fs := flag.NewFlagSet("list-access", flag.ExitOnError)
+	phone := fs.String("phone", "", "Phone of the user to check access for")
+	fs.Parse(os.Args[2:])
+
+	if *phone == "" {
+		fmt.Println("Usage: bot list-access --phone=PHONE")
+		os.Exit(1)
+	}
+
+	db := openDBForCLI()
+	defer db.Close()
+
+	user, err := db.GetUserByPhone(*phone)
+	if err != nil {
+		log.Fatalf("User not found: %v", err)
+	}
+
+	pm := NewPermissionManager(db)
+	targets, err := pm.ListTargetsFor(user.ID)
+	if err != nil {
+		log.Fatalf("Failed to list access: %v", err)
+	}
+
+	fmt.Print(pm.FormatAccessList(user.Name, targets))
 }

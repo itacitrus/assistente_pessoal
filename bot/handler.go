@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"strings"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -71,6 +72,20 @@ func (h *Handler) handleMessage(msg *events.Message) {
 	}
 
 	log.Printf("[%s] %s: %s", user.Name, sender, text)
+
+	// Intercept "1"/"2"/"3" responses for pending permission requests
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "1" || trimmed == "2" || trimmed == "3" {
+		reply, handled, err := h.orchestrator.HandlePermissionResponse(ctx, user, trimmed)
+		if err != nil {
+			log.Printf("Error handling permission response from %s: %v", sender, err)
+		} else if handled {
+			if reply != "" {
+				h.sendText(msg.Info.Sender, reply)
+			}
+			return
+		}
+	}
 
 	response, err := h.orchestrator.Process(ctx, user, text)
 	if err != nil {

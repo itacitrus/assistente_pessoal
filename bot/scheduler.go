@@ -33,6 +33,7 @@ func (s *Scheduler) Start() {
 	s.cron.AddFunc("* * * * *", s.checkAutoConfirm)
 	s.cron.AddFunc("* * * * *", s.checkDailySummaries)
 	s.cron.AddFunc("* * * * *", s.checkWeeklySummaries)
+	s.cron.AddFunc("* * * * *", s.checkExpiredPermissionRequests)
 
 	s.cron.Start()
 	log.Println("Scheduler started")
@@ -160,6 +161,25 @@ func (s *Scheduler) checkDailySummaries() {
 		msg := FormatDailySummary(user.Name, events, dayStart)
 		s.sendMsg(user.PhoneNumber, msg)
 		log.Printf("Scheduler: sent daily summary to %s (%d events)", user.Name, len(events))
+	}
+}
+
+func (s *Scheduler) checkExpiredPermissionRequests() {
+	// Expire permission requests older than 24 hours
+	expired, err := s.db.GetExpiredPermissionRequests(24 * time.Hour)
+	if err != nil {
+		log.Printf("Scheduler: error getting expired permission requests: %v", err)
+		return
+	}
+
+	for _, req := range expired {
+		s.db.ResolvePermissionRequest(req.ID, "expired")
+		// Notify requester that request expired
+		msg := fmt.Sprintf("%s nao respondeu a sua solicitacao de acesso. Tente novamente mais tarde.", req.TargetName)
+		if err := s.sendMsg(req.RequesterPhone, msg); err != nil {
+			log.Printf("Scheduler: error notifying requester %s about expired permission: %v", req.RequesterName, err)
+		}
+		log.Printf("Scheduler: expired permission request from %s to %s", req.RequesterName, req.TargetName)
 	}
 }
 
