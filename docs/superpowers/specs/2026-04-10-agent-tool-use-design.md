@@ -14,10 +14,38 @@ Transformar o bot de "parser de intenções" em um agente inteligente que:
 
 ## Arquitetura
 
+### Model Escalation (Haiku → Sonnet)
+
+```
+User msg chega
+    │
+    ▼
+Haiku (rápido, barato) avalia a mensagem
+    │
+    ├── Simples (90%+ certeza) → Haiku executa com tools
+    │
+    └── Complexo/ambíguo → retorna {"escalate": true}
+                              │
+                              ▼
+                          Sonnet executa com tools (mais capaz)
+```
+
+O Haiku tem um system prompt que o instrui a ser pessimista com sua própria capacidade e escalar quando:
+- Criar mais de 1 evento por mensagem
+- Referência a conversas ou eventos passados que precisa buscar
+- Pedidos ambíguos que exigem interpretação
+- Editar/mover múltiplos eventos
+- Mensagens longas com múltiplas instruções
+- Qualquer coisa com menos de 90% de certeza
+
+~70% das mensagens são simples (Haiku resolve). ~30% complexas (Sonnet resolve).
+
 ### Agent Loop
 
 ```
 User msg + conversation history → Claude API (system prompt + tools)
+    │
+    ├── {"escalate": true} → re-envia para Sonnet com mesmas tools
     │
     ├── text response → envia ao usuário, salva no histórico
     │
@@ -38,8 +66,34 @@ User msg + conversation history → Claude API (system prompt + tools)
 | `buscar_historico` | Busca mensagens antigas | "o que eu pedi ontem?" |
 | `criar_evento_outro_usuario` | Cria na agenda de outro user | "marca na agenda do Andre" |
 
-### System Prompt
+### System Prompts
 
+**Haiku (triagem):**
+```
+Voce e o assistente pessoal de {nome} via WhatsApp.
+
+IMPORTANTE: Voce e o modelo rapido. Se a mensagem envolver QUALQUER dos cenarios abaixo,
+NAO tente resolver — retorne APENAS o JSON: {"escalate": true, "reason": "motivo"}
+
+Cenarios para escalar:
+- Criar mais de 1 evento por mensagem
+- Referencia a conversas ou eventos passados que precisa buscar
+- Pedidos ambiguos que exigem interpretacao criativa
+- Editar/mover multiplos eventos
+- Mensagens longas com multiplas instrucoes
+- Agendar na agenda de outro usuario
+- Qualquer coisa que voce nao tenha 90% de certeza
+
+Na duvida, ESCALE. Errar pra cima e melhor que errar pra baixo.
+
+Se for simples e voce tiver certeza, use as ferramentas disponiveis normalmente.
+Ao criar evento com informacoes claras, crie DIRETO e avise (nao peca confirmacao).
+Responda em portugues, informal mas profissional.
+
+Data/hora atual: {now}
+```
+
+**Sonnet (execução completa):**
 ```
 Voce e o assistente pessoal de {nome} via WhatsApp. Seja conciso e amigavel.
 
@@ -48,6 +102,7 @@ Voce tem ferramentas para gerenciar a agenda. Use-as livremente:
 - Ao criar evento com informacoes claras, crie DIRETO e avise (nao peca confirmacao)
 - So peca confirmacao quando houver ambiguidade, conflito de horario, ou acao destrutiva (cancelar/editar)
 - Para agendar na agenda de outro usuario, verifique permissao primeiro
+- Se o usuario referir algo de conversas anteriores, use buscar_historico
 - Responda em portugues, informal mas profissional
 
 Data/hora atual: {now}
@@ -214,41 +269,58 @@ func handleBuscarAgenda(ctx context.Context, user *User, params json.RawMessage)
 }
 ```
 
-## Agent Loop (claude.go)
+## Agent Loop (agent.go)
 
 ```go
-func (c *ClaudeClient) RunAgentLoop(ctx context.Context, systemPrompt string, 
-    history []ConversationMessage, userMsg string, 
-    tools []anthropic.ToolDefinition, execTool func(name string, input json.RawMessage) (string, error),
-) (string, error) {
+func (a *Agent) Run(ctx context.Context, user *User, message string) (string, error) {
+    history, _ := a.db.GetConversationHistory(user.ID, 10)
+    
+    // Step 1: Try with Haiku first
+    model := anthropic.ModelClaudeHaiku4Dot5
+    systemPrompt := buildHaikuSystemPrompt(user.Name)
+    
+    response, escalated, err := a.runLoop(ctx, model, systemPrompt, history, message)
+    if err != nil {
+        return "", err
+    }
+    
+    // Step 2: If Haiku escalated, retry with Sonnet
+    if escalated {
+        model = "claude-sonnet-4-6-latest"
+        systemPrompt = buildSonnetSystemPrompt(user.Name)
+        response, _, err = a.runLoop(ctx, model, systemPrompt, history, message)
+        if err != nil {
+            return "", err
+        }
+    }
+    
+    return response, nil
+}
+
+func (a *Agent) runLoop(ctx context.Context, model, systemPrompt string, 
+    history []ConversationMessage, userMsg string) (string, bool, error) {
     
     messages := buildMessages(history, userMsg)
     
-    for i := 0; i < 5; i++ { // max 5 tool iterations
-        resp, err := c.client.CreateMessages(ctx, anthropic.MessagesRequest{
-            Model:     anthropic.ModelClaudeHaiku4Dot5,
-            MaxTokens: 2048,
-            System:    systemPrompt,
-            Messages:  messages,
-            Tools:     tools,
-        })
+    for i := 0; i < 5; i++ {
+        resp := callClaude(model, systemPrompt, messages, tools)
+        
+        // Check for escalation
+        if isEscalation(resp) {
+            return "", true, nil
+        }
         
         if resp.StopReason == "end_turn" {
-            return extractText(resp), nil
+            return extractText(resp), false, nil
         }
         
         if resp.StopReason == "tool_use" {
-            // Execute each tool call
-            for _, block := range resp.Content {
-                if block.Type == "tool_use" {
-                    result, err := execTool(block.Name, block.Input)
-                    // Append assistant response + tool result to messages
-                    // Continue loop
-                }
-            }
+            for each tool call in resp:
+                result := executeToolHandler(toolName, toolInput)
+                append to messages
         }
     }
-    return "Desculpe, nao consegui processar. Tente de novo.", nil
+    return "Desculpe, nao consegui processar.", false, nil
 }
 ```
 
@@ -264,11 +336,12 @@ Nenhuma outra mudança necessária — o loop já suporta qualquer tool.
 
 ## Custos
 
-| Cenário | Antes (intent) | Depois (agent) |
-|---|---|---|
-| "marca reunião 15h" | 1 call Haiku | 1-2 calls Haiku (tool + response) |
-| "como está minha semana?" | 1 call Haiku | 2 calls Haiku (tool + format) |
-| "e o jantar?" (follow-up) | FALHA | 2-3 calls Haiku (funciona com contexto) |
-| Custo médio/msg | ~$0.001 | ~$0.002-0.003 |
+| Cenário | Modelo usado | Calls | Custo estimado |
+|---|---|---|---|
+| "marca reunião 15h" | Haiku | 1-2 | ~$0.002 |
+| "como está minha semana?" | Haiku | 2 | ~$0.003 |
+| "e o jantar?" (follow-up complexo) | Haiku→Sonnet | 1+2 | ~$0.012 |
+| "muda tudo de sexta pra segunda" | Haiku→Sonnet | 1+3 | ~$0.015 |
+| Custo médio/msg (mix 70/30) | — | — | ~$0.005 |
 
-Aumento de ~2x no custo Claude, mas com capacidade muito superior.
+Para ~50 mensagens/dia: ~$0.25/dia = ~$7.50/mês em Claude API.
