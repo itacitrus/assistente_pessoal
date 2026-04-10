@@ -18,8 +18,10 @@ type Handler struct {
 	client         *whatsmeow.Client
 	db             *DB
 	orchestrator   *Orchestrator
-	unknownReplied map[string]time.Time // rate limit: one reply per unknown number per hour
+	unknownReplied map[string]time.Time
 	unknownMu      sync.Mutex
+	processedMsgs  map[string]bool // dedup by message ID
+	processedMu    sync.Mutex
 }
 
 func NewHandler(client *whatsmeow.Client, db *DB, orchestrator *Orchestrator) *Handler {
@@ -28,6 +30,7 @@ func NewHandler(client *whatsmeow.Client, db *DB, orchestrator *Orchestrator) *H
 		db:             db,
 		orchestrator:   orchestrator,
 		unknownReplied: make(map[string]time.Time),
+		processedMsgs:  make(map[string]bool),
 	}
 }
 
@@ -62,6 +65,20 @@ func normalizeBRPhone(phone string) []string {
 }
 
 func (h *Handler) handleMessage(msg *events.Message) {
+	// Dedup: skip if we already processed this message ID
+	msgID := msg.Info.ID
+	h.processedMu.Lock()
+	if h.processedMsgs[string(msgID)] {
+		h.processedMu.Unlock()
+		return
+	}
+	h.processedMsgs[string(msgID)] = true
+	// Keep map from growing forever — prune if too large
+	if len(h.processedMsgs) > 1000 {
+		h.processedMsgs = make(map[string]bool)
+	}
+	h.processedMu.Unlock()
+
 	// Resolve sender phone number — WhatsApp may use LID instead of phone number
 	senderJID := msg.Info.Sender.ToNonAD()
 	if senderJID.Server == "lid" {
