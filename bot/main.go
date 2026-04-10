@@ -107,6 +107,11 @@ func runBot() {
 	scheduler.Start()
 	defer scheduler.Stop()
 
+	// Start watchdog
+	adminPhone := os.Getenv("ADMIN_PHONE")
+	watchdog := NewWatchdog(waClient, handler.SendTextToPhone, adminPhone)
+	watchdog.Start()
+
 	go startOAuthServer(cal, db, cfg)
 
 	sigCh := make(chan os.Signal, 1)
