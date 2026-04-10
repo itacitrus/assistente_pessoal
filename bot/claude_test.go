@@ -73,8 +73,8 @@ func TestBuildMessages(t *testing.T) {
 
 func TestBuildToolDefinitions(t *testing.T) {
 	tools := buildToolDefinitions()
-	if len(tools) != 8 {
-		t.Fatalf("expected 8 tools, got %d", len(tools))
+	if len(tools) != 10 {
+		t.Fatalf("expected 10 tools, got %d", len(tools))
 	}
 
 	names := map[string]bool{}
@@ -82,7 +82,7 @@ func TestBuildToolDefinitions(t *testing.T) {
 		names[tool.Name] = true
 	}
 
-	expected := []string{"buscar_agenda", "criar_evento", "editar_evento", "cancelar_evento", "buscar_historico", "criar_evento_outro_usuario", "gerar_link_meet", "convidar_externo"}
+	expected := []string{"buscar_agenda", "criar_evento", "editar_evento", "cancelar_evento", "buscar_historico", "criar_evento_outro_usuario", "salvar_memoria", "buscar_memoria", "gerar_link_meet", "convidar_externo"}
 	for _, name := range expected {
 		if !names[name] {
 			t.Errorf("missing tool: %s", name)

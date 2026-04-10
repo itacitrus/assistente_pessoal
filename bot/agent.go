@@ -210,6 +210,7 @@ Na duvida, ESCALE. Errar pra cima e melhor que errar pra baixo.
 
 Se for simples e voce tiver certeza, use as ferramentas disponiveis.
 O usuario pode te mandar audios e contatos — eles sao transcritos/convertidos em texto automaticamente antes de chegar a voce. Voce CONSEGUE entender audios.
+Voce tem MEMORIA persistente. Quando o usuario mencionar contatos, relacoes (pai, mae, chefe), enderecos ou preferencias, SALVE proativamente com salvar_memoria. Quando precisar de uma informacao que o usuario ja pode ter dado antes (ex: numero do pai), use buscar_memoria ANTES de perguntar.
 SEMPRE use as ferramentas para executar acoes. NUNCA finja que fez algo sem chamar a ferramenta. Se o usuario pedir pra fazer algo (mandar convite, criar evento, consultar agenda), voce DEVE chamar a ferramenta correspondente. NUNCA responda sobre agenda ou acoes usando apenas memoria da conversa.
 ANTES de criar um evento, verifique no historico da conversa se voce (assistente) ja informou que o evento foi criado. Se ja foi criado, NAO crie de novo.
 Ao criar evento com informacoes claras, crie DIRETO e avise (nao peca confirmacao).
@@ -225,6 +226,8 @@ func buildSonnetSystemPrompt(userName string) string {
 	return fmt.Sprintf(`Voce e o assistente pessoal de %s via WhatsApp. Seja conciso e amigavel.
 
 O usuario pode te mandar audios e contatos — eles sao transcritos/convertidos em texto automaticamente. Voce CONSEGUE entender audios.
+
+Voce tem MEMORIA persistente. Quando o usuario mencionar contatos, relacoes (pai, mae, chefe), enderecos ou preferencias, SALVE proativamente com salvar_memoria. Quando precisar de uma informacao pessoal, use buscar_memoria ANTES de perguntar.
 
 Voce tem ferramentas para gerenciar a agenda. Use-as livremente:
 - SEMPRE use buscar_agenda quando o usuario perguntar sobre compromissos — NUNCA responda sobre agenda usando memoria da conversa
@@ -340,6 +343,30 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"location": {"type": "string", "description": "Local do evento (opcional)"}
 				},
 				"required": ["phone", "name", "event_title", "event_date", "event_time"]
+			}`),
+		},
+		{
+			Name:        "salvar_memoria",
+			Description: "Salva uma informacao sobre o usuario para lembrar no futuro. Use para contatos, preferencias, enderecos, relacoes pessoais, etc. Salve PROATIVAMENTE quando o usuario mencionar informacoes pessoais relevantes.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"category": {"type": "string", "description": "Categoria: contato, endereco, preferencia, relacao, trabalho, outro"},
+					"key": {"type": "string", "description": "Identificador curto (ex: pai, escritorio, preferencia_horario)"},
+					"value": {"type": "string", "description": "Informacao completa (ex: Fabio de Freitas - 61982279928)"}
+				},
+				"required": ["category", "key", "value"]
+			}`),
+		},
+		{
+			Name:        "buscar_memoria",
+			Description: "Busca informacoes salvas sobre o usuario (contatos, preferencias, enderecos, etc). Use ANTES de pedir informacoes que o usuario ja pode ter fornecido antes.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"query": {"type": "string", "description": "Termo de busca (ex: pai, escritorio, endereco)"},
+					"category": {"type": "string", "description": "Filtrar por categoria (opcional): contato, endereco, preferencia, relacao, trabalho"}
+				}
 			}`),
 		},
 		{

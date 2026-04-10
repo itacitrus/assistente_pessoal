@@ -119,6 +119,17 @@ func (db *DB) migrate() error {
 		status       TEXT NOT NULL DEFAULT 'pending',
 		created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
+	CREATE TABLE IF NOT EXISTS user_memories (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id    INTEGER NOT NULL REFERENCES users(id),
+		category   TEXT NOT NULL,
+		key        TEXT NOT NULL,
+		value      TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(user_id, category, key)
+	);
+
 	CREATE TABLE IF NOT EXISTS conversation_history (
 		id         INTEGER PRIMARY KEY AUTOINCREMENT,
 		user_id    INTEGER NOT NULL REFERENCES users(id),
@@ -198,6 +209,75 @@ func (db *DB) SearchConversationHistory(userID int64, query string, limit int) (
 		msgs[i], msgs[j] = msgs[j], msgs[i]
 	}
 	return msgs, rows.Err()
+}
+
+type UserMemory struct {
+	Category string
+	Key      string
+	Value    string
+}
+
+func (db *DB) SaveMemory(userID int64, category, key, value string) error {
+	_, err := db.conn.Exec(
+		`INSERT INTO user_memories (user_id, category, key, value) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(user_id, category, key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP`,
+		userID, category, key, value, value)
+	return err
+}
+
+func (db *DB) GetMemories(userID int64, category string) ([]UserMemory, error) {
+	query := `SELECT category, key, value FROM user_memories WHERE user_id = ?`
+	args := []any{userID}
+	if category != "" {
+		query += ` AND category = ?`
+		args = append(args, category)
+	}
+	query += ` ORDER BY category, key`
+
+	rows, err := db.conn.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var mems []UserMemory
+	for rows.Next() {
+		var m UserMemory
+		if err := rows.Scan(&m.Category, &m.Key, &m.Value); err != nil {
+			return nil, err
+		}
+		mems = append(mems, m)
+	}
+	return mems, rows.Err()
+}
+
+func (db *DB) SearchMemories(userID int64, query string) ([]UserMemory, error) {
+	rows, err := db.conn.Query(
+		`SELECT category, key, value FROM user_memories
+		 WHERE user_id = ? AND (key LIKE ? OR value LIKE ? OR category LIKE ?)
+		 ORDER BY updated_at DESC LIMIT 20`,
+		userID, "%"+query+"%", "%"+query+"%", "%"+query+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var mems []UserMemory
+	for rows.Next() {
+		var m UserMemory
+		if err := rows.Scan(&m.Category, &m.Key, &m.Value); err != nil {
+			return nil, err
+		}
+		mems = append(mems, m)
+	}
+	return mems, rows.Err()
+}
+
+func (db *DB) DeleteMemory(userID int64, category, key string) error {
+	_, err := db.conn.Exec(
+		`DELETE FROM user_memories WHERE user_id = ? AND category = ? AND key = ?`,
+		userID, category, key)
+	return err
 }
 
 func (db *DB) CreateUser(u *User) error {

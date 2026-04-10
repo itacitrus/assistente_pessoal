@@ -18,6 +18,8 @@ var toolHandlers = map[string]ToolHandler{
 	"criar_evento_outro_usuario": handleCriarEventoOutroUsuario,
 	"gerar_link_meet":            handleGerarLinkMeet,
 	"convidar_externo":           handleConvidarExterno,
+	"salvar_memoria":             handleSalvarMemoria,
+	"buscar_memoria":             handleBuscarMemoria,
 }
 
 type buscarAgendaParams struct {
@@ -401,4 +403,57 @@ func handleConvidarExterno(ctx context.Context, agent *Agent, user *User, params
 	agent.audit.Log(user.ID, "convidar_externo", p.Name, p.EventTitle)
 	log.Printf("[%s] Sent invite to %s (%s) for %s", user.Name, p.Name, phone, p.EventTitle)
 	return fmt.Sprintf("Convite enviado para %s (%s) via WhatsApp.", p.Name, p.Phone), nil
+}
+
+type salvarMemoriaParams struct {
+	Category string `json:"category"`
+	Key      string `json:"key"`
+	Value    string `json:"value"`
+}
+
+func handleSalvarMemoria(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
+	var p salvarMemoriaParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "", fmt.Errorf("parse params: %w", err)
+	}
+
+	if err := agent.db.SaveMemory(user.ID, p.Category, p.Key, p.Value); err != nil {
+		return "", fmt.Errorf("save memory: %w", err)
+	}
+
+	log.Printf("[%s] Saved memory: %s/%s = %s", user.Name, p.Category, p.Key, p.Value)
+	return fmt.Sprintf("Anotado: %s -> %s", p.Key, p.Value), nil
+}
+
+type buscarMemoriaParams struct {
+	Query    string `json:"query"`
+	Category string `json:"category"`
+}
+
+func handleBuscarMemoria(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
+	var p buscarMemoriaParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "", fmt.Errorf("parse params: %w", err)
+	}
+
+	var mems []UserMemory
+	var err error
+	if p.Query != "" {
+		mems, err = agent.db.SearchMemories(user.ID, p.Query)
+	} else {
+		mems, err = agent.db.GetMemories(user.ID, p.Category)
+	}
+	if err != nil {
+		return "", fmt.Errorf("search memories: %w", err)
+	}
+
+	if len(mems) == 0 {
+		return "Nenhuma informacao encontrada.", nil
+	}
+
+	var sb strings.Builder
+	for _, m := range mems {
+		sb.WriteString(fmt.Sprintf("[%s] %s: %s\n", m.Category, m.Key, m.Value))
+	}
+	return sb.String(), nil
 }
