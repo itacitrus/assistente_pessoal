@@ -62,7 +62,9 @@ func normalizeBRPhone(phone string) []string {
 
 func (h *Handler) handleMessage(msg *events.Message) {
 	sender := msg.Info.Sender.User
-	log.Printf("DEBUG: message from sender=%s isFromMe=%v isGroup=%v", sender, msg.Info.IsFromMe, msg.Info.IsGroup)
+	log.Printf("DEBUG: sender.User=%s sender.Server=%s sender=%s chat=%s pushName=%s isFromMe=%v",
+		msg.Info.Sender.User, msg.Info.Sender.Server, msg.Info.Sender.String(),
+		msg.Info.Chat.String(), msg.Info.PushName, msg.Info.IsFromMe)
 
 	// Ignore messages from self (the bot's own number)
 	if msg.Info.IsFromMe {
