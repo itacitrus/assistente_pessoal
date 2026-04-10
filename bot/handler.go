@@ -37,6 +37,27 @@ func (h *Handler) HandleEvent(evt interface{}) {
 	}
 }
 
+// normalizeBRPhone tries to match a Brazilian phone number with or without the 9th digit.
+// Brazilian mobile numbers: 55 + DD (2 digits) + 9 + 8 digits = 13 digits total.
+// WhatsApp sometimes delivers without the leading 9: 55 + DD + 8 digits = 12 digits.
+func normalizeBRPhone(phone string) []string {
+	variants := []string{phone}
+
+	if strings.HasPrefix(phone, "55") {
+		digits := phone[2:] // DD + number
+		if len(digits) == 11 && digits[2] == '9' {
+			// Has the 9 — also try without: 55 + DD + last 8
+			without9 := "55" + digits[:2] + digits[3:]
+			variants = append(variants, without9)
+		} else if len(digits) == 10 {
+			// Missing the 9 — also try with: 55 + DD + 9 + 8 digits
+			with9 := "55" + digits[:2] + "9" + digits[2:]
+			variants = append(variants, with9)
+		}
+	}
+	return variants
+}
+
 func (h *Handler) handleMessage(msg *events.Message) {
 	sender := msg.Info.Sender.User
 	log.Printf("DEBUG: message from sender=%s isFromMe=%v isGroup=%v", sender, msg.Info.IsFromMe, msg.Info.IsGroup)
@@ -46,7 +67,18 @@ func (h *Handler) handleMessage(msg *events.Message) {
 		return
 	}
 
-	user, err := h.db.GetUserByPhone(sender)
+	// Try all phone variants (with/without 9th digit)
+	var user *User
+	var err error
+	for _, variant := range normalizeBRPhone(sender) {
+		user, err = h.db.GetUserByPhone(variant)
+		if err == nil {
+			break
+		}
+	}
+	if user == nil {
+		err = ErrUserNotFound
+	}
 	if err == ErrUserNotFound {
 		// Rate limit: only reply once per hour per unknown number
 		h.unknownMu.Lock()
