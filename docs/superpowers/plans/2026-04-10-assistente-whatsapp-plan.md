@@ -362,7 +362,6 @@ func TestEncryptInvalidKeyLength(t *testing.T) {
 	}
 }
 
-func _ () { _ = hex.DecodeString } // keep import
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -616,7 +615,7 @@ func TestGetExpiredPendingConfirmations(t *testing.T) {
 	db.CreatePendingConfirmation(pc)
 
 	// With a 0-second timeout, everything is expired
-	expired, err := db.GetExpiredPendingConfirmations(0 * time.Second)
+	expired, err := db.GetExpiredPendingConfirmations(user.ID, 0*time.Second)
 	if err != nil {
 		t.Fatalf("GetExpiredPendingConfirmations failed: %v", err)
 	}
@@ -625,7 +624,6 @@ func TestGetExpiredPendingConfirmations(t *testing.T) {
 	}
 }
 
-func _ () { _ = os.TempDir } // keep import
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -844,14 +842,14 @@ func (db *DB) ResolvePendingConfirmation(id int64, status string) error {
 	return err
 }
 
-func (db *DB) GetExpiredPendingConfirmations(timeout time.Duration) ([]PendingConfirmation, error) {
+func (db *DB) GetExpiredPendingConfirmations(userID int64, timeout time.Duration) ([]PendingConfirmation, error) {
 	cutoff := time.Now().Add(-timeout)
 	rows, err := db.conn.Query(
 		`SELECT pc.id, pc.user_id, pc.event_data, pc.status, pc.created_at,
 		 u.phone_number, u.name
 		 FROM pending_confirmations pc
 		 JOIN users u ON u.id = pc.user_id
-		 WHERE pc.status = 'pending' AND pc.created_at < ?`, cutoff)
+		 WHERE pc.status = 'pending' AND pc.user_id = ? AND pc.created_at < ?`, userID, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -1020,7 +1018,6 @@ func stringContains(s, sub string) bool {
 	return false
 }
 
-func _ () { _ = json.Marshal } // keep import
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1807,7 +1804,6 @@ func (h *Handler) SendTextToPhone(phone, text string) error {
 	return err
 }
 
-func _ () { _ = fmt.Sprintf } // keep import
 ```
 
 - [ ] **Step 2: Implement confirmation.go**
@@ -1817,6 +1813,7 @@ func _ () { _ = fmt.Sprintf } // keep import
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -1906,7 +1903,7 @@ func (cm *ConfirmationManager) executeConfirmation(user *User, pc *PendingConfir
 		End:      startTime.Add(duration),
 	}
 
-	created, err := cm.cal.CreateEvent(nil, refreshToken, user.GoogleCalendarID, ev)
+	created, err := cm.cal.CreateEvent(context.Background(), refreshToken, user.GoogleCalendarID, ev)
 	if err != nil {
 		return "", fmt.Errorf("create calendar event: %w", err)
 	}
@@ -1976,9 +1973,33 @@ func (o *Orchestrator) Process(ctx context.Context, user *User, message string) 
 		return o.handleCancelar(ctx, user, intent)
 
 	case "confirmar":
+		// Check if the pending confirmation is a permission request (has target_user but no permission)
+		pc, err := o.db.GetPendingConfirmation(user.ID)
+		if err == nil {
+			var pendingData IntentData
+			json.Unmarshal([]byte(pc.EventData), &pendingData)
+			if pendingData.TargetUser != "" {
+				targetUser, _ := o.perms.ResolveByName(pendingData.TargetUser)
+				if targetUser != nil {
+					allowed, _ := o.perms.CanScheduleFor(user.ID, targetUser.ID)
+					if !allowed {
+						// This is confirming a permission request — send to target
+						_, askMsg, _ := o.perms.RequestPermission(user.ID, targetUser.ID, pc.EventData, user.Name, pendingData.Title)
+						o.db.ResolvePendingConfirmation(pc.ID, "awaiting_permission")
+						if o.sendMsg != nil {
+							o.sendMsg(targetUser.PhoneNumber, askMsg)
+						}
+						o.audit.Log(user.ID, "permission_request", targetUser.Name, pendingData.Title)
+						return fmt.Sprintf("Pedido enviado para %s. Aguarde a resposta.", targetUser.Name), nil
+					}
+				}
+			}
+		}
+		o.audit.Log(user.ID, "confirmar", "", "")
 		return o.confirm.Confirm(user)
 
 	case "negar":
+		o.audit.Log(user.ID, "negar", "", "")
 		return o.confirm.Deny(user)
 
 	default:
@@ -2009,6 +2030,7 @@ func (o *Orchestrator) handleConsulta(ctx context.Context, user *User, intent *I
 		return "", fmt.Errorf("list events: %w", err)
 	}
 
+	// Note: audit logging is added in Task 17 when o.audit is available
 	return FormatEventList(events), nil
 }
 
@@ -2095,6 +2117,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -2201,15 +2224,12 @@ func (s *Scheduler) checkAutoConfirm() {
 			timeout = s.cfg.DefaultAutoConfirmTimeout
 		}
 
-		expired, err := s.db.GetExpiredPendingConfirmations(timeout)
+		expired, err := s.db.GetExpiredPendingConfirmations(user.ID, timeout)
 		if err != nil {
 			continue
 		}
 
 		for _, pc := range expired {
-			if pc.UserID != user.ID {
-				continue
-			}
 
 			cm := NewConfirmationManager(s.db, s.cal, s.cfg)
 			msg, err := cm.executeConfirmation(&user, &pc)
@@ -2279,7 +2299,7 @@ func (s *Scheduler) checkWeeklySummaries() {
 		if user.WeeklySummaryTime != currentTime {
 			continue
 		}
-		if !stringsEqualFold(user.WeeklySummaryDay, currentDay) {
+		if !strings.EqualFold(user.WeeklySummaryDay, currentDay) {
 			continue
 		}
 		if now.Second() > 30 {
@@ -2308,24 +2328,6 @@ func (s *Scheduler) checkWeeklySummaries() {
 	}
 }
 
-func stringsEqualFold(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		ca, cb := a[i], b[i]
-		if ca >= 'A' && ca <= 'Z' {
-			ca += 32
-		}
-		if cb >= 'A' && cb <= 'Z' {
-			cb += 32
-		}
-		if ca != cb {
-			return false
-		}
-	}
-	return true
-}
 ```
 
 - [ ] **Step 2: Verify it compiles**
@@ -2428,9 +2430,10 @@ func runBot() {
 	claude := NewClaudeClient(cfg.AnthropicAPIKey)
 	cal := NewCalendarClient(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRedirectURI)
 	transcription := NewTranscriptionClient(cfg.TranscriptionURL)
-	orchestrator := NewOrchestrator(claude, cal, transcription, db, cfg)
+	orchestrator := NewOrchestrator(claude, cal, transcription, db, cfg, nil)
 
 	handler := NewHandler(waClient, db, orchestrator)
+	orchestrator.sendMsg = handler.SendTextToPhone // wire after handler exists
 	waClient.AddEventHandler(handler.HandleEvent)
 
 	// Connect to WhatsApp
@@ -3057,7 +3060,7 @@ func TestAutoConfirmExpiry(t *testing.T) {
 	})
 
 	// With 0 timeout, everything is expired immediately
-	expired, err := db.GetExpiredPendingConfirmations(0 * time.Second)
+	expired, err := db.GetExpiredPendingConfirmations(user.ID, 0*time.Second)
 	if err != nil {
 		t.Fatalf("GetExpiredPendingConfirmations failed: %v", err)
 	}
@@ -3292,8 +3295,12 @@ var actionLabelsPT = map[string]string{
 	"confirmar":       "Confirmou",
 	"negar":           "Negou",
 	"auto_confirm":    "Auto-confirmou",
-	"grant_access":    "Concedeu acesso",
-	"revoke_access":   "Revogou acesso",
+	"grant_access":      "Concedeu acesso",
+	"grant_access_once": "Concedeu acesso (pontual)",
+	"revoke_access":     "Revogou acesso",
+	"deny_access":       "Negou acesso",
+	"permission_request":"Solicitou acesso",
+	"consultar_log":     "Consultou historico",
 }
 
 func FormatAuditLog(userName string, entries []AuditEntry) string {
@@ -3659,9 +3666,10 @@ func (db *DB) GetExpiredPermissionRequests(timeout time.Duration) ([]PermissionR
 	cutoff := time.Now().Add(-timeout)
 	rows, err := db.conn.Query(
 		`SELECT ppr.id, ppr.requester_id, ppr.target_id, ppr.event_data, ppr.status, ppr.created_at,
-		 u.name, u.phone_number
+		 req.name, req.phone_number, tgt.name, tgt.phone_number
 		 FROM pending_permission_requests ppr
-		 JOIN users u ON u.id = ppr.requester_id
+		 JOIN users req ON req.id = ppr.requester_id
+		 JOIN users tgt ON tgt.id = ppr.target_id
 		 WHERE ppr.status = 'pending' AND ppr.created_at < ?`, cutoff)
 	if err != nil {
 		return nil, err
@@ -3672,7 +3680,7 @@ func (db *DB) GetExpiredPermissionRequests(timeout time.Duration) ([]PermissionR
 	for rows.Next() {
 		var pr PermissionRequest
 		if err := rows.Scan(&pr.ID, &pr.RequesterID, &pr.TargetID, &pr.EventData, &pr.Status, &pr.CreatedAt,
-			&pr.RequesterName, &pr.RequesterPhone); err != nil {
+			&pr.RequesterName, &pr.RequesterPhone, &pr.TargetName, &pr.TargetPhone); err != nil {
 			return nil, err
 		}
 		results = append(results, pr)
@@ -3693,6 +3701,8 @@ type PermissionRequest struct {
 	CreatedAt      time.Time
 	RequesterName  string
 	RequesterPhone string
+	TargetName     string
+	TargetPhone    string
 }
 ```
 
@@ -3750,6 +3760,13 @@ func (p *PermissionManager) HandlePermissionResponse(targetUser *User, response 
 ```
 
 - [ ] **Step 7: Update orchestrator.go with conversational permission flow**
+
+First, add `"encoding/json"` to orchestrator.go's import block.
+
+Also add `o.audit.Log(...)` calls to all existing handler methods that don't have them yet:
+- `handleConsulta`: `o.audit.Log(user.ID, "consultar_agenda", "", intent.Data.StartDate+" a "+intent.Data.EndDate)`
+- `handleEditar`: `o.audit.Log(user.ID, "editar_evento", "", intent.Data.SearchQuery)`
+- `handleCancelar`: `o.audit.Log(user.ID, "cancelar_evento", "", intent.Data.SearchQuery)`
 
 Update `Orchestrator` struct to include `sendMsg` and `perms`:
 
@@ -3824,20 +3841,19 @@ func (o *Orchestrator) handleCrossUserCreate(ctx context.Context, user *User, in
 		return o.confirm.CreatePending(user, intent.Data, intent.ConfirmationMessage)
 	}
 
-	// No permission — ask if user wants to request it
+	// No permission — save the event data as a pending confirmation with a special flag,
+	// and ask the user if they want to request permission.
+	// The pending confirmation's EventData stores the full intent including target_user.
+	// When the user responds "sim", the handler detects this and triggers the permission request.
 	eventJSON, _ := json.Marshal(intent.Data)
-	_, askMsg, err := o.perms.RequestPermission(user.ID, targetUser.ID, string(eventJSON), user.Name, intent.Data.Title)
-	if err != nil {
-		return "", err
-	}
 
-	// Send permission request to target user via WhatsApp
-	if o.sendMsg != nil {
-		o.sendMsg(targetUser.PhoneNumber, askMsg)
+	pc := &PendingConfirmation{
+		UserID:    user.ID,
+		EventData: string(eventJSON),
 	}
+	o.db.CreatePendingConfirmation(pc)
 
-	o.audit.Log(user.ID, "permission_request", targetUser.Name, intent.Data.Title)
-	return fmt.Sprintf("Voce nao tem permissao na agenda de %s. Enviei um pedido de autorizacao. Aguarde a resposta.", targetUser.Name), nil
+	return fmt.Sprintf("Voce nao tem permissao na agenda de %s. Quer que eu peca autorizacao?", targetUser.Name), nil
 }
 
 func (o *Orchestrator) handleConsultarLog(ctx context.Context, user *User, intent *IntentResult) (string, error) {
@@ -3864,7 +3880,9 @@ func (o *Orchestrator) handleConsultarLog(ctx context.Context, user *User, inten
 
 - [ ] **Step 8: Update handler.go to intercept permission responses**
 
-In `handler.go`, before sending to Claude, check if this user has a pending permission request to respond to. Add at the beginning of the orchestrator pipeline in `handleMessage`:
+First, add `"strings"` to handler.go's import block.
+
+In `handler.go`, before sending to Claude, check if this user has a pending permission request to respond to. Add at the beginning of the orchestrator pipeline in `handleMessage` (after `text` is determined, before calling orchestrator):
 
 ```go
 // Check if this is a permission response (1, 2, or 3) from a target user
@@ -3899,10 +3917,10 @@ func (o *Orchestrator) HandlePermissionResponse(ctx context.Context, targetUser 
 
 	switch action {
 	case "approved_once":
-		// Create event on both calendars without saving permanent permission
+		// Create event on BOTH calendars without saving permanent permission
 		data.TargetUser = targetUser.Name
-		o.confirm.CreatePendingForUser(requester, data, fmt.Sprintf("%s autorizou! Agendando *%s*...", targetUser.Name, data.Title))
-		msg, _ := o.confirm.Confirm(requester) // Auto-confirm since target already approved
+		o.confirm.CreatePending(requester, data, fmt.Sprintf("%s autorizou! Agendando *%s*...", targetUser.Name, data.Title))
+		msg, _ := o.confirm.Confirm(requester) // Creates on requester's calendar + target's calendar (via confirmation.go cross-user logic)
 		if o.sendMsg != nil {
 			o.sendMsg(requester.PhoneNumber, fmt.Sprintf("%s autorizou o evento!\n\n%s", targetUser.Name, msg))
 		}
@@ -3911,8 +3929,8 @@ func (o *Orchestrator) HandlePermissionResponse(ctx context.Context, targetUser 
 
 	case "approved_always":
 		data.TargetUser = targetUser.Name
-		o.confirm.CreatePendingForUser(requester, data, fmt.Sprintf("%s autorizou permanentemente! Agendando *%s*...", targetUser.Name, data.Title))
-		msg, _ := o.confirm.Confirm(requester)
+		o.confirm.CreatePending(requester, data, fmt.Sprintf("%s autorizou permanentemente! Agendando *%s*...", targetUser.Name, data.Title))
+		msg, _ := o.confirm.Confirm(requester) // Creates on both calendars
 		if o.sendMsg != nil {
 			o.sendMsg(requester.PhoneNumber, fmt.Sprintf("%s autorizou permanentemente!\n\n%s", targetUser.Name, msg))
 		}
@@ -3944,7 +3962,7 @@ func (s *Scheduler) checkExpiredPermissionRequests() {
 
 	for _, pr := range expired {
 		s.db.ResolvePermissionRequest(pr.ID, "expired")
-		s.sendMsg(pr.RequesterPhone, fmt.Sprintf("O pedido de autorizacao para a agenda de %s expirou (sem resposta em 2h).", pr.RequesterName))
+		s.sendMsg(pr.RequesterPhone, fmt.Sprintf("O pedido de autorizacao para a agenda de %s expirou (sem resposta em 2h).", pr.TargetName))
 		log.Printf("Scheduler: permission request %d expired", pr.ID)
 	}
 }
@@ -4059,7 +4077,7 @@ func listAccess() {
 }
 ```
 
-- [ ] **Step 9: Run all tests**
+- [ ] **Step 11: Run all tests**
 
 ```bash
 cd /Users/giovanni/Documents/GitHub/assistente_pessoal
@@ -4068,11 +4086,11 @@ go test ./bot/ -v -run "TestGrant|TestList|TestResolve"
 
 Expected: all PASS.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
-git add bot/permissions.go bot/permissions_test.go bot/audit.go bot/audit_test.go bot/claude.go bot/orchestrator.go bot/confirmation.go bot/db.go bot/main.go
-git commit -m "feat: add cross-user calendar permissions and audit log"
+git add bot/permissions.go bot/permissions_test.go bot/claude.go bot/orchestrator.go bot/confirmation.go bot/handler.go bot/scheduler.go bot/db.go bot/main.go
+git commit -m "feat: add cross-user calendar permissions with conversational flow"
 ```
 
 ---

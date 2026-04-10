@@ -398,9 +398,6 @@ assistente_pessoal/
 ## Variáveis de Ambiente
 
 ```env
-# WhatsApp
-AUTHORIZED_NUMBERS=5511999999999   # números iniciais (depois gerenciado via DB)
-
 # Google Calendar (OAuth app credentials — não per-user)
 GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
