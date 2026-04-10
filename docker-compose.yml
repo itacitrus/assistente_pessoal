@@ -1,0 +1,30 @@
+services:
+  bot:
+    build: ./bot
+    container_name: assistente-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - bot-data:/app/data
+    depends_on:
+      transcription:
+        condition: service_healthy
+    environment:
+      - TRANSCRIPTION_URL=http://transcription:8000
+    ports:
+      - "127.0.0.1:8080:8080"
+    working_dir: /app
+
+  transcription:
+    build: ./transcription
+    container_name: assistente-transcription
+    restart: unless-stopped
+    env_file: .env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  bot-data:
