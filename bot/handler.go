@@ -194,8 +194,26 @@ func (h *Handler) sendText(to types.JID, text string) {
 }
 
 func (h *Handler) SendTextToPhone(phone, text string) error {
+	// Try to verify the number is on WhatsApp first
+	results, err := h.client.IsOnWhatsApp(context.Background(), []string{"+" + phone})
+	if err != nil {
+		log.Printf("IsOnWhatsApp check failed for %s: %v", phone, err)
+	} else if len(results) > 0 && results[0].IsIn {
+		// Use the JID returned by WhatsApp (correct format)
+		log.Printf("SendTextToPhone: %s is on WhatsApp as %s", phone, results[0].JID.String())
+		_, err := h.client.SendMessage(context.Background(), results[0].JID, &waE2E.Message{
+			Conversation: &text,
+		})
+		return err
+	} else if len(results) > 0 && !results[0].IsIn {
+		log.Printf("SendTextToPhone: %s is NOT on WhatsApp", phone)
+		return fmt.Errorf("numero %s nao esta no WhatsApp", phone)
+	}
+
+	// Fallback: send directly
 	jid := types.NewJID(phone, types.DefaultUserServer)
-	_, err := h.client.SendMessage(context.Background(), jid, &waE2E.Message{
+	log.Printf("SendTextToPhone: sending to %s (fallback)", jid.String())
+	_, err = h.client.SendMessage(context.Background(), jid, &waE2E.Message{
 		Conversation: &text,
 	})
 	return err
