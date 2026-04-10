@@ -146,6 +146,23 @@ CREATE TABLE pending_confirmations (
     status      TEXT DEFAULT 'pending',           -- pending | confirmed | cancelled
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE calendar_permissions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    grantor_id   INTEGER NOT NULL REFERENCES users(id),  -- dono da agenda (quem concede)
+    grantee_id   INTEGER NOT NULL REFERENCES users(id),  -- quem recebe permissão
+    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(grantor_id, grantee_id)
+);
+
+CREATE TABLE action_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id),   -- quem executou
+    action      TEXT NOT NULL,                            -- criar_evento, editar_evento, cancelar_evento, consultar_agenda, auto_confirm, grant_access, revoke_access
+    target_user TEXT,                                     -- nome do usuario alvo (se cross-user)
+    details     TEXT NOT NULL,                            -- JSON com dados completos da ação
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
 ### Cadastro de Usuários
@@ -164,6 +181,58 @@ O bot envia um link OAuth para o usuário via WhatsApp. O usuário autoriza aces
 - Confirmações pendentes vinculadas ao `user_id`
 - Scheduler respeita horários individuais de cada usuário
 - Prompts do Claude incluem o nome do usuário para respostas personalizadas
+
+### Delegação de Agenda (Cross-User Permissions)
+
+Usuários podem autorizar outros usuários a criar eventos em suas agendas. A permissão é unidirecional: se Andre autoriza Waldyr, Waldyr pode agendar na agenda do Andre, mas Andre não pode agendar na agenda do Waldyr (a menos que Waldyr também autorize Andre).
+
+**Fluxo:**
+
+```
+Waldyr envia: "marca reunião na agenda do Andre amanhã às 10h"
+    │
+    ▼
+Claude extrai: intent=criar_evento, target_user="Andre"
+    │
+    ▼
+Bot verifica: Waldyr tem permissão na agenda do Andre? (calendar_permissions)
+    ├── Sim ──► Cria evento na agenda do Andre E na agenda do Waldyr (ambos participam)
+    └── Não ──► "Voce nao tem permissao para agendar na agenda do Andre."
+```
+
+**Gestão via CLI:**
+
+```bash
+./bot grant-access --from=5511111111111 --to=5522222222222   # Andre autoriza Waldyr
+./bot revoke-access --from=5511111111111 --to=5522222222222  # Andre revoga
+./bot list-access --user=5522222222222                       # Lista quem Waldyr pode agendar
+```
+
+### Audit Log
+
+Todas as ações do sistema são registradas na tabela `action_log` com: quem executou, o que fez, o alvo (se cross-user), e os dados completos em JSON.
+
+**Ações logadas:** `criar_evento`, `editar_evento`, `cancelar_evento`, `consultar_agenda`, `confirmar`, `negar`, `auto_confirm`, `grant_access`, `revoke_access`
+
+**Consulta via WhatsApp:** O usuário pode perguntar "o que aconteceu na minha agenda essa semana?" e o bot retorna o histórico de ações recentes. O Claude interpreta como intent `consultar_log` com período.
+
+## Produção e Resiliência
+
+### Monitoramento e Recuperação
+
+| Componente | Solução |
+|---|---|
+| Process supervision | Systemd unit reinicia Docker Compose em reboot/crash |
+| Monitoramento | CloudWatch Agent: CPU, memória, disco + alarmes |
+| Alertas | SNS para email do admin quando bot cai ou disco > 80% |
+| Backup | Cron diário: SQLite backup para S3 |
+| Log rotation | Docker log driver com max-size 10MB, max-file 5 |
+| Auto-recovery | EC2 Auto Recovery em caso de falha de hardware |
+| WhatsApp watchdog | Goroutine que verifica conexão WS a cada 5min, reconecta e alerta se falhar |
+
+### Disponibilidade Esperada
+
+~99.5%+ com single instance. Para >99.9% seria necessário multi-AZ (fora do escopo atual).
 
 ## Componentes
 
@@ -193,6 +262,9 @@ O bot envia um link OAuth para o usuário via WhatsApp. O usuário autoriza aces
 | `scheduler.go` | Cron jobs: lembretes, resumo diário, agenda semanal |
 | `confirmation.go` | Estado de confirmações pendentes, auto-confirm após timeout |
 | `users.go` | CRUD de usuários, CLI add-user, OAuth flow |
+| `permissions.go` | Delegação de agenda: grant/revoke/check cross-user access |
+| `audit.go` | Audit log: registrar e consultar ações |
+| `watchdog.go` | Monitoramento da conexão WhatsApp |
 | `config.go` | Configuração via env vars |
 
 ### Transcription API (Python/FastAPI)
@@ -231,12 +303,13 @@ e retorne APENAS um JSON com a estrutura abaixo.
 Data/hora atual: {now}
 
 Intenções possíveis:
-- criar_evento: extraia title, date (YYYY-MM-DD), time (HH:MM), duration_minutes (default: 60)
+- criar_evento: extraia title, date (YYYY-MM-DD), time (HH:MM), duration_minutes (default: 60). Se o usuario mencionar a agenda de outra pessoa, extraia target_user com o nome da pessoa.
 - consultar_agenda: extraia start_date, end_date
 - editar_evento: extraia search_query (para encontrar o evento), campos a alterar
 - cancelar_evento: extraia search_query
 - confirmar: o usuário está confirmando uma ação pendente
 - negar: o usuário está negando uma ação pendente
+- consultar_log: o usuario quer ver o historico de acoes. Extraia start_date, end_date.
 
 Responda APENAS com JSON:
 {

@@ -29,14 +29,18 @@ assistente_pessoal/
 │   ├── scheduler.go         # Cron jobs: reminders, daily summary, weekly summary, auto-confirm
 │   ├── formatter.go         # Format calendar events as WhatsApp-friendly text
 │   ├── crypto.go            # AES-256-GCM encrypt/decrypt for refresh tokens
+│   ├── permissions.go       # Cross-user calendar delegation
+│   ├── audit.go             # Action audit log
+│   ├── watchdog.go          # WhatsApp connection monitor
 │   ├── go.mod
 │   ├── go.sum
-│   └── Dockerfile
-│
+│   ├── Dockerfile
 │   ├── crypto_test.go       # Tests live in bot/ (same package main)
 │   ├── db_test.go
 │   ├── claude_test.go
 │   ├── formatter_test.go
+│   ├── permissions_test.go
+│   ├── audit_test.go
 │   └── integration_test.go
 │
 ├── transcription/
@@ -49,6 +53,10 @@ assistente_pessoal/
 │   ├── variables.tf
 │   ├── outputs.tf
 │   └── cloud-init.yaml
+│
+├── scripts/
+│   ├── assistente-bot.service  # Systemd unit
+│   └── backup.sh               # SQLite backup to S3
 │
 ├── docker-compose.yml
 ├── .env.example
@@ -3142,6 +3150,1140 @@ git commit -m "docs: add CLAUDE.md with project conventions and dev commands"
 
 ---
 
+## Task 16: Audit Log
+
+**Files:**
+- Create: `bot/audit.go`, `bot/audit_test.go`
+
+- [ ] **Step 1: Write failing tests**
+
+Create `bot/audit_test.go`:
+
+```go
+package main
+
+import (
+	"testing"
+	"time"
+)
+
+func TestLogAction(t *testing.T) {
+	db := setupTestDB(t)
+	db.CreateUser(&User{PhoneNumber: "111", Name: "Waldyr", GoogleCalendarID: "w@g.com", GoogleCredentials: "x"})
+	user, _ := db.GetUserByPhone("111")
+
+	audit := NewAuditLog(db)
+	err := audit.Log(user.ID, "criar_evento", "", `{"title":"Reuniao","date":"2026-04-11"}`)
+	if err != nil {
+		t.Fatalf("Log failed: %v", err)
+	}
+
+	// Log a cross-user action
+	err = audit.Log(user.ID, "criar_evento", "Andre", `{"title":"Sync","date":"2026-04-12"}`)
+	if err != nil {
+		t.Fatalf("Log cross-user failed: %v", err)
+	}
+
+	entries, err := audit.Query(user.ID, time.Now().Add(-1*time.Hour), time.Now().Add(1*time.Hour))
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+	if entries[1].TargetUser != "Andre" {
+		t.Fatalf("expected target_user Andre, got %s", entries[1].TargetUser)
+	}
+}
+
+func TestFormatAuditLog(t *testing.T) {
+	entries := []AuditEntry{
+		{Action: "criar_evento", Details: `{"title":"Reuniao"}`, CreatedAt: time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)},
+		{Action: "cancelar_evento", TargetUser: "Andre", Details: `{"title":"Sync"}`, CreatedAt: time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC)},
+	}
+
+	result := FormatAuditLog("Waldyr", entries)
+	if result == "" {
+		t.Fatal("expected non-empty audit log")
+	}
+	if !stringContains(result, "criar_evento") {
+		t.Fatalf("should contain action name, got: %s", result)
+	}
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+```bash
+cd /Users/giovanni/Documents/GitHub/assistente_pessoal
+go test ./bot/ -v -run TestLogAction
+```
+
+Expected: FAIL — `AuditLog` not defined.
+
+- [ ] **Step 3: Implement audit.go**
+
+```go
+// bot/audit.go
+package main
+
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+type AuditEntry struct {
+	ID         int64
+	UserID     int64
+	Action     string
+	TargetUser string
+	Details    string
+	CreatedAt  time.Time
+}
+
+type AuditLog struct {
+	db *DB
+}
+
+func NewAuditLog(db *DB) *AuditLog {
+	return &AuditLog{db: db}
+}
+
+func (a *AuditLog) Log(userID int64, action, targetUser, details string) error {
+	_, err := a.db.conn.Exec(
+		`INSERT INTO action_log (user_id, action, target_user, details) VALUES (?, ?, ?, ?)`,
+		userID, action, targetUser, details)
+	return err
+}
+
+func (a *AuditLog) Query(userID int64, start, end time.Time) ([]AuditEntry, error) {
+	rows, err := a.db.conn.Query(
+		`SELECT id, user_id, action, COALESCE(target_user, ''), details, created_at
+		 FROM action_log
+		 WHERE user_id = ? AND created_at BETWEEN ? AND ?
+		 ORDER BY created_at ASC`,
+		userID, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(&e.ID, &e.UserID, &e.Action, &e.TargetUser, &e.Details, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+var actionLabelsPT = map[string]string{
+	"criar_evento":    "Criou evento",
+	"editar_evento":   "Editou evento",
+	"cancelar_evento": "Cancelou evento",
+	"consultar_agenda":"Consultou agenda",
+	"confirmar":       "Confirmou",
+	"negar":           "Negou",
+	"auto_confirm":    "Auto-confirmou",
+	"grant_access":    "Concedeu acesso",
+	"revoke_access":   "Revogou acesso",
+}
+
+func FormatAuditLog(userName string, entries []AuditEntry) string {
+	if len(entries) == 0 {
+		return fmt.Sprintf("%s, nenhuma acao registrada nesse periodo.", userName)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Historico de acoes de %s:\n\n", userName))
+
+	for _, e := range entries {
+		timeStr := e.CreatedAt.Format("02/01 15:04")
+		label := actionLabelsPT[e.Action]
+		if label == "" {
+			label = e.Action
+		}
+		line := fmt.Sprintf("  %s — %s", timeStr, label)
+		if e.TargetUser != "" {
+			line += fmt.Sprintf(" (agenda de %s)", e.TargetUser)
+		}
+		sb.WriteString(line + "\n")
+	}
+	return sb.String()
+}
+```
+
+- [ ] **Step 4: Add action_log table to db.go migrate()**
+
+In `bot/db.go`, the `action_log` table must be in the `migrate()` schema. Add after the `sent_reminders` table:
+
+```sql
+CREATE TABLE IF NOT EXISTS action_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    action      TEXT NOT NULL,
+    target_user TEXT,
+    details     TEXT NOT NULL,
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+```bash
+cd /Users/giovanni/Documents/GitHub/assistente_pessoal
+go test ./bot/ -v -run "TestLogAction|TestFormatAudit"
+```
+
+Expected: all PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add bot/audit.go bot/audit_test.go bot/db.go
+git commit -m "feat: add audit log for all bot actions with query support"
+```
+
+---
+
+## Task 17: Calendar Delegation (Cross-User Permissions)
+
+**Files:**
+- Create: `bot/permissions.go`, `bot/permissions_test.go`
+- Modify: `bot/db.go` (add migration), `bot/orchestrator.go` (handle target_user), `bot/claude.go` (update prompt + IntentData), `bot/main.go` (add CLI commands)
+
+- [ ] **Step 1: Write failing tests**
+
+Create `bot/permissions_test.go`:
+
+```go
+package main
+
+import (
+	"testing"
+)
+
+func TestGrantAndCheckPermission(t *testing.T) {
+	db := setupTestDB(t)
+
+	db.CreateUser(&User{PhoneNumber: "111", Name: "Andre", GoogleCalendarID: "andre@g.com", GoogleCredentials: "x"})
+	db.CreateUser(&User{PhoneNumber: "222", Name: "Waldyr", GoogleCalendarID: "waldyr@g.com", GoogleCredentials: "x"})
+
+	andre, _ := db.GetUserByPhone("111")
+	waldyr, _ := db.GetUserByPhone("222")
+
+	perm := NewPermissionManager(db)
+
+	// Initially no permission
+	allowed, err := perm.CanScheduleFor(waldyr.ID, andre.ID)
+	if err != nil {
+		t.Fatalf("CanScheduleFor failed: %v", err)
+	}
+	if allowed {
+		t.Fatal("expected no permission initially")
+	}
+
+	// Grant: Andre authorizes Waldyr
+	err = perm.Grant(andre.ID, waldyr.ID)
+	if err != nil {
+		t.Fatalf("Grant failed: %v", err)
+	}
+
+	// Now Waldyr can schedule for Andre
+	allowed, err = perm.CanScheduleFor(waldyr.ID, andre.ID)
+	if err != nil {
+		t.Fatalf("CanScheduleFor failed: %v", err)
+	}
+	if !allowed {
+		t.Fatal("expected permission after grant")
+	}
+
+	// But Andre cannot schedule for Waldyr (unidirectional)
+	allowed, err = perm.CanScheduleFor(andre.ID, waldyr.ID)
+	if err != nil {
+		t.Fatalf("CanScheduleFor failed: %v", err)
+	}
+	if allowed {
+		t.Fatal("permission should be unidirectional")
+	}
+
+	// Revoke
+	err = perm.Revoke(andre.ID, waldyr.ID)
+	if err != nil {
+		t.Fatalf("Revoke failed: %v", err)
+	}
+
+	allowed, err = perm.CanScheduleFor(waldyr.ID, andre.ID)
+	if err != nil {
+		t.Fatalf("CanScheduleFor failed: %v", err)
+	}
+	if allowed {
+		t.Fatal("expected no permission after revoke")
+	}
+}
+
+func TestListGranteesForUser(t *testing.T) {
+	db := setupTestDB(t)
+
+	db.CreateUser(&User{PhoneNumber: "111", Name: "Andre", GoogleCalendarID: "a@g.com", GoogleCredentials: "x"})
+	db.CreateUser(&User{PhoneNumber: "222", Name: "Waldyr", GoogleCalendarID: "w@g.com", GoogleCredentials: "x"})
+	db.CreateUser(&User{PhoneNumber: "333", Name: "Giovanni", GoogleCalendarID: "g@g.com", GoogleCredentials: "x"})
+
+	andre, _ := db.GetUserByPhone("111")
+	waldyr, _ := db.GetUserByPhone("222")
+	giovanni, _ := db.GetUserByPhone("333")
+
+	perm := NewPermissionManager(db)
+	perm.Grant(andre.ID, waldyr.ID)   // Andre authorizes Waldyr
+	perm.Grant(giovanni.ID, waldyr.ID) // Giovanni authorizes Waldyr
+
+	// Waldyr can schedule for Andre and Giovanni
+	targets, err := perm.ListTargetsFor(waldyr.ID)
+	if err != nil {
+		t.Fatalf("ListTargetsFor failed: %v", err)
+	}
+	if len(targets) != 2 {
+		t.Fatalf("expected 2 targets, got %d", len(targets))
+	}
+}
+
+func TestResolveTargetUser(t *testing.T) {
+	db := setupTestDB(t)
+
+	db.CreateUser(&User{PhoneNumber: "111", Name: "Andre", GoogleCalendarID: "a@g.com", GoogleCredentials: "x"})
+	db.CreateUser(&User{PhoneNumber: "222", Name: "Waldyr", GoogleCalendarID: "w@g.com", GoogleCredentials: "x"})
+
+	perm := NewPermissionManager(db)
+
+	// Resolve by name
+	user, err := perm.ResolveByName("Andre")
+	if err != nil {
+		t.Fatalf("ResolveByName failed: %v", err)
+	}
+	if user.PhoneNumber != "111" {
+		t.Fatalf("expected phone 111, got %s", user.PhoneNumber)
+	}
+
+	// Not found
+	_, err = perm.ResolveByName("Inexistente")
+	if err == nil {
+		t.Fatal("expected error for unknown name")
+	}
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+```bash
+cd /Users/giovanni/Documents/GitHub/assistente_pessoal
+go test ./bot/ -v -run TestGrant
+```
+
+Expected: FAIL — `PermissionManager` not defined.
+
+- [ ] **Step 3: Implement permissions.go**
+
+```go
+// bot/permissions.go
+package main
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+)
+
+var ErrTargetUserNotFound = errors.New("target user not found")
+
+type PermissionManager struct {
+	db *DB
+}
+
+func NewPermissionManager(db *DB) *PermissionManager {
+	return &PermissionManager{db: db}
+}
+
+func (p *PermissionManager) Grant(grantorID, granteeID int64) error {
+	_, err := p.db.conn.Exec(
+		`INSERT OR IGNORE INTO calendar_permissions (grantor_id, grantee_id) VALUES (?, ?)`,
+		grantorID, granteeID)
+	return err
+}
+
+func (p *PermissionManager) Revoke(grantorID, granteeID int64) error {
+	_, err := p.db.conn.Exec(
+		`DELETE FROM calendar_permissions WHERE grantor_id = ? AND grantee_id = ?`,
+		grantorID, granteeID)
+	return err
+}
+
+// CanScheduleFor checks if grantee can create events on grantor's calendar.
+func (p *PermissionManager) CanScheduleFor(granteeID, grantorID int64) (bool, error) {
+	var count int
+	err := p.db.conn.QueryRow(
+		`SELECT COUNT(*) FROM calendar_permissions WHERE grantor_id = ? AND grantee_id = ?`,
+		grantorID, granteeID).Scan(&count)
+	return count > 0, err
+}
+
+// ListTargetsFor returns all users that grantee can schedule for.
+func (p *PermissionManager) ListTargetsFor(granteeID int64) ([]User, error) {
+	rows, err := p.db.conn.Query(
+		`SELECT u.id, u.phone_number, u.name, u.google_calendar_id, u.google_credentials,
+		 u.daily_summary_time, u.weekly_summary_day, u.weekly_summary_time,
+		 u.reminder_before, u.auto_confirm_timeout, u.is_active, u.created_at
+		 FROM calendar_permissions cp
+		 JOIN users u ON u.id = cp.grantor_id
+		 WHERE cp.grantee_id = ?`, granteeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.PhoneNumber, &u.Name, &u.GoogleCalendarID, &u.GoogleCredentials,
+			&u.DailySummaryTime, &u.WeeklySummaryDay, &u.WeeklySummaryTime,
+			&u.ReminderBefore, &u.AutoConfirmTimeout, &u.IsActive, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
+// ResolveByName finds a user by name (case-insensitive).
+func (p *PermissionManager) ResolveByName(name string) (*User, error) {
+	u := &User{}
+	err := p.db.conn.QueryRow(
+		`SELECT id, phone_number, name, google_calendar_id, google_credentials,
+		 daily_summary_time, weekly_summary_day, weekly_summary_time,
+		 reminder_before, auto_confirm_timeout, is_active, created_at
+		 FROM users WHERE LOWER(name) = LOWER(?)`, name,
+	).Scan(&u.ID, &u.PhoneNumber, &u.Name, &u.GoogleCalendarID, &u.GoogleCredentials,
+		&u.DailySummaryTime, &u.WeeklySummaryDay, &u.WeeklySummaryTime,
+		&u.ReminderBefore, &u.AutoConfirmTimeout, &u.IsActive, &u.CreatedAt)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrTargetUserNotFound
+	}
+	return u, err
+}
+
+func FormatAccessList(userName string, targets []User) string {
+	if len(targets) == 0 {
+		return fmt.Sprintf("%s nao tem permissao para agendar na agenda de ninguem.", userName)
+	}
+
+	var names []string
+	for _, u := range targets {
+		names = append(names, u.Name)
+	}
+	return fmt.Sprintf("%s pode agendar na agenda de: %s", userName, strings.Join(names, ", "))
+}
+```
+
+- [ ] **Step 4: Add calendar_permissions table to db.go migrate()**
+
+In `bot/db.go`, add to the `migrate()` schema after `sent_reminders`:
+
+```sql
+CREATE TABLE IF NOT EXISTS calendar_permissions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    grantor_id   INTEGER NOT NULL REFERENCES users(id),
+    grantee_id   INTEGER NOT NULL REFERENCES users(id),
+    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(grantor_id, grantee_id)
+);
+```
+
+- [ ] **Step 5: Update IntentData in claude.go**
+
+Add field to `IntentData` struct:
+
+```go
+// Add to IntentData struct in claude.go
+TargetUser string `json:"target_user,omitempty"`
+```
+
+Update `BuildIntentPrompt` to include the `target_user` instruction and `consultar_log` intent:
+
+```go
+func BuildIntentPrompt(userName, message string) string {
+	now := time.Now().Format("2006-01-02 15:04 (Monday)")
+	return fmt.Sprintf(`Voce e um assistente de agenda. Analise a mensagem do usuario %s e retorne APENAS um JSON valido.
+
+Data/hora atual: %s
+
+Intencoes possiveis:
+- criar_evento: extraia title, date (YYYY-MM-DD), time (HH:MM), duration_minutes (default: 60). Se o usuario mencionar a agenda de outra pessoa, extraia target_user com o nome.
+- consultar_agenda: extraia start_date (YYYY-MM-DD), end_date (YYYY-MM-DD)
+- editar_evento: extraia search_query (texto para encontrar o evento), changes (objeto com campos a alterar)
+- cancelar_evento: extraia search_query
+- confirmar: o usuario esta confirmando uma acao pendente
+- negar: o usuario esta negando uma acao pendente
+- consultar_log: o usuario quer ver o historico de acoes. Extraia start_date, end_date.
+
+Responda APENAS com JSON, sem markdown, sem explicacao:
+{"intent": "...", "data": {...}, "confirmation_message": "mensagem amigavel para o usuario em portugues"}
+
+Mensagem do usuario: %s`, userName, now, message)
+}
+```
+
+- [ ] **Step 6: Update orchestrator.go to handle target_user and consultar_log**
+
+Add to `Orchestrator` struct:
+
+```go
+type Orchestrator struct {
+	claude        *ClaudeClient
+	cal           *CalendarClient
+	transcription *TranscriptionClient
+	db            *DB
+	cfg           *Config
+	confirm       *ConfirmationManager
+	perms         *PermissionManager
+	audit         *AuditLog
+}
+```
+
+Update `NewOrchestrator`:
+
+```go
+func NewOrchestrator(claude *ClaudeClient, cal *CalendarClient, transcription *TranscriptionClient, db *DB, cfg *Config) *Orchestrator {
+	o := &Orchestrator{
+		claude:        claude,
+		cal:           cal,
+		transcription: transcription,
+		db:            db,
+		cfg:           cfg,
+		perms:         NewPermissionManager(db),
+		audit:         NewAuditLog(db),
+	}
+	o.confirm = NewConfirmationManager(db, cal, cfg)
+	return o
+}
+```
+
+Update the `Process` method's `criar_evento` case to handle cross-user:
+
+```go
+case "criar_evento":
+	if intent.Data.TargetUser != "" {
+		return o.handleCrossUserCreate(ctx, user, intent)
+	}
+	o.audit.Log(user.ID, "criar_evento", "", intent.Data.Title)
+	return o.confirm.CreatePending(user, intent.Data, intent.ConfirmationMessage)
+
+// ... add new case:
+case "consultar_log":
+	return o.handleConsultarLog(ctx, user, intent)
+```
+
+Add new methods:
+
+```go
+func (o *Orchestrator) handleCrossUserCreate(ctx context.Context, user *User, intent *IntentResult) (string, error) {
+	targetUser, err := o.perms.ResolveByName(intent.Data.TargetUser)
+	if err == ErrTargetUserNotFound {
+		return fmt.Sprintf("Nao encontrei o usuario %s.", intent.Data.TargetUser), nil
+	}
+	if err != nil {
+		return "", err
+	}
+
+	allowed, err := o.perms.CanScheduleFor(user.ID, targetUser.ID)
+	if err != nil {
+		return "", err
+	}
+	if !allowed {
+		return fmt.Sprintf("Voce nao tem permissao para agendar na agenda de %s.", targetUser.Name), nil
+	}
+
+	// Store target info in confirmation for later execution
+	intent.Data.TargetUser = targetUser.Name
+	o.audit.Log(user.ID, "criar_evento", targetUser.Name, intent.Data.Title)
+	return o.confirm.CreatePending(user, intent.Data, intent.ConfirmationMessage)
+}
+
+func (o *Orchestrator) handleConsultarLog(ctx context.Context, user *User, intent *IntentResult) (string, error) {
+	loc := time.Now().Location()
+	startDate, err := time.ParseInLocation("2006-01-02", intent.Data.StartDate, loc)
+	if err != nil {
+		return "", fmt.Errorf("parse start_date: %w", err)
+	}
+	endDate, err := time.ParseInLocation("2006-01-02", intent.Data.EndDate, loc)
+	if err != nil {
+		return "", fmt.Errorf("parse end_date: %w", err)
+	}
+	endDate = endDate.Add(24*time.Hour - time.Second)
+
+	entries, err := o.audit.Query(user.ID, startDate, endDate)
+	if err != nil {
+		return "", err
+	}
+
+	o.audit.Log(user.ID, "consultar_log", "", fmt.Sprintf("%s a %s", intent.Data.StartDate, intent.Data.EndDate))
+	return FormatAuditLog(user.Name, entries), nil
+}
+```
+
+- [ ] **Step 7: Update confirmation.go to handle cross-user event creation**
+
+In `executeConfirmation`, when `data.TargetUser` is set, create the event on both calendars:
+
+```go
+func (cm *ConfirmationManager) executeConfirmation(user *User, pc *PendingConfirmation) (string, error) {
+	var data IntentData
+	if err := json.Unmarshal([]byte(pc.EventData), &data); err != nil {
+		return "", fmt.Errorf("unmarshal event data: %w", err)
+	}
+
+	refreshToken, err := Decrypt(user.GoogleCredentials, cm.cfg.EncryptionKey)
+	if err != nil {
+		return "", fmt.Errorf("decrypt credentials: %w", err)
+	}
+
+	startTime, err := time.ParseInLocation("2006-01-02 15:04", data.Date+" "+data.Time, time.Local)
+	if err != nil {
+		return "", fmt.Errorf("parse event time: %w", err)
+	}
+
+	duration := time.Duration(data.DurationMinutes) * time.Minute
+	if data.DurationMinutes == 0 {
+		duration = 60 * time.Minute
+	}
+
+	ev := CalendarEvent{
+		Title: data.Title,
+		Start: startTime,
+		End:   startTime.Add(duration),
+	}
+
+	// Create on user's own calendar
+	created, err := cm.cal.CreateEvent(nil, refreshToken, user.GoogleCalendarID, ev)
+	if err != nil {
+		return "", fmt.Errorf("create calendar event: %w", err)
+	}
+
+	// If cross-user, also create on target's calendar
+	if data.TargetUser != "" {
+		perm := NewPermissionManager(cm.db)
+		targetUser, err := perm.ResolveByName(data.TargetUser)
+		if err == nil {
+			targetToken, err := Decrypt(targetUser.GoogleCredentials, cm.cfg.EncryptionKey)
+			if err == nil {
+				cm.cal.CreateEvent(nil, targetToken, targetUser.GoogleCalendarID, ev)
+			}
+		}
+	}
+
+	if err := cm.db.ResolvePendingConfirmation(pc.ID, "confirmed"); err != nil {
+		return "", err
+	}
+
+	msg := FormatEventCreated(*created)
+	if data.TargetUser != "" {
+		msg += fmt.Sprintf("\n(Tambem adicionado na agenda de %s)", data.TargetUser)
+	}
+	return msg, nil
+}
+```
+
+- [ ] **Step 8: Add CLI commands to main.go**
+
+Add `grant-access`, `revoke-access`, `list-access` to the CLI switch in `main.go`:
+
+```go
+case "grant-access":
+	grantAccess()
+case "revoke-access":
+	revokeAccess()
+case "list-access":
+	listAccess()
+```
+
+Implement:
+
+```go
+func grantAccess() {
+	fs := flag.NewFlagSet("grant-access", flag.ExitOnError)
+	from := fs.String("from", "", "Phone of grantor (calendar owner)")
+	to := fs.String("to", "", "Phone of grantee (who gets access)")
+	fs.Parse(os.Args[2:])
+
+	if *from == "" || *to == "" {
+		fmt.Println("Usage: bot grant-access --from=5511... --to=5522...")
+		os.Exit(1)
+	}
+
+	db, err := NewDB("data/bot.db")
+	if err != nil { log.Fatalf("DB error: %v", err) }
+	defer db.Close()
+
+	grantor, err := db.GetUserByPhone(*from)
+	if err != nil { log.Fatalf("Grantor not found: %v", err) }
+	grantee, err := db.GetUserByPhone(*to)
+	if err != nil { log.Fatalf("Grantee not found: %v", err) }
+
+	perm := NewPermissionManager(db)
+	if err := perm.Grant(grantor.ID, grantee.ID); err != nil {
+		log.Fatalf("Grant failed: %v", err)
+	}
+
+	audit := NewAuditLog(db)
+	audit.Log(grantor.ID, "grant_access", grantee.Name, fmt.Sprintf("granted to %s", grantee.Name))
+
+	fmt.Printf("%s agora pode agendar na agenda de %s\n", grantee.Name, grantor.Name)
+}
+
+func revokeAccess() {
+	fs := flag.NewFlagSet("revoke-access", flag.ExitOnError)
+	from := fs.String("from", "", "Phone of grantor")
+	to := fs.String("to", "", "Phone of grantee")
+	fs.Parse(os.Args[2:])
+
+	if *from == "" || *to == "" {
+		fmt.Println("Usage: bot revoke-access --from=5511... --to=5522...")
+		os.Exit(1)
+	}
+
+	db, err := NewDB("data/bot.db")
+	if err != nil { log.Fatalf("DB error: %v", err) }
+	defer db.Close()
+
+	grantor, err := db.GetUserByPhone(*from)
+	if err != nil { log.Fatalf("Grantor not found: %v", err) }
+	grantee, err := db.GetUserByPhone(*to)
+	if err != nil { log.Fatalf("Grantee not found: %v", err) }
+
+	perm := NewPermissionManager(db)
+	if err := perm.Revoke(grantor.ID, grantee.ID); err != nil {
+		log.Fatalf("Revoke failed: %v", err)
+	}
+
+	audit := NewAuditLog(db)
+	audit.Log(grantor.ID, "revoke_access", grantee.Name, fmt.Sprintf("revoked from %s", grantee.Name))
+
+	fmt.Printf("Acesso de %s a agenda de %s revogado\n", grantee.Name, grantor.Name)
+}
+
+func listAccess() {
+	fs := flag.NewFlagSet("list-access", flag.ExitOnError)
+	phone := fs.String("user", "", "Phone of user to check")
+	fs.Parse(os.Args[2:])
+
+	if *phone == "" {
+		fmt.Println("Usage: bot list-access --user=5511...")
+		os.Exit(1)
+	}
+
+	db, err := NewDB("data/bot.db")
+	if err != nil { log.Fatalf("DB error: %v", err) }
+	defer db.Close()
+
+	user, err := db.GetUserByPhone(*phone)
+	if err != nil { log.Fatalf("User not found: %v", err) }
+
+	perm := NewPermissionManager(db)
+	targets, err := perm.ListTargetsFor(user.ID)
+	if err != nil { log.Fatalf("List failed: %v", err) }
+
+	fmt.Println(FormatAccessList(user.Name, targets))
+}
+```
+
+- [ ] **Step 9: Run all tests**
+
+```bash
+cd /Users/giovanni/Documents/GitHub/assistente_pessoal
+go test ./bot/ -v -run "TestGrant|TestList|TestResolve"
+```
+
+Expected: all PASS.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add bot/permissions.go bot/permissions_test.go bot/audit.go bot/audit_test.go bot/claude.go bot/orchestrator.go bot/confirmation.go bot/db.go bot/main.go
+git commit -m "feat: add cross-user calendar permissions and audit log"
+```
+
+---
+
+## Task 18: Production Hardening
+
+**Files:**
+- Create: `bot/watchdog.go`, `terraform/modules/monitoring/main.tf`, `scripts/backup.sh`, `scripts/assistente-bot.service`
+
+- [ ] **Step 1: Create WhatsApp connection watchdog**
+
+```go
+// bot/watchdog.go
+package main
+
+import (
+	"log"
+	"time"
+
+	"go.mau.fi/whatsmeow"
+)
+
+type Watchdog struct {
+	client  *whatsmeow.Client
+	sendMsg func(phone, text string) error
+	adminPhone string
+	interval   time.Duration
+}
+
+func NewWatchdog(client *whatsmeow.Client, sendMsg func(phone, text string) error, adminPhone string) *Watchdog {
+	return &Watchdog{
+		client:     client,
+		sendMsg:    sendMsg,
+		adminPhone: adminPhone,
+		interval:   5 * time.Minute,
+	}
+}
+
+func (w *Watchdog) Start() {
+	go func() {
+		consecutiveFails := 0
+		for {
+			time.Sleep(w.interval)
+
+			if !w.client.IsConnected() {
+				consecutiveFails++
+				log.Printf("Watchdog: WhatsApp disconnected (attempt %d)", consecutiveFails)
+
+				err := w.client.Connect()
+				if err != nil {
+					log.Printf("Watchdog: reconnect failed: %v", err)
+					if consecutiveFails >= 3 && w.adminPhone != "" {
+						// Try to alert admin (may fail if disconnected)
+						log.Printf("Watchdog: ALERT — 3 consecutive reconnect failures")
+					}
+					continue
+				}
+
+				log.Println("Watchdog: reconnected successfully")
+				consecutiveFails = 0
+			} else {
+				consecutiveFails = 0
+			}
+		}
+	}()
+	log.Println("Watchdog started (interval: 5m)")
+}
+```
+
+- [ ] **Step 2: Create systemd service file**
+
+Create `scripts/assistente-bot.service`:
+
+```ini
+# scripts/assistente-bot.service
+# Copy to /etc/systemd/system/assistente-bot.service on EC2
+
+[Unit]
+Description=Assistente Pessoal WhatsApp Bot
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/assistente
+ExecStart=/usr/bin/docker compose up
+ExecStop=/usr/bin/docker compose down
+Restart=always
+RestartSec=10
+User=ec2-user
+
+# Restart limits
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=assistente-bot
+
+[Install]
+WantedBy=multi-user.target
+```
+
+- [ ] **Step 3: Create SQLite backup script**
+
+Create `scripts/backup.sh`:
+
+```bash
+#!/bin/bash
+# scripts/backup.sh — Daily SQLite backup to S3
+# Run via cron: 0 3 * * * /opt/assistente/scripts/backup.sh
+
+set -euo pipefail
+
+BACKUP_DIR="/tmp/assistente-backup"
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+S3_BUCKET="${S3_BACKUP_BUCKET:-assistente-backups}"
+DATA_DIR="/opt/assistente/data"
+
+mkdir -p "$BACKUP_DIR"
+
+# SQLite online backup (safe while bot is running)
+sqlite3 "$DATA_DIR/bot.db" ".backup '$BACKUP_DIR/bot-$TIMESTAMP.db'"
+sqlite3 "$DATA_DIR/whatsmeow.db" ".backup '$BACKUP_DIR/whatsmeow-$TIMESTAMP.db'"
+
+# Compress
+tar -czf "$BACKUP_DIR/backup-$TIMESTAMP.tar.gz" -C "$BACKUP_DIR" \
+    "bot-$TIMESTAMP.db" "whatsmeow-$TIMESTAMP.db"
+
+# Upload to S3
+aws s3 cp "$BACKUP_DIR/backup-$TIMESTAMP.tar.gz" \
+    "s3://$S3_BUCKET/backups/backup-$TIMESTAMP.tar.gz"
+
+# Cleanup local
+rm -rf "$BACKUP_DIR"
+
+# Cleanup old S3 backups (keep 30 days)
+aws s3 ls "s3://$S3_BUCKET/backups/" | \
+    awk '{print $4}' | \
+    sort | \
+    head -n -30 | \
+    xargs -I {} aws s3 rm "s3://$S3_BUCKET/backups/{}"
+
+echo "Backup completed: backup-$TIMESTAMP.tar.gz"
+```
+
+- [ ] **Step 4: Add Docker log rotation to docker-compose.yml**
+
+Update both services in `docker-compose.yml` to add logging config:
+
+```yaml
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+```
+
+- [ ] **Step 5: Add CloudWatch and S3 to Terraform**
+
+Add to `terraform/main.tf`:
+
+```hcl
+# S3 bucket for backups
+resource "aws_s3_bucket" "backups" {
+  bucket_prefix = "assistente-backups-"
+  force_destroy = true
+
+  tags = {
+    Name = "assistente-backups"
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "backups" {
+  bucket = aws_s3_bucket.backups.id
+
+  rule {
+    id     = "expire-old-backups"
+    status = "Enabled"
+    expiration {
+      days = 30
+    }
+  }
+}
+
+# IAM role for EC2 (S3 access + CloudWatch)
+resource "aws_iam_role" "bot" {
+  name_prefix = "assistente-bot-"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "bot" {
+  role = aws_iam_role.bot.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = ["s3:PutObject", "s3:GetObject", "s3:ListBucket", "s3:DeleteObject"]
+        Resource = [aws_s3_bucket.backups.arn, "${aws_s3_bucket.backups.arn}/*"]
+      },
+      {
+        Effect = "Allow"
+        Action = ["cloudwatch:PutMetricData", "logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_instance_profile" "bot" {
+  name_prefix = "assistente-bot-"
+  role        = aws_iam_role.bot.name
+}
+
+# EC2 Auto Recovery
+resource "aws_cloudwatch_metric_alarm" "auto_recovery" {
+  alarm_name          = "assistente-bot-auto-recovery"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "StatusCheckFailed_System"
+  namespace           = "AWS/EC2"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 0
+
+  dimensions = {
+    InstanceId = aws_instance.bot.id
+  }
+
+  alarm_actions = ["arn:aws:automate:${var.aws_region}:ec2:recover"]
+}
+
+# SNS topic for alerts
+resource "aws_sns_topic" "alerts" {
+  name = "assistente-bot-alerts"
+}
+
+resource "aws_sns_topic_subscription" "email" {
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
+# High CPU alarm
+resource "aws_cloudwatch_metric_alarm" "high_cpu" {
+  alarm_name          = "assistente-bot-high-cpu"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 300
+  statistic           = "Average"
+  threshold           = 80
+
+  dimensions = {
+    InstanceId = aws_instance.bot.id
+  }
+
+  alarm_actions = [aws_sns_topic.alerts.arn]
+}
+```
+
+Update EC2 instance to use IAM profile:
+
+```hcl
+# Add to aws_instance.bot:
+  iam_instance_profile = aws_iam_instance_profile.bot.name
+```
+
+Add variable:
+
+```hcl
+# Add to variables.tf:
+variable "alert_email" {
+  description = "Email for CloudWatch alerts"
+  type        = string
+}
+```
+
+Add output:
+
+```hcl
+# Add to outputs.tf:
+output "backup_bucket" {
+  description = "S3 bucket for backups"
+  value       = aws_s3_bucket.backups.id
+}
+```
+
+- [ ] **Step 6: Update cloud-init.yaml for backup cron and CloudWatch agent**
+
+Add to `runcmd` in `terraform/cloud-init.yaml`:
+
+```yaml
+  # Install CloudWatch agent
+  - yum install -y amazon-cloudwatch-agent
+  - |
+    cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CWEOF'
+    {
+      "metrics": {
+        "metrics_collected": {
+          "disk": { "measurement": ["used_percent"], "resources": ["*"] },
+          "mem": { "measurement": ["mem_used_percent"] }
+        }
+      },
+      "logs": {
+        "logs_collected": {
+          "files": {
+            "collect_list": [{
+              "file_path": "/var/log/messages",
+              "log_group_name": "assistente-bot",
+              "log_stream_name": "{instance_id}/syslog"
+            }]
+          }
+        }
+      }
+    }
+    CWEOF
+  - systemctl enable amazon-cloudwatch-agent
+  - systemctl start amazon-cloudwatch-agent
+
+  # Install sqlite3 for backups
+  - yum install -y sqlite
+
+  # Setup backup cron
+  - echo "0 3 * * * ec2-user /opt/assistente/scripts/backup.sh >> /var/log/assistente-backup.log 2>&1" > /etc/cron.d/assistente-backup
+
+  # Enable systemd service
+  - cp /opt/assistente/scripts/assistente-bot.service /etc/systemd/system/
+  - systemctl daemon-reload
+  - systemctl enable assistente-bot
+```
+
+- [ ] **Step 7: Wire watchdog into main.go**
+
+Add after scheduler start in `runBot()`:
+
+```go
+// Start watchdog
+adminPhone := os.Getenv("ADMIN_PHONE")
+watchdog := NewWatchdog(waClient, handler.SendTextToPhone, adminPhone)
+watchdog.Start()
+```
+
+- [ ] **Step 8: Verify it compiles**
+
+```bash
+cd /Users/giovanni/Documents/GitHub/assistente_pessoal/bot
+go build -o /dev/null .
+```
+
+Expected: exits 0.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add bot/watchdog.go scripts/ docker-compose.yml terraform/
+git commit -m "feat: add production hardening — watchdog, backups, monitoring, systemd"
+```
+
+---
+
 ## Summary of Tasks
 
 | # | Task | Focus |
@@ -3161,3 +4303,6 @@ git commit -m "docs: add CLAUDE.md with project conventions and dev commands"
 | 13 | Terraform IaC | EC2, SG, EIP, cloud-init |
 | 14 | Integration tests | End-to-end confirmation flow tests |
 | 15 | CLAUDE.md | Project conventions and dev docs |
+| 16 | Audit log | Action logging + WhatsApp query + tests |
+| 17 | Calendar delegation | Cross-user permissions, CLI management + tests |
+| 18 | Production hardening | Watchdog, systemd, backups, CloudWatch, auto-recovery |
