@@ -39,6 +39,7 @@ func (h *Handler) HandleEvent(evt interface{}) {
 
 func (h *Handler) handleMessage(msg *events.Message) {
 	sender := msg.Info.Sender.User
+	log.Printf("DEBUG: message from sender=%s isFromMe=%v isGroup=%v", sender, msg.Info.IsFromMe, msg.Info.IsGroup)
 
 	// Ignore messages from self (the bot's own number)
 	if msg.Info.IsFromMe {
