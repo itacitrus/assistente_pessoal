@@ -1,0 +1,16 @@
+#cloud-config
+package_update: true
+packages:
+  - docker
+  - git
+
+runcmd:
+  - systemctl enable docker
+  - systemctl start docker
+  - usermod -aG docker ec2-user
+  - mkdir -p /usr/local/lib/docker/cli-plugins
+  - curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" -o /usr/local/lib/docker/cli-plugins/docker-compose
+  - chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+  - timedatectl set-timezone America/Sao_Paulo
+  - mkdir -p /opt/assistente
+  - chown ec2-user:ec2-user /opt/assistente
