@@ -23,6 +23,7 @@ func main() {
 		fmt.Println("Commands:")
 		fmt.Println("  run            Start the WhatsApp bot")
 		fmt.Println("  add-user       Add a new user")
+		fmt.Println("  remove-user    Remove a user")
 		fmt.Println("  grant-access   Grant a user permission to schedule on another's calendar")
 		fmt.Println("  revoke-access  Revoke a user's permission to schedule on another's calendar")
 		fmt.Println("  list-access    List users a given user can schedule for")
@@ -34,6 +35,8 @@ func main() {
 		runBot()
 	case "add-user":
 		addUser()
+	case "remove-user":
+		removeUser()
 	case "grant-access":
 		grantAccess()
 	case "revoke-access":
@@ -211,6 +214,32 @@ func openDBForCLI() *DB {
 		log.Fatalf("Failed to init database: %v", err)
 	}
 	return db
+}
+
+func removeUser() {
+	fs := flag.NewFlagSet("remove-user", flag.ExitOnError)
+	phone := fs.String("phone", "", "Phone number of user to remove")
+	fs.Parse(os.Args[2:])
+
+	if *phone == "" {
+		fmt.Println("Usage: bot remove-user --phone=5511...")
+		os.Exit(1)
+	}
+
+	db := openDBForCLI()
+	defer db.Close()
+
+	user, err := db.GetUserByPhone(*phone)
+	if err != nil {
+		log.Fatalf("User not found: %v", err)
+	}
+
+	_, err = db.conn.Exec("DELETE FROM users WHERE id = ?", user.ID)
+	if err != nil {
+		log.Fatalf("Failed to remove user: %v", err)
+	}
+
+	fmt.Printf("User %s (%s) removed.\n", user.Name, user.PhoneNumber)
 }
 
 func grantAccess() {
