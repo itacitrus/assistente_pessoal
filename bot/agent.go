@@ -259,7 +259,8 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"date": {"type": "string", "description": "Data do evento (YYYY-MM-DD)"},
 					"time": {"type": "string", "description": "Horario de inicio (HH:MM)"},
 					"duration_minutes": {"type": "integer", "description": "Duracao em minutos (default: 60)"},
-					"location": {"type": "string", "description": "Local do evento (opcional)"}
+					"location": {"type": "string", "description": "Local do evento (opcional)"},
+					"com_meet": {"type": "boolean", "description": "Se true, gera link do Google Meet automaticamente"}
 				},
 				"required": ["title", "date", "time"]
 			}`),
@@ -317,6 +318,17 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"location": {"type": "string", "description": "Local do evento (opcional)"}
 				},
 				"required": ["target_user", "title", "date", "time"]
+			}`),
+		},
+		{
+			Name:        "gerar_link_meet",
+			Description: "Gera um link do Google Meet para um evento existente.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"search_query": {"type": "string", "description": "Texto para encontrar o evento"}
+				},
+				"required": ["search_query"]
 			}`),
 		},
 	}

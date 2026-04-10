@@ -21,6 +21,7 @@ type CalendarEvent struct {
 	Start    time.Time
 	End      time.Time
 	Location string
+	MeetLink string
 }
 
 func NewCalendarClient(clientID, clientSecret, redirectURI string) *CalendarClient {
@@ -68,15 +69,40 @@ func (c *CalendarClient) CreateEvent(ctx context.Context, refreshToken, calendar
 		},
 	}
 
-	created, err := svc.Events.Insert(calendarID, event).Do()
+	// Add Google Meet if requested
+	if ev.MeetLink == "generate" {
+		event.ConferenceData = &calendar.ConferenceData{
+			CreateRequest: &calendar.CreateConferenceRequest{
+				RequestId:             fmt.Sprintf("meet-%d", time.Now().UnixNano()),
+				ConferenceSolutionKey: &calendar.ConferenceSolutionKey{Type: "hangoutsMeet"},
+			},
+		}
+	}
+
+	insertCall := svc.Events.Insert(calendarID, event)
+	if ev.MeetLink == "generate" {
+		insertCall = insertCall.ConferenceDataVersion(1)
+	}
+	created, err := insertCall.Do()
 	if err != nil {
 		return nil, fmt.Errorf("insert event: %w", err)
 	}
 
+	meetLink := ""
+	if created.ConferenceData != nil && created.ConferenceData.EntryPoints != nil {
+		for _, ep := range created.ConferenceData.EntryPoints {
+			if ep.EntryPointType == "video" {
+				meetLink = ep.Uri
+				break
+			}
+		}
+	}
+
 	return &CalendarEvent{
-		ID:    created.Id,
-		Title: created.Summary,
-		Start: ev.Start,
+		ID:       created.Id,
+		Title:    created.Summary,
+		MeetLink: meetLink,
+		Start:    ev.Start,
 		End:   ev.End,
 	}, nil
 }
@@ -156,6 +182,39 @@ func (c *CalendarClient) UpdateEvent(ctx context.Context, refreshToken, calendar
 
 	_, err = svc.Events.Update(calendarID, eventID, existing).Do()
 	return err
+}
+
+func (c *CalendarClient) AddMeetLink(ctx context.Context, refreshToken, calendarID, eventID string) (string, error) {
+	svc, err := c.serviceForUser(ctx, refreshToken)
+	if err != nil {
+		return "", fmt.Errorf("calendar service: %w", err)
+	}
+
+	existing, err := svc.Events.Get(calendarID, eventID).Do()
+	if err != nil {
+		return "", fmt.Errorf("get event: %w", err)
+	}
+
+	existing.ConferenceData = &calendar.ConferenceData{
+		CreateRequest: &calendar.CreateConferenceRequest{
+			RequestId:             fmt.Sprintf("meet-%d", time.Now().UnixNano()),
+			ConferenceSolutionKey: &calendar.ConferenceSolutionKey{Type: "hangoutsMeet"},
+		},
+	}
+
+	updated, err := svc.Events.Update(calendarID, eventID, existing).ConferenceDataVersion(1).Do()
+	if err != nil {
+		return "", fmt.Errorf("add meet: %w", err)
+	}
+
+	if updated.ConferenceData != nil {
+		for _, ep := range updated.ConferenceData.EntryPoints {
+			if ep.EntryPointType == "video" {
+				return ep.Uri, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("meet link not generated")
 }
 
 func (c *CalendarClient) FindEvent(ctx context.Context, refreshToken, calendarID, query string) (*CalendarEvent, error) {

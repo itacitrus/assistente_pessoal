@@ -16,6 +16,7 @@ var toolHandlers = map[string]ToolHandler{
 	"cancelar_evento":            handleCancelarEvento,
 	"buscar_historico":           handleBuscarHistorico,
 	"criar_evento_outro_usuario": handleCriarEventoOutroUsuario,
+	"gerar_link_meet":            handleGerarLinkMeet,
 }
 
 type buscarAgendaParams struct {
@@ -60,6 +61,7 @@ type criarEventoParams struct {
 	Time            string `json:"time"`
 	DurationMinutes int    `json:"duration_minutes"`
 	Location        string `json:"location"`
+	ComMeet         bool   `json:"com_meet"`
 }
 
 func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
@@ -90,6 +92,9 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 		Start:    startTime,
 		End:      startTime.Add(duration),
 	}
+	if p.ComMeet {
+		ev.MeetLink = "generate"
+	}
 
 	created, err := agent.cal.CreateEvent(ctx, refreshToken, user.GoogleCalendarID, ev)
 	if err != nil {
@@ -97,7 +102,11 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 	}
 
 	agent.audit.Log(user.ID, "criar_evento", "", p.Title)
-	return FormatEventCreated(*created), nil
+	result := FormatEventCreated(*created)
+	if created.MeetLink != "" {
+		result += fmt.Sprintf("\nLink do Meet: %s", created.MeetLink)
+	}
+	return result, nil
 }
 
 type editarEventoParams struct {
@@ -308,4 +317,33 @@ func handleCriarEventoOutroUsuario(ctx context.Context, agent *Agent, user *User
 	agent.audit.Log(user.ID, "criar_evento", target.Name, p.Title)
 	log.Printf("[%s] Created event on %s's calendar: %s", user.Name, target.Name, p.Title)
 	return fmt.Sprintf("Evento criado na agenda de %s: %s", target.Name, FormatEventCreated(*created)), nil
+}
+
+type gerarLinkMeetParams struct {
+	SearchQuery string `json:"search_query"`
+}
+
+func handleGerarLinkMeet(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
+	var p gerarLinkMeetParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "", fmt.Errorf("parse params: %w", err)
+	}
+
+	refreshToken, err := Decrypt(user.GoogleCredentials, agent.cfg.EncryptionKey)
+	if err != nil {
+		return "", fmt.Errorf("decrypt credentials: %w", err)
+	}
+
+	ev, err := agent.cal.FindEvent(ctx, refreshToken, user.GoogleCalendarID, p.SearchQuery)
+	if err != nil {
+		return fmt.Sprintf("Nao encontrei o evento: %v", err), nil
+	}
+
+	meetLink, err := agent.cal.AddMeetLink(ctx, refreshToken, user.GoogleCalendarID, ev.ID)
+	if err != nil {
+		return "", fmt.Errorf("add meet link: %w", err)
+	}
+
+	agent.audit.Log(user.ID, "gerar_meet", "", ev.Title)
+	return fmt.Sprintf("Link do Meet para *%s*: %s", ev.Title, meetLink), nil
 }
