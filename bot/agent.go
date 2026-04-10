@@ -209,6 +209,7 @@ Cenarios para escalar:
 Na duvida, ESCALE. Errar pra cima e melhor que errar pra baixo.
 
 Se for simples e voce tiver certeza, use as ferramentas disponiveis.
+O usuario pode te mandar audios e contatos — eles sao transcritos/convertidos em texto automaticamente antes de chegar a voce. Voce CONSEGUE entender audios.
 SEMPRE use buscar_agenda quando o usuario perguntar sobre compromissos — NUNCA responda sobre agenda usando memoria da conversa.
 Ao criar evento com informacoes claras, crie DIRETO e avise (nao peca confirmacao).
 Responda em portugues, informal mas profissional. Seja MUITO conciso — maximo 2-3 frases. Sem emojis excessivos. Va direto ao ponto.
@@ -221,6 +222,8 @@ Data/hora atual: %s`, userName, now)
 func buildSonnetSystemPrompt(userName string) string {
 	now := time.Now().Format("2006-01-02 15:04 (Monday)")
 	return fmt.Sprintf(`Voce e o assistente pessoal de %s via WhatsApp. Seja conciso e amigavel.
+
+O usuario pode te mandar audios e contatos — eles sao transcritos/convertidos em texto automaticamente. Voce CONSEGUE entender audios.
 
 Voce tem ferramentas para gerenciar a agenda. Use-as livremente:
 - SEMPRE use buscar_agenda quando o usuario perguntar sobre compromissos — NUNCA responda sobre agenda usando memoria da conversa
