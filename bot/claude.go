@@ -80,7 +80,7 @@ func (c *ClaudeClient) ExtractIntent(ctx context.Context, userName, message stri
 	prompt := BuildIntentPrompt(userName, message)
 
 	resp, err := c.client.CreateMessages(ctx, anthropic.MessagesRequest{
-		Model:     anthropic.ModelClaude3Dot5Sonnet20241022,
+		Model:     anthropic.ModelClaudeHaiku4Dot5,
 		MaxTokens: 1024,
 		Messages: []anthropic.Message{
 			{
