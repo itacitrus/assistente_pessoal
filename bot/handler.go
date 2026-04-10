@@ -105,7 +105,7 @@ func (h *Handler) handleMessage(msg *events.Message) {
 		h.unknownMu.Unlock()
 
 		log.Printf("Unknown number: %s", sender)
-		h.sendText(msg.Info.Sender, "Nao te conheço ainda. Peca ao administrador para te cadastrar.")
+		h.sendText(senderJID, "Nao te conheço ainda. Peca ao administrador para te cadastrar.")
 		return
 	}
 	if err != nil {
@@ -124,13 +124,13 @@ func (h *Handler) handleMessage(msg *events.Message) {
 		audioData, err := h.client.Download(ctx, audioMsg)
 		if err != nil {
 			log.Printf("Error downloading audio from %s: %v", sender, err)
-			h.sendText(msg.Info.Sender, "Nao consegui baixar o audio. Tente novamente.")
+			h.sendText(senderJID, "Nao consegui baixar o audio. Tente novamente.")
 			return
 		}
 		text, err = h.orchestrator.transcription.Transcribe(audioData, "audio.ogg")
 		if err != nil {
 			log.Printf("Error transcribing audio from %s: %v", sender, err)
-			h.sendText(msg.Info.Sender, "Nao consegui transcrever o audio. Tente novamente.")
+			h.sendText(senderJID, "Nao consegui transcrever o audio. Tente novamente.")
 			return
 		}
 	} else if textMsg := msg.Message.GetConversation(); textMsg != "" {
@@ -153,7 +153,7 @@ func (h *Handler) handleMessage(msg *events.Message) {
 			log.Printf("Error handling permission response from %s: %v", sender, err)
 		} else if handled {
 			if reply != "" {
-				h.sendText(msg.Info.Sender, reply)
+				h.sendText(senderJID, reply)
 			}
 			return
 		}
@@ -162,14 +162,14 @@ func (h *Handler) handleMessage(msg *events.Message) {
 	response, err := h.orchestrator.Process(ctx, user, text)
 	if err != nil {
 		log.Printf("Error processing message from %s: %v", sender, err)
-		h.sendText(msg.Info.Sender, "Ocorreu um erro ao processar sua mensagem. Tente novamente.")
+		h.sendText(senderJID, "Ocorreu um erro ao processar sua mensagem. Tente novamente.")
 		return
 	}
 
 	if response != "" {
 		// Save bot response to conversation history
 		h.db.AddConversationMessage(user.ID, "assistant", response)
-		h.sendText(msg.Info.Sender, response)
+		h.sendText(senderJID, response)
 	}
 }
 
