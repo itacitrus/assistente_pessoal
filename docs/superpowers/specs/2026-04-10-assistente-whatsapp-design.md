@@ -196,11 +196,50 @@ Claude extrai: intent=criar_evento, target_user="Andre"
     │
     ▼
 Bot verifica: Waldyr tem permissão na agenda do Andre? (calendar_permissions)
-    ├── Sim ──► Cria evento na agenda do Andre E na agenda do Waldyr (ambos participam)
-    └── Não ──► "Voce nao tem permissao para agendar na agenda do Andre."
+    │
+    ├── SIM ──► Cria evento na agenda do Andre E na agenda do Waldyr (ambos participam)
+    │
+    └── NÃO ──► Bot pergunta ao Waldyr: "Voce nao tem permissao. Quer que eu peça ao Andre?"
+                   │
+                   ├── Waldyr: "sim"
+                   │     ──► Bot manda mensagem para Andre:
+                   │          "Waldyr quer agendar 'Reuniao' na sua agenda amanha as 10h.
+                   │           1) Sim, apenas este evento
+                   │           2) Sim, autorizo sempre
+                   │           3) Nao"
+                   │              │
+                   │              ├── Andre: "1" ──► Cria evento SEM permissão permanente
+                   │              │                   Bot avisa Waldyr: "Andre autorizou!"
+                   │              ├── Andre: "2" ──► Cria evento + salva permissão permanente
+                   │              │                   Bot avisa Waldyr: "Andre autorizou permanentemente!"
+                   │              ├── Andre: "3" ──► Descarta
+                   │              │                   Bot avisa Waldyr: "Andre nao autorizou."
+                   │              └── 2h sem resposta ──► Expira, notifica Waldyr
+                   │
+                   └── Waldyr: "não" ──► Descarta
 ```
 
-**Gestão via CLI:**
+**Autorização pontual vs permanente:**
+
+Quando o alvo (Andre) recebe o pedido de autorização, ele tem 3 opções:
+1. "Sim, apenas este evento" — cria o evento sem salvar permissão permanente
+2. "Sim, autorizo sempre" — cria o evento E salva permissão permanente em `calendar_permissions`
+3. "Não" — recusa, notifica o solicitante
+
+Se o alvo não responder em 2h, o pedido é descartado e o solicitante é notificado.
+
+```sql
+CREATE TABLE pending_permission_requests (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    requester_id    INTEGER NOT NULL REFERENCES users(id),
+    target_id       INTEGER NOT NULL REFERENCES users(id),
+    event_data      TEXT NOT NULL,
+    status          TEXT DEFAULT 'pending',  -- pending | approved_once | approved_always | denied | expired
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+**Gestão também via CLI (para o admin):**
 
 ```bash
 ./bot grant-access --from=5511111111111 --to=5522222222222   # Andre autoriza Waldyr
@@ -303,7 +342,7 @@ e retorne APENAS um JSON com a estrutura abaixo.
 Data/hora atual: {now}
 
 Intenções possíveis:
-- criar_evento: extraia title, date (YYYY-MM-DD), time (HH:MM), duration_minutes (default: 60). Se o usuario mencionar a agenda de outra pessoa, extraia target_user com o nome da pessoa.
+- criar_evento: extraia title, date (YYYY-MM-DD), time (HH:MM), duration_minutes (default: 60), location (se mencionado). Se o usuario mencionar a agenda de outra pessoa, extraia target_user com o nome da pessoa.
 - consultar_agenda: extraia start_date, end_date
 - editar_evento: extraia search_query (para encontrar o evento), campos a alterar
 - cancelar_evento: extraia search_query

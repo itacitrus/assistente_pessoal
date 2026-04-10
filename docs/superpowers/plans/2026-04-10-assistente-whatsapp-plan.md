@@ -1060,8 +1060,10 @@ type IntentData struct {
 	Date            string `json:"date,omitempty"`
 	Time            string `json:"time,omitempty"`
 	DurationMinutes int    `json:"duration_minutes,omitempty"`
+	Location        string `json:"location,omitempty"`
+	TargetUser      string `json:"target_user,omitempty"`
 
-	// consultar_agenda
+	// consultar_agenda / consultar_log
 	StartDate string `json:"start_date,omitempty"`
 	EndDate   string `json:"end_date,omitempty"`
 
@@ -1087,12 +1089,13 @@ func BuildIntentPrompt(userName, message string) string {
 Data/hora atual: %s
 
 Intencoes possiveis:
-- criar_evento: extraia title, date (YYYY-MM-DD), time (HH:MM), duration_minutes (default: 60)
+- criar_evento: extraia title, date (YYYY-MM-DD), time (HH:MM), duration_minutes (default: 60), location (se mencionado). Se o usuario mencionar a agenda de outra pessoa, extraia target_user com o nome.
 - consultar_agenda: extraia start_date (YYYY-MM-DD), end_date (YYYY-MM-DD)
 - editar_evento: extraia search_query (texto para encontrar o evento), changes (objeto com campos a alterar)
 - cancelar_evento: extraia search_query
 - confirmar: o usuario esta confirmando uma acao pendente
 - negar: o usuario esta negando uma acao pendente
+- consultar_log: o usuario quer ver o historico de acoes. Extraia start_date, end_date.
 
 Responda APENAS com JSON, sem markdown, sem explicacao:
 {"intent": "...", "data": {...}, "confirmation_message": "mensagem amigavel para o usuario em portugues"}
@@ -1897,9 +1900,10 @@ func (cm *ConfirmationManager) executeConfirmation(user *User, pc *PendingConfir
 	}
 
 	ev := CalendarEvent{
-		Title: data.Title,
-		Start: startTime,
-		End:   startTime.Add(duration),
+		Title:    data.Title,
+		Location: data.Location,
+		Start:    startTime,
+		End:      startTime.Add(duration),
 	}
 
 	created, err := cm.cal.CreateEvent(nil, refreshToken, user.GoogleCalendarID, ev)
@@ -3588,7 +3592,7 @@ func FormatAccessList(userName string, targets []User) string {
 }
 ```
 
-- [ ] **Step 4: Add calendar_permissions table to db.go migrate()**
+- [ ] **Step 4: Add new tables to db.go migrate()**
 
 In `bot/db.go`, add to the `migrate()` schema after `sent_reminders`:
 
@@ -3600,45 +3604,154 @@ CREATE TABLE IF NOT EXISTS calendar_permissions (
     created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(grantor_id, grantee_id)
 );
+
+CREATE TABLE IF NOT EXISTS pending_permission_requests (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    requester_id    INTEGER NOT NULL REFERENCES users(id),
+    target_id       INTEGER NOT NULL REFERENCES users(id),
+    event_data      TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+Also add DB methods for permission requests:
+
+```go
+func (db *DB) CreatePermissionRequest(requesterID, targetID int64, eventData string) (int64, error) {
+	// Cancel any existing pending request from same requester to same target
+	db.conn.Exec(`UPDATE pending_permission_requests SET status = 'expired' WHERE requester_id = ? AND target_id = ? AND status = 'pending'`, requesterID, targetID)
+
+	result, err := db.conn.Exec(
+		`INSERT INTO pending_permission_requests (requester_id, target_id, event_data) VALUES (?, ?, ?)`,
+		requesterID, targetID, eventData)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func (db *DB) GetPendingPermissionRequest(targetID int64) (*PermissionRequest, error) {
+	pr := &PermissionRequest{}
+	err := db.conn.QueryRow(
+		`SELECT ppr.id, ppr.requester_id, ppr.target_id, ppr.event_data, ppr.status, ppr.created_at,
+		 u.name, u.phone_number
+		 FROM pending_permission_requests ppr
+		 JOIN users u ON u.id = ppr.requester_id
+		 WHERE ppr.target_id = ? AND ppr.status = 'pending'
+		 ORDER BY ppr.created_at DESC LIMIT 1`, targetID,
+	).Scan(&pr.ID, &pr.RequesterID, &pr.TargetID, &pr.EventData, &pr.Status, &pr.CreatedAt,
+		&pr.RequesterName, &pr.RequesterPhone)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNoPendingConfirmation
+	}
+	return pr, err
+}
+
+func (db *DB) ResolvePermissionRequest(id int64, status string) error {
+	_, err := db.conn.Exec(
+		`UPDATE pending_permission_requests SET status = ? WHERE id = ?`, status, id)
+	return err
+}
+
+func (db *DB) GetExpiredPermissionRequests(timeout time.Duration) ([]PermissionRequest, error) {
+	cutoff := time.Now().Add(-timeout)
+	rows, err := db.conn.Query(
+		`SELECT ppr.id, ppr.requester_id, ppr.target_id, ppr.event_data, ppr.status, ppr.created_at,
+		 u.name, u.phone_number
+		 FROM pending_permission_requests ppr
+		 JOIN users u ON u.id = ppr.requester_id
+		 WHERE ppr.status = 'pending' AND ppr.created_at < ?`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []PermissionRequest
+	for rows.Next() {
+		var pr PermissionRequest
+		if err := rows.Scan(&pr.ID, &pr.RequesterID, &pr.TargetID, &pr.EventData, &pr.Status, &pr.CreatedAt,
+			&pr.RequesterName, &pr.RequesterPhone); err != nil {
+			return nil, err
+		}
+		results = append(results, pr)
+	}
+	return results, rows.Err()
+}
+```
+
+Add the struct:
+
+```go
+type PermissionRequest struct {
+	ID             int64
+	RequesterID    int64
+	TargetID       int64
+	EventData      string
+	Status         string
+	CreatedAt      time.Time
+	RequesterName  string
+	RequesterPhone string
+}
 ```
 
 - [ ] **Step 5: Update IntentData in claude.go**
 
-Add field to `IntentData` struct:
+The `IntentData` struct already has `TargetUser` and `Location` from earlier steps. The `BuildIntentPrompt` already includes `target_user`, `location`, and `consultar_log`. No changes needed — this was done in Task 4.
 
-```go
-// Add to IntentData struct in claude.go
-TargetUser string `json:"target_user,omitempty"`
+Verify the prompt includes all instructions:
+
+```bash
+cd /Users/giovanni/Documents/GitHub/assistente_pessoal
+grep -A 5 "target_user" bot/claude.go
 ```
 
-Update `BuildIntentPrompt` to include the `target_user` instruction and `consultar_log` intent:
+- [ ] **Step 6: Add conversational permission flow to permissions.go**
+
+Add to `permissions.go`:
 
 ```go
-func BuildIntentPrompt(userName, message string) string {
-	now := time.Now().Format("2006-01-02 15:04 (Monday)")
-	return fmt.Sprintf(`Voce e um assistente de agenda. Analise a mensagem do usuario %s e retorne APENAS um JSON valido.
+// RequestPermission creates a pending permission request and returns the message to send to the target user.
+func (p *PermissionManager) RequestPermission(requesterID, targetID int64, eventData string, requesterName, eventTitle string) (int64, string, error) {
+	id, err := p.db.CreatePermissionRequest(requesterID, targetID, eventData)
+	if err != nil {
+		return 0, "", err
+	}
 
-Data/hora atual: %s
+	msg := fmt.Sprintf("%s quer agendar *%s* na sua agenda.\n\nAutoriza?\n1) Sim, apenas este evento\n2) Sim, autorizo sempre\n3) Nao",
+		requesterName, eventTitle)
+	return id, msg, nil
+}
 
-Intencoes possiveis:
-- criar_evento: extraia title, date (YYYY-MM-DD), time (HH:MM), duration_minutes (default: 60). Se o usuario mencionar a agenda de outra pessoa, extraia target_user com o nome.
-- consultar_agenda: extraia start_date (YYYY-MM-DD), end_date (YYYY-MM-DD)
-- editar_evento: extraia search_query (texto para encontrar o evento), changes (objeto com campos a alterar)
-- cancelar_evento: extraia search_query
-- confirmar: o usuario esta confirmando uma acao pendente
-- negar: o usuario esta negando uma acao pendente
-- consultar_log: o usuario quer ver o historico de acoes. Extraia start_date, end_date.
+// HandlePermissionResponse processes the target user's response (1, 2, or 3).
+func (p *PermissionManager) HandlePermissionResponse(targetUser *User, response string) (action string, pr *PermissionRequest, err error) {
+	pendingPR, err := p.db.GetPendingPermissionRequest(targetUser.ID)
+	if err != nil {
+		return "", nil, err
+	}
 
-Responda APENAS com JSON, sem markdown, sem explicacao:
-{"intent": "...", "data": {...}, "confirmation_message": "mensagem amigavel para o usuario em portugues"}
-
-Mensagem do usuario: %s`, userName, now, message)
+	switch strings.TrimSpace(response) {
+	case "1":
+		p.db.ResolvePermissionRequest(pendingPR.ID, "approved_once")
+		return "approved_once", pendingPR, nil
+	case "2":
+		p.db.ResolvePermissionRequest(pendingPR.ID, "approved_always")
+		// Also grant permanent permission
+		p.Grant(targetUser.ID, pendingPR.RequesterID)
+		return "approved_always", pendingPR, nil
+	case "3":
+		p.db.ResolvePermissionRequest(pendingPR.ID, "denied")
+		return "denied", pendingPR, nil
+	default:
+		return "", nil, fmt.Errorf("resposta invalida: use 1, 2 ou 3")
+	}
 }
 ```
 
-- [ ] **Step 6: Update orchestrator.go to handle target_user and consultar_log**
+- [ ] **Step 7: Update orchestrator.go with conversational permission flow**
 
-Add to `Orchestrator` struct:
+Update `Orchestrator` struct to include `sendMsg` and `perms`:
 
 ```go
 type Orchestrator struct {
@@ -3650,13 +3763,14 @@ type Orchestrator struct {
 	confirm       *ConfirmationManager
 	perms         *PermissionManager
 	audit         *AuditLog
+	sendMsg       func(phone, text string) error
 }
 ```
 
-Update `NewOrchestrator`:
+Update `NewOrchestrator` to accept `sendMsg`:
 
 ```go
-func NewOrchestrator(claude *ClaudeClient, cal *CalendarClient, transcription *TranscriptionClient, db *DB, cfg *Config) *Orchestrator {
+func NewOrchestrator(claude *ClaudeClient, cal *CalendarClient, transcription *TranscriptionClient, db *DB, cfg *Config, sendMsg func(phone, text string) error) *Orchestrator {
 	o := &Orchestrator{
 		claude:        claude,
 		cal:           cal,
@@ -3665,13 +3779,14 @@ func NewOrchestrator(claude *ClaudeClient, cal *CalendarClient, transcription *T
 		cfg:           cfg,
 		perms:         NewPermissionManager(db),
 		audit:         NewAuditLog(db),
+		sendMsg:       sendMsg,
 	}
 	o.confirm = NewConfirmationManager(db, cal, cfg)
 	return o
 }
 ```
 
-Update the `Process` method's `criar_evento` case to handle cross-user:
+Update `Process` method:
 
 ```go
 case "criar_evento":
@@ -3681,12 +3796,11 @@ case "criar_evento":
 	o.audit.Log(user.ID, "criar_evento", "", intent.Data.Title)
 	return o.confirm.CreatePending(user, intent.Data, intent.ConfirmationMessage)
 
-// ... add new case:
 case "consultar_log":
 	return o.handleConsultarLog(ctx, user, intent)
 ```
 
-Add new methods:
+Replace `handleCrossUserCreate` with conversational flow:
 
 ```go
 func (o *Orchestrator) handleCrossUserCreate(ctx context.Context, user *User, intent *IntentResult) (string, error) {
@@ -3702,14 +3816,28 @@ func (o *Orchestrator) handleCrossUserCreate(ctx context.Context, user *User, in
 	if err != nil {
 		return "", err
 	}
-	if !allowed {
-		return fmt.Sprintf("Voce nao tem permissao para agendar na agenda de %s.", targetUser.Name), nil
+
+	if allowed {
+		// Has permanent permission — proceed normally
+		intent.Data.TargetUser = targetUser.Name
+		o.audit.Log(user.ID, "criar_evento", targetUser.Name, intent.Data.Title)
+		return o.confirm.CreatePending(user, intent.Data, intent.ConfirmationMessage)
 	}
 
-	// Store target info in confirmation for later execution
-	intent.Data.TargetUser = targetUser.Name
-	o.audit.Log(user.ID, "criar_evento", targetUser.Name, intent.Data.Title)
-	return o.confirm.CreatePending(user, intent.Data, intent.ConfirmationMessage)
+	// No permission — ask if user wants to request it
+	eventJSON, _ := json.Marshal(intent.Data)
+	_, askMsg, err := o.perms.RequestPermission(user.ID, targetUser.ID, string(eventJSON), user.Name, intent.Data.Title)
+	if err != nil {
+		return "", err
+	}
+
+	// Send permission request to target user via WhatsApp
+	if o.sendMsg != nil {
+		o.sendMsg(targetUser.PhoneNumber, askMsg)
+	}
+
+	o.audit.Log(user.ID, "permission_request", targetUser.Name, intent.Data.Title)
+	return fmt.Sprintf("Voce nao tem permissao na agenda de %s. Enviei um pedido de autorizacao. Aguarde a resposta.", targetUser.Name), nil
 }
 
 func (o *Orchestrator) handleConsultarLog(ctx context.Context, user *User, intent *IntentResult) (string, error) {
@@ -3734,69 +3862,101 @@ func (o *Orchestrator) handleConsultarLog(ctx context.Context, user *User, inten
 }
 ```
 
-- [ ] **Step 7: Update confirmation.go to handle cross-user event creation**
+- [ ] **Step 8: Update handler.go to intercept permission responses**
 
-In `executeConfirmation`, when `data.TargetUser` is set, create the event on both calendars:
+In `handler.go`, before sending to Claude, check if this user has a pending permission request to respond to. Add at the beginning of the orchestrator pipeline in `handleMessage`:
 
 ```go
-func (cm *ConfirmationManager) executeConfirmation(user *User, pc *PendingConfirmation) (string, error) {
-	var data IntentData
-	if err := json.Unmarshal([]byte(pc.EventData), &data); err != nil {
-		return "", fmt.Errorf("unmarshal event data: %w", err)
-	}
-
-	refreshToken, err := Decrypt(user.GoogleCredentials, cm.cfg.EncryptionKey)
-	if err != nil {
-		return "", fmt.Errorf("decrypt credentials: %w", err)
-	}
-
-	startTime, err := time.ParseInLocation("2006-01-02 15:04", data.Date+" "+data.Time, time.Local)
-	if err != nil {
-		return "", fmt.Errorf("parse event time: %w", err)
-	}
-
-	duration := time.Duration(data.DurationMinutes) * time.Minute
-	if data.DurationMinutes == 0 {
-		duration = 60 * time.Minute
-	}
-
-	ev := CalendarEvent{
-		Title: data.Title,
-		Start: startTime,
-		End:   startTime.Add(duration),
-	}
-
-	// Create on user's own calendar
-	created, err := cm.cal.CreateEvent(nil, refreshToken, user.GoogleCalendarID, ev)
-	if err != nil {
-		return "", fmt.Errorf("create calendar event: %w", err)
-	}
-
-	// If cross-user, also create on target's calendar
-	if data.TargetUser != "" {
-		perm := NewPermissionManager(cm.db)
-		targetUser, err := perm.ResolveByName(data.TargetUser)
-		if err == nil {
-			targetToken, err := Decrypt(targetUser.GoogleCredentials, cm.cfg.EncryptionKey)
-			if err == nil {
-				cm.cal.CreateEvent(nil, targetToken, targetUser.GoogleCalendarID, ev)
-			}
+// Check if this is a permission response (1, 2, or 3) from a target user
+trimmed := strings.TrimSpace(text)
+if trimmed == "1" || trimmed == "2" || trimmed == "3" {
+	pr, err := h.db.GetPendingPermissionRequest(user.ID)
+	if err == nil && pr != nil {
+		response, err := h.orchestrator.HandlePermissionResponse(ctx, user, trimmed, pr)
+		if err != nil {
+			log.Printf("Error handling permission response: %v", err)
+		} else if response != "" {
+			h.sendText(msg.Info.Sender, response)
 		}
+		return
 	}
-
-	if err := cm.db.ResolvePendingConfirmation(pc.ID, "confirmed"); err != nil {
-		return "", err
-	}
-
-	msg := FormatEventCreated(*created)
-	if data.TargetUser != "" {
-		msg += fmt.Sprintf("\n(Tambem adicionado na agenda de %s)", data.TargetUser)
-	}
-	return msg, nil
 }
 ```
 
-- [ ] **Step 8: Add CLI commands to main.go**
+Add `HandlePermissionResponse` to orchestrator:
+
+```go
+func (o *Orchestrator) HandlePermissionResponse(ctx context.Context, targetUser *User, response string, pr *PermissionRequest) (string, error) {
+	action, _, err := o.perms.HandlePermissionResponse(targetUser, response)
+	if err != nil {
+		return "", err
+	}
+
+	var data IntentData
+	json.Unmarshal([]byte(pr.EventData), &data)
+
+	requester, _ := o.db.GetUserByPhone(pr.RequesterPhone)
+
+	switch action {
+	case "approved_once":
+		// Create event on both calendars without saving permanent permission
+		data.TargetUser = targetUser.Name
+		o.confirm.CreatePendingForUser(requester, data, fmt.Sprintf("%s autorizou! Agendando *%s*...", targetUser.Name, data.Title))
+		msg, _ := o.confirm.Confirm(requester) // Auto-confirm since target already approved
+		if o.sendMsg != nil {
+			o.sendMsg(requester.PhoneNumber, fmt.Sprintf("%s autorizou o evento!\n\n%s", targetUser.Name, msg))
+		}
+		o.audit.Log(targetUser.ID, "grant_access_once", requester.Name, data.Title)
+		return "Autorizado apenas para este evento. Evento criado!", nil
+
+	case "approved_always":
+		data.TargetUser = targetUser.Name
+		o.confirm.CreatePendingForUser(requester, data, fmt.Sprintf("%s autorizou permanentemente! Agendando *%s*...", targetUser.Name, data.Title))
+		msg, _ := o.confirm.Confirm(requester)
+		if o.sendMsg != nil {
+			o.sendMsg(requester.PhoneNumber, fmt.Sprintf("%s autorizou permanentemente!\n\n%s", targetUser.Name, msg))
+		}
+		o.audit.Log(targetUser.ID, "grant_access", requester.Name, "permanent")
+		return fmt.Sprintf("Autorizado permanentemente. %s pode agendar na sua agenda a partir de agora.", requester.Name), nil
+
+	case "denied":
+		if o.sendMsg != nil {
+			o.sendMsg(requester.PhoneNumber, fmt.Sprintf("%s nao autorizou o agendamento.", targetUser.Name))
+		}
+		o.audit.Log(targetUser.ID, "deny_access", requester.Name, data.Title)
+		return "Ok, recusado.", nil
+	}
+
+	return "", nil
+}
+```
+
+- [ ] **Step 9: Add permission request expiry to scheduler.go**
+
+In `scheduler.go`, add to `checkAutoConfirm` or create a new function called every minute:
+
+```go
+func (s *Scheduler) checkExpiredPermissionRequests() {
+	expired, err := s.db.GetExpiredPermissionRequests(s.cfg.DefaultAutoConfirmTimeout)
+	if err != nil {
+		return
+	}
+
+	for _, pr := range expired {
+		s.db.ResolvePermissionRequest(pr.ID, "expired")
+		s.sendMsg(pr.RequesterPhone, fmt.Sprintf("O pedido de autorizacao para a agenda de %s expirou (sem resposta em 2h).", pr.RequesterName))
+		log.Printf("Scheduler: permission request %d expired", pr.ID)
+	}
+}
+```
+
+Add to `Start()`:
+
+```go
+s.cron.AddFunc("* * * * *", s.checkExpiredPermissionRequests)
+```
+
+- [ ] **Step 10: Add CLI commands to main.go**
 
 Add `grant-access`, `revoke-access`, `list-access` to the CLI switch in `main.go`:
 
