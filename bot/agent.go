@@ -56,8 +56,12 @@ func (a *Agent) Run(ctx context.Context, user *User, message string) (string, er
 		}
 	}
 
+	log.Printf("[%s] Agent final response (%d chars): %.100s", user.Name, len(response), response)
+
 	// Save assistant response to history
-	a.db.AddConversationMessage(user.ID, "assistant", response)
+	if response != "" {
+		a.db.AddConversationMessage(user.ID, "assistant", response)
+	}
 
 	return response, nil
 }
@@ -68,6 +72,8 @@ func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Me
 	maxIterations := 8
 
 	for i := 0; i < maxIterations; i++ {
+		log.Printf("[%s] Agent loop iteration %d (model=%s, msgs=%d)", user.Name, i+1, model, len(messages))
+
 		resp, err := a.client.CreateMessages(ctx, anthropic.MessagesRequest{
 			Model:     model,
 			MaxTokens: 4096,
@@ -78,6 +84,8 @@ func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Me
 		if err != nil {
 			return "", false, fmt.Errorf("claude API: %w", err)
 		}
+
+		log.Printf("[%s] Agent response: stop=%s content_blocks=%d", user.Name, resp.StopReason, len(resp.Content))
 
 		// Check for escalation: if first content is text that looks like {"escalate": true, ...}
 		if len(resp.Content) > 0 && resp.Content[0].Type == anthropic.MessagesContentTypeText {
