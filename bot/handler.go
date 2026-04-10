@@ -61,10 +61,20 @@ func normalizeBRPhone(phone string) []string {
 }
 
 func (h *Handler) handleMessage(msg *events.Message) {
-	sender := msg.Info.Sender.User
-	log.Printf("DEBUG: sender.User=%s sender.Server=%s sender=%s chat=%s pushName=%s isFromMe=%v",
-		msg.Info.Sender.User, msg.Info.Sender.Server, msg.Info.Sender.String(),
-		msg.Info.Chat.String(), msg.Info.PushName, msg.Info.IsFromMe)
+	// Resolve sender phone number — WhatsApp may use LID instead of phone number
+	senderJID := msg.Info.Sender
+	if senderJID.Server == "lid" {
+		resolved, resolveErr := h.client.Store.LIDs.GetPNForLID(context.Background(), senderJID)
+		if resolveErr == nil && resolved.User != "" {
+			log.Printf("DEBUG: resolved LID %s -> phone %s", senderJID.User, resolved.User)
+			senderJID = resolved
+		} else {
+			log.Printf("DEBUG: could not resolve LID %s: %v", senderJID.User, resolveErr)
+		}
+	}
+
+	sender := senderJID.User
+	log.Printf("DEBUG: sender=%s pushName=%s isFromMe=%v", sender, msg.Info.PushName, msg.Info.IsFromMe)
 
 	// Ignore messages from self (the bot's own number)
 	if msg.Info.IsFromMe {
