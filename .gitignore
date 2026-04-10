@@ -1,0 +1,25 @@
+# Env
+.env
+
+# Go
+bot/bot
+bot/assistente_pessoal
+
+# Python
+transcription/__pycache__/
+transcription/*.pyc
+transcription/.venv/
+
+# SQLite
+*.db
+*.db-wal
+*.db-shm
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/*.tfvars
+
+# OS
+.DS_Store
