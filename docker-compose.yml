@@ -12,7 +12,7 @@ services:
     environment:
       - TRANSCRIPTION_URL=http://transcription:8000
     ports:
-      - "127.0.0.1:8080:8080"
+      - "0.0.0.0:8080:8080"
     working_dir: /app
     logging:
       driver: json-file
