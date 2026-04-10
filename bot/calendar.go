@@ -129,24 +129,32 @@ func (c *CalendarClient) UpdateEvent(ctx context.Context, refreshToken, calendar
 		return fmt.Errorf("calendar service: %w", err)
 	}
 
-	event := &calendar.Event{
-		Summary:  ev.Title,
-		Location: ev.Location,
+	// Fetch the existing event first, then modify fields
+	existing, err := svc.Events.Get(calendarID, eventID).Do()
+	if err != nil {
+		return fmt.Errorf("get event for update: %w", err)
+	}
+
+	if ev.Title != "" {
+		existing.Summary = ev.Title
+	}
+	if ev.Location != "" {
+		existing.Location = ev.Location
 	}
 	if !ev.Start.IsZero() {
-		event.Start = &calendar.EventDateTime{
+		existing.Start = &calendar.EventDateTime{
 			DateTime: ev.Start.Format(time.RFC3339),
 			TimeZone: "America/Sao_Paulo",
 		}
 	}
 	if !ev.End.IsZero() {
-		event.End = &calendar.EventDateTime{
+		existing.End = &calendar.EventDateTime{
 			DateTime: ev.End.Format(time.RFC3339),
 			TimeZone: "America/Sao_Paulo",
 		}
 	}
 
-	_, err = svc.Events.Patch(calendarID, eventID, event).Do()
+	_, err = svc.Events.Update(calendarID, eventID, existing).Do()
 	return err
 }
 
