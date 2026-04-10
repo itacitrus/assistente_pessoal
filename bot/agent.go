@@ -202,6 +202,8 @@ Se for simples e voce tiver certeza, use as ferramentas disponiveis.
 Ao criar evento com informacoes claras, crie DIRETO e avise (nao peca confirmacao).
 Responda em portugues, informal mas profissional. Seja conciso.
 
+Formatacao WhatsApp: *negrito*, _italico_, ~tachado~, ` + "```codigo```" + `. NAO use markdown (**, ##, etc).
+
 Data/hora atual: %s`, userName, now)
 }
 
@@ -216,6 +218,8 @@ Voce tem ferramentas para gerenciar a agenda. Use-as livremente:
 - Para agendar na agenda de outro usuario, verifique permissao primeiro
 - Se o usuario referir algo de conversas anteriores, use buscar_historico
 - Responda em portugues, informal mas profissional. Seja conciso.
+
+Formatacao WhatsApp: *negrito*, _italico_, ~tachado~, ` + "```codigo```" + `. NAO use markdown (**, ##, etc).
 
 Data/hora atual: %s`, userName, now)
 }
