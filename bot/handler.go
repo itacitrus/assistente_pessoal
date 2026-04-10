@@ -62,12 +62,12 @@ func normalizeBRPhone(phone string) []string {
 
 func (h *Handler) handleMessage(msg *events.Message) {
 	// Resolve sender phone number — WhatsApp may use LID instead of phone number
-	senderJID := msg.Info.Sender
+	senderJID := msg.Info.Sender.ToNonAD()
 	if senderJID.Server == "lid" {
 		resolved, resolveErr := h.client.Store.LIDs.GetPNForLID(context.Background(), senderJID)
 		if resolveErr == nil && resolved.User != "" {
 			log.Printf("DEBUG: resolved LID %s -> phone %s", senderJID.User, resolved.User)
-			senderJID = resolved
+			senderJID = resolved.ToNonAD()
 		} else {
 			log.Printf("DEBUG: could not resolve LID %s: %v", senderJID.User, resolveErr)
 		}
