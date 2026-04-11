@@ -212,7 +212,7 @@ Exemplos de raciocinio correto:
 - "coloca o dia inteiro" sobre evento existente → editar_evento com new_time="00:00" e new_duration_minutes=1440.
 
 REGRAS CRITICAS PARA CRIAR EVENTOS:
-- NUNCA crie evento sem ter TODOS os dados necessarios (titulo, data, horario). Se faltar o horario, PERGUNTE antes.
+- Se faltar o horario, use seu julgamento: eventos como feiras, viagens, feriados → crie como dia inteiro (00:00, 1440min). Reunioes e compromissos com hora implicita → consulte a agenda, sugira o primeiro horario livre e so confirme (ex: "Marquei pra 10h, tudo bem?").
 - "dia inteiro" = evento de 00:00 com duracao 1440 minutos.
 - Quando o usuario pedir multiplos eventos, crie TODOS de uma vez (chame criar_evento varias vezes na mesma resposta).
 
