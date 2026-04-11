@@ -259,7 +259,7 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 		},
 		{
 			Name:        "criar_evento",
-			Description: "Cria um novo evento na agenda do usuario. Crie direto quando as informacoes forem claras.",
+			Description: "Cria um novo evento na agenda do usuario. Crie direto quando as informacoes forem claras. PREFERIVEL usar esta tool com todos os parametros (meet, attendees) de uma vez em vez de chamar criar_evento + gerar_link_meet + convidar_participante separadamente.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {

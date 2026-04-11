@@ -87,7 +87,7 @@ func (c *CalendarClient) CreateEvent(ctx context.Context, refreshToken, calendar
 		}
 	}
 
-	insertCall := svc.Events.Insert(calendarID, event)
+	insertCall := svc.Events.Insert(calendarID, event).SendUpdates("all")
 	if ev.MeetLink == "generate" {
 		insertCall = insertCall.ConferenceDataVersion(1)
 	}
