@@ -40,7 +40,7 @@ func handleBuscarAgenda(ctx context.Context, agent *Agent, user *User, params js
 		return "", fmt.Errorf("decrypt credentials: %w", err)
 	}
 
-	loc := time.Now().Location()
+	loc := BRT()
 	startDate, err := time.ParseInLocation("2006-01-02", p.StartDate, loc)
 	if err != nil {
 		return "", fmt.Errorf("parse start_date: %w", err)
@@ -82,7 +82,7 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 		return "", fmt.Errorf("decrypt credentials: %w", err)
 	}
 
-	loc := time.Now().Location()
+	loc := BRT()
 	startTime, err := time.ParseInLocation("2006-01-02 15:04", p.Date+" "+p.Time, loc)
 	if err != nil {
 		return "", fmt.Errorf("parse event time: %w", err)
@@ -172,7 +172,7 @@ func handleEditarEvento(ctx context.Context, agent *Agent, user *User, params js
 	if p.NewTitle != "" {
 		updated.Title = p.NewTitle
 	}
-	loc := time.Now().Location()
+	loc := BRT()
 	if p.NewDate != "" || p.NewTime != "" {
 		// Keep existing date/time if only one is provided
 		dateStr := ev.Start.Format("2006-01-02")
@@ -325,7 +325,7 @@ func handleCriarEventoOutroUsuario(ctx context.Context, agent *Agent, user *User
 		return "", fmt.Errorf("decrypt target credentials: %w", err)
 	}
 
-	loc := time.Now().Location()
+	loc := BRT()
 	startTime, err := time.ParseInLocation("2006-01-02 15:04", p.Date+" "+p.Time, loc)
 	if err != nil {
 		return "", fmt.Errorf("parse event time: %w", err)
@@ -410,7 +410,7 @@ func handleConvidarExterno(ctx context.Context, agent *Agent, user *User, params
 
 	// Build Google Calendar "Add to Calendar" link
 	calLink := ""
-	loc := time.Now().Location()
+	loc := BRT()
 	if startTime, err := time.ParseInLocation("2006-01-02 15:04", p.EventDate+" "+p.EventTime, loc); err == nil {
 		endTime := startTime.Add(60 * time.Minute)
 		calLink = fmt.Sprintf("https://calendar.google.com/calendar/render?action=TEMPLATE&text=%s&dates=%s/%s",

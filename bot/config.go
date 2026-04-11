@@ -77,3 +77,12 @@ func envOrDefault(key, fallback string) string {
 	}
 	return fallback
 }
+
+// BRT returns the America/Sao_Paulo timezone. Falls back to UTC-3 fixed offset.
+func BRT() *time.Location {
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		loc = time.FixedZone("BRT", -3*60*60)
+	}
+	return loc
+}
