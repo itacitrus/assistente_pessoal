@@ -19,6 +19,7 @@ var toolHandlers = map[string]ToolHandler{
 	"criar_evento_outro_usuario": handleCriarEventoOutroUsuario,
 	"gerar_link_meet":            handleGerarLinkMeet,
 	"convidar_externo":           handleConvidarExterno,
+	"convidar_participante":      handleConvidarParticipante,
 	"salvar_memoria":             handleSalvarMemoria,
 	"buscar_memoria":             handleBuscarMemoria,
 }
@@ -60,11 +61,12 @@ func handleBuscarAgenda(ctx context.Context, agent *Agent, user *User, params js
 }
 
 type criarEventoParams struct {
-	Title           string `json:"title"`
-	Date            string `json:"date"`
-	Time            string `json:"time"`
-	DurationMinutes int    `json:"duration_minutes"`
-	Location        string `json:"location"`
+	Title           string   `json:"title"`
+	Date            string   `json:"date"`
+	Time            string   `json:"time"`
+	DurationMinutes int      `json:"duration_minutes"`
+	Location        string   `json:"location"`
+	Attendees       []string `json:"attendees"`
 	ComMeet         bool   `json:"com_meet"`
 }
 
@@ -91,10 +93,11 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 	}
 
 	ev := CalendarEvent{
-		Title:    p.Title,
-		Location: p.Location,
-		Start:    startTime,
-		End:      startTime.Add(duration),
+		Title:     p.Title,
+		Location:  p.Location,
+		Attendees: p.Attendees,
+		Start:     startTime,
+		End:       startTime.Add(duration),
 	}
 	if p.ComMeet {
 		ev.MeetLink = "generate"
@@ -424,6 +427,35 @@ func handleConvidarExterno(ctx context.Context, agent *Agent, user *User, params
 	agent.audit.Log(user.ID, "convidar_externo", p.Name, p.EventTitle)
 	log.Printf("[%s] Sent invite to %s (%s) for %s", user.Name, p.Name, phone, p.EventTitle)
 	return fmt.Sprintf("Convite enviado para %s (%s) via WhatsApp.", p.Name, p.Phone), nil
+}
+
+type convidarParticipanteParams struct {
+	SearchQuery string   `json:"search_query"`
+	Emails      []string `json:"emails"`
+}
+
+func handleConvidarParticipante(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
+	var p convidarParticipanteParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "", fmt.Errorf("parse params: %w", err)
+	}
+
+	refreshToken, err := Decrypt(user.GoogleCredentials, agent.cfg.EncryptionKey)
+	if err != nil {
+		return "", fmt.Errorf("decrypt credentials: %w", err)
+	}
+
+	ev, err := agent.cal.FindEvent(ctx, refreshToken, user.GoogleCalendarID, p.SearchQuery)
+	if err != nil {
+		return fmt.Sprintf("Nao encontrei o evento: %v", err), nil
+	}
+
+	if err := agent.cal.AddAttendees(ctx, refreshToken, user.GoogleCalendarID, ev.ID, p.Emails); err != nil {
+		return "", fmt.Errorf("add attendees: %w", err)
+	}
+
+	agent.audit.Log(user.ID, "convidar_participante", strings.Join(p.Emails, ", "), ev.Title)
+	return fmt.Sprintf("Participantes adicionados a *%s*. O Google Calendar enviou convite por email.", ev.Title), nil
 }
 
 type salvarMemoriaParams struct {

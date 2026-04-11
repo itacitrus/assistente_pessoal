@@ -268,7 +268,8 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"time": {"type": "string", "description": "Horario de inicio (HH:MM)"},
 					"duration_minutes": {"type": "integer", "description": "Duracao em minutos (default: 60)"},
 					"location": {"type": "string", "description": "Local do evento (opcional)"},
-					"com_meet": {"type": "boolean", "description": "Se true, gera link do Google Meet automaticamente"}
+					"com_meet": {"type": "boolean", "description": "Se true, gera link do Google Meet automaticamente"},
+					"attendees": {"type": "array", "items": {"type": "string"}, "description": "Emails de participantes (opcional, NAO peca proativamente)"}
 				},
 				"required": ["title", "date", "time"]
 			}`),
@@ -343,6 +344,18 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"location": {"type": "string", "description": "Local do evento (opcional)"}
 				},
 				"required": ["phone", "name", "event_title", "event_date", "event_time"]
+			}`),
+		},
+		{
+			Name:        "convidar_participante",
+			Description: "Adiciona participantes a um evento existente pelo email. O Google Calendar envia convite oficial. NAO peca email proativamente — use apenas quando o usuario fornecer o email ou quando fizer sentido no contexto (ex: usuario pediu confirmacao de presenca).",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"search_query": {"type": "string", "description": "Texto para encontrar o evento"},
+					"emails": {"type": "array", "items": {"type": "string"}, "description": "Lista de emails dos participantes"}
+				},
+				"required": ["search_query", "emails"]
 			}`),
 		},
 		{

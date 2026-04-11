@@ -16,12 +16,13 @@ type CalendarClient struct {
 }
 
 type CalendarEvent struct {
-	ID       string
-	Title    string
-	Start    time.Time
-	End      time.Time
-	Location string
-	MeetLink string
+	ID        string
+	Title     string
+	Start     time.Time
+	End       time.Time
+	Location  string
+	MeetLink  string
+	Attendees []string // email addresses of participants
 }
 
 func NewCalendarClient(clientID, clientSecret, redirectURI string) *CalendarClient {
@@ -67,6 +68,13 @@ func (c *CalendarClient) CreateEvent(ctx context.Context, refreshToken, calendar
 			DateTime: ev.End.Format(time.RFC3339),
 			TimeZone: "America/Sao_Paulo",
 		},
+	}
+
+	// Add attendees
+	if len(ev.Attendees) > 0 {
+		for _, email := range ev.Attendees {
+			event.Attendees = append(event.Attendees, &calendar.EventAttendee{Email: email})
+		}
 	}
 
 	// Add Google Meet if requested
@@ -181,6 +189,25 @@ func (c *CalendarClient) UpdateEvent(ctx context.Context, refreshToken, calendar
 	}
 
 	_, err = svc.Events.Update(calendarID, eventID, existing).Do()
+	return err
+}
+
+func (c *CalendarClient) AddAttendees(ctx context.Context, refreshToken, calendarID, eventID string, emails []string) error {
+	svc, err := c.serviceForUser(ctx, refreshToken)
+	if err != nil {
+		return fmt.Errorf("calendar service: %w", err)
+	}
+
+	existing, err := svc.Events.Get(calendarID, eventID).Do()
+	if err != nil {
+		return fmt.Errorf("get event: %w", err)
+	}
+
+	for _, email := range emails {
+		existing.Attendees = append(existing.Attendees, &calendar.EventAttendee{Email: email})
+	}
+
+	_, err = svc.Events.Update(calendarID, eventID, existing).SendUpdates("all").Do()
 	return err
 }
 
