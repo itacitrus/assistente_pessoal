@@ -24,6 +24,7 @@ func main() {
 		fmt.Println("  run            Start the WhatsApp bot")
 		fmt.Println("  add-user       Add a new user")
 		fmt.Println("  remove-user    Remove a user")
+		fmt.Println("  update-user    Update a user's name")
 		fmt.Println("  grant-access   Grant a user permission to schedule on another's calendar")
 		fmt.Println("  revoke-access  Revoke a user's permission to schedule on another's calendar")
 		fmt.Println("  list-access    List users a given user can schedule for")
@@ -37,6 +38,8 @@ func main() {
 		addUser()
 	case "remove-user":
 		removeUser()
+	case "update-user":
+		updateUser()
 	case "grant-access":
 		grantAccess()
 	case "revoke-access":
@@ -214,6 +217,33 @@ func openDBForCLI() *DB {
 		log.Fatalf("Failed to init database: %v", err)
 	}
 	return db
+}
+
+func updateUser() {
+	fs := flag.NewFlagSet("update-user", flag.ExitOnError)
+	phone := fs.String("phone", "", "Phone number of user to update")
+	name := fs.String("name", "", "New name")
+	fs.Parse(os.Args[2:])
+
+	if *phone == "" || *name == "" {
+		fmt.Println("Usage: bot update-user --phone=5511... --name=\"New Name\"")
+		os.Exit(1)
+	}
+
+	db := openDBForCLI()
+	defer db.Close()
+
+	user, err := db.GetUserByPhone(*phone)
+	if err != nil {
+		log.Fatalf("User not found: %v", err)
+	}
+
+	_, err = db.conn.Exec("UPDATE users SET name = ? WHERE id = ?", *name, user.ID)
+	if err != nil {
+		log.Fatalf("Failed to update: %v", err)
+	}
+
+	fmt.Printf("User %s renamed to %s\n", user.Name, *name)
 }
 
 func removeUser() {

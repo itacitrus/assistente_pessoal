@@ -476,7 +476,7 @@ func handleConvidarExterno(ctx context.Context, agent *Agent, user *User, params
 
 	// Build invite message
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Ola, %s! Sou o assistente da Itacitrus.\n\n", p.Name))
+	sb.WriteString(fmt.Sprintf("Ola, %s! Sou o Charles Lurch, assistente pessoal do %s.\n\n", p.Name, user.Name))
 	sb.WriteString(fmt.Sprintf("*%s* te convidou para:\n", user.Name))
 	sb.WriteString(fmt.Sprintf("*%s*\n", p.EventTitle))
 	sb.WriteString(fmt.Sprintf("Data: %s as %s\n", p.EventDate, p.EventTime))
