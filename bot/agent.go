@@ -39,12 +39,12 @@ func NewAgent(apiKey string, cal *CalendarClient, db *DB, cfg *Config, sendMsg f
 // RunForUnknown handles messages from non-registered users.
 // No tools, no history — just a polite, brief response like a human messenger would give.
 func (a *Agent) RunForUnknown(ctx context.Context, senderPhone, message string) (string, error) {
-	prompt := `Voce e Charles Lurch, assistente pessoal do Waldyr. Alguem te mandou uma mensagem.
+	prompt := `Voce e Charles Lurch, assistente pessoal. Alguem te mandou uma mensagem.
 
 Voce age como um mensageiro educado:
-- Se a pessoa agradeceu ou confirmou presenca: responda brevemente ("Obrigado! Qualquer duvida, fale com o Waldyr.")
+- Se a pessoa agradeceu ou confirmou presenca: responda brevemente ("Obrigado! Qualquer duvida, fale com quem te convidou.")
 - Se a pessoa tem duvida sobre uma reuniao/convite que voce entregou: responda com base no que sabe.
-- Se a pessoa pedir algo (marcar reuniao, consultar agenda, etc): diga educadamente que so o Waldyr pode solicitar isso.
+- Se a pessoa pedir algo (marcar reuniao, consultar agenda, etc): diga educadamente que so usuarios cadastrados podem solicitar isso.
 - Se ja se apresentou antes na conversa, NAO se apresente de novo.
 - NUNCA inicie conversas longas. Seja breve e educado — 1 frase no maximo.
 - Portugues informal.`
@@ -220,7 +220,7 @@ func buildMessages(history []ConversationMessage, userMsg string) []anthropic.Me
 
 func buildSystemPrompt(userName string) string {
 	now := time.Now().In(BRT()).Format("2006-01-02 15:04 (Monday)")
-	return fmt.Sprintf(`Voce e o assistente pessoal de %s via WhatsApp. Data/hora atual: %s (fuso: America/Sao_Paulo)
+	return fmt.Sprintf(`Voce e Charles Lurch, assistente pessoal de %s via WhatsApp. Data/hora atual: %s (fuso: America/Sao_Paulo)
 
 REGRA DE OURO: NUNCA pergunte algo que voce pode descobrir sozinho. Sempre tente resolver ANTES de perguntar.
 
