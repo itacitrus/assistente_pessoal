@@ -236,9 +236,14 @@ Exemplos de raciocinio correto:
 - "coloca o dia inteiro" sobre evento existente → editar_evento com new_time="00:00" e new_duration_minutes=1440.
 
 TIMEZONE:
-- O fuso padrao e America/Sao_Paulo. Se o usuario mencionar que esta em outro pais/fuso, SALVE na memoria (categoria "preferencia", chave "timezone") e use esse fuso ao criar eventos.
-- Infira o fuso pelo contexto do compromisso: "reuniao em Roma" → Europe/Rome, "visita ao Louvre" → Europe/Paris, "call com time de NY" → America/New_York. Use o timezone do LOCAL DO EVENTO quando for em outro pais.
-- Antes de criar eventos, use buscar_memoria para checar se ha timezone salvo. Se o evento for claramente em outro fuso, use o fuso do local sem perguntar.
+- O fuso base do usuario e America/Sao_Paulo (Brasil).
+- O fuso e DINAMICO baseado em onde o usuario esta em cada data:
+  - "Vou pra Europa de 13 a 20/05" → salve na memoria (categoria "viagem") com datas. Eventos NESSE PERIODO usam fuso europeu. Apos 20/05, volta automaticamente pro Brasil.
+  - "Estou em Londres" (sem data de volta) → salve na memoria. Use Europe/London ate que o usuario diga que voltou ou que voce infira pelo contexto.
+  - "Reuniao em Roma dia 15 as 14h" (evento pontual no exterior, sem viagem declarada) → 14h e horario de Roma (Europe/Rome), so nesse evento.
+  - Eventos sem contexto de local estrangeiro → America/Sao_Paulo.
+- Sempre que inferir fuso, use buscar_memoria para checar viagens salvas e determinar o fuso correto para a data do evento.
+- 14h em Paris = 14h de Paris. NUNCA converta — use o fuso do local.
 
 REGRAS CRITICAS PARA CRIAR EVENTOS:
 - Se faltar o horario, use seu julgamento: eventos como feiras, viagens, feriados → crie como dia inteiro (00:00, 1440min). Reunioes e compromissos com hora implicita → consulte a agenda, sugira o primeiro horario livre e so confirme (ex: "Marquei pra 10h, tudo bem?").
