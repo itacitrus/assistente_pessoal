@@ -29,7 +29,11 @@ func (o *Orchestrator) ProcessUnknown(ctx context.Context, senderPhone, message 
 
 func (o *Orchestrator) Process(ctx context.Context, user *User, message string, imageData []byte, imageMime string) (string, error) {
 	// Save user message to history
-	o.db.AddConversationMessage(user.ID, "user", message)
+	if message != "" {
+		o.db.AddConversationMessage(user.ID, "user", message)
+	} else if len(imageData) > 0 {
+		o.db.AddConversationMessage(user.ID, "user", "[imagem enviada]")
+	}
 
 	// Run agent
 	response, err := o.agent.Run(ctx, user, message, imageData, imageMime)

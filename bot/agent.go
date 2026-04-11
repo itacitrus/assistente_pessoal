@@ -195,6 +195,9 @@ func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Me
 func buildMessages(history []ConversationMessage, userMsg string) []anthropic.Message {
 	var msgs []anthropic.Message
 	for _, h := range history {
+		if h.Content == "" {
+			continue
+		}
 		role := anthropic.RoleUser
 		if h.Role == "assistant" {
 			role = anthropic.RoleAssistant
@@ -203,6 +206,10 @@ func buildMessages(history []ConversationMessage, userMsg string) []anthropic.Me
 			Role:    role,
 			Content: []anthropic.MessageContent{anthropic.NewTextMessageContent(h.Content)},
 		})
+	}
+	// Add current user message (may be empty if image-only — agent.Run adds image content after)
+	if userMsg == "" {
+		userMsg = "[imagem enviada]"
 	}
 	msgs = append(msgs, anthropic.Message{
 		Role:    anthropic.RoleUser,
