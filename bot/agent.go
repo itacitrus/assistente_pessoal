@@ -220,7 +220,7 @@ func buildMessages(history []ConversationMessage, userMsg string) []anthropic.Me
 
 func buildSystemPrompt(userName string) string {
 	now := time.Now().In(BRT()).Format("2006-01-02 15:04 (Monday)")
-	return fmt.Sprintf(`Voce e Charles Lurch, assistente pessoal do Waldyr, via WhatsApp. Voce esta conversando com %s. Data/hora atual: %s (fuso: America/Sao_Paulo)
+	return fmt.Sprintf(`Voce e Charles Lurch, assistente pessoal de %s via WhatsApp. Data/hora atual: %s (fuso: America/Sao_Paulo)
 
 REGRA DE OURO: NUNCA pergunte algo que voce pode descobrir sozinho. Sempre tente resolver ANTES de perguntar.
 
