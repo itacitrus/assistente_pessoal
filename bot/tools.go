@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -377,6 +378,23 @@ func handleConvidarExterno(ctx context.Context, agent *Agent, user *User, params
 		phone = "55" + phone
 	}
 
+	// Build Google Calendar "Add to Calendar" link
+	calLink := ""
+	loc := time.Now().Location()
+	if startTime, err := time.ParseInLocation("2006-01-02 15:04", p.EventDate+" "+p.EventTime, loc); err == nil {
+		endTime := startTime.Add(60 * time.Minute)
+		calLink = fmt.Sprintf("https://calendar.google.com/calendar/render?action=TEMPLATE&text=%s&dates=%s/%s",
+			url.QueryEscape(p.EventTitle),
+			startTime.UTC().Format("20060102T150405Z"),
+			endTime.UTC().Format("20060102T150405Z"))
+		if p.Location != "" {
+			calLink += "&location=" + url.QueryEscape(p.Location)
+		}
+		if p.MeetLink != "" {
+			calLink += "&details=" + url.QueryEscape("Link: "+p.MeetLink)
+		}
+	}
+
 	// Build invite message
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Ola, %s! Sou o assistente da Itacitrus.\n\n", p.Name))
@@ -388,6 +406,9 @@ func handleConvidarExterno(ctx context.Context, agent *Agent, user *User, params
 	}
 	if p.MeetLink != "" {
 		sb.WriteString(fmt.Sprintf("\nLink da reuniao: %s\n", p.MeetLink))
+	}
+	if calLink != "" {
+		sb.WriteString(fmt.Sprintf("\nAdicionar a sua agenda: %s\n", calLink))
 	}
 	sb.WriteString("\nQualquer duvida, fale diretamente com " + user.Name + ".")
 
