@@ -67,7 +67,8 @@ type criarEventoParams struct {
 	DurationMinutes int      `json:"duration_minutes"`
 	Location        string   `json:"location"`
 	Attendees       []string `json:"attendees"`
-	ComMeet         bool   `json:"com_meet"`
+	ComMeet         bool     `json:"com_meet"`
+	ForceConflict   bool     `json:"force_conflict"`
 }
 
 func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
@@ -91,13 +92,26 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 	if p.DurationMinutes == 0 {
 		duration = 60 * time.Minute
 	}
+	endTime := startTime.Add(duration)
+
+	// Check for conflicts before creating (unless user confirmed)
+	if !p.ForceConflict {
+		existing, _ := agent.cal.ListEvents(ctx, refreshToken, user.GoogleCalendarID, startTime, endTime)
+		if len(existing) > 0 {
+		var conflicts []string
+		for _, e := range existing {
+			conflicts = append(conflicts, fmt.Sprintf("- %s (%s - %s)", e.Title, e.Start.Format("15:04"), e.End.Format("15:04")))
+		}
+		return fmt.Sprintf("CONFLITO: ja existem eventos nesse horario:\n%s\nO usuario precisa confirmar se quer marcar mesmo assim. Se confirmar, chame criar_evento novamente com force_conflict=true.", strings.Join(conflicts, "\n")), nil
+		}
+	}
 
 	ev := CalendarEvent{
 		Title:     p.Title,
 		Location:  p.Location,
 		Attendees: p.Attendees,
 		Start:     startTime,
-		End:       startTime.Add(duration),
+		End:       endTime,
 	}
 	if p.ComMeet {
 		ev.MeetLink = "generate"

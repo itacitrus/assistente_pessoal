@@ -119,19 +119,37 @@ func (h *Handler) handleMessage(msg *events.Message) {
 	if user == nil {
 		err = ErrUserNotFound
 	}
+
+	// Extract text early — needed for both registered and unknown users
+	ctx := context.Background()
+	var text string
+	if textMsg := msg.Message.GetConversation(); textMsg != "" {
+		text = textMsg
+	} else if extMsg := msg.Message.GetExtendedTextMessage(); extMsg != nil {
+		text = extMsg.GetText()
+	} else if contactMsg := msg.Message.GetContactMessage(); contactMsg != nil {
+		text = h.parseContactMessage(contactMsg)
+	} else if contactsMsg := msg.Message.GetContactsArrayMessage(); contactsMsg != nil {
+		var parts []string
+		for _, c := range contactsMsg.GetContacts() {
+			parts = append(parts, h.parseContactMessage(c))
+		}
+		text = strings.Join(parts, "\n")
+	}
+
 	if err == ErrUserNotFound {
-		// Rate limit: only reply once per hour per unknown number
-		h.unknownMu.Lock()
-		lastReply, exists := h.unknownReplied[sender]
-		if exists && time.Since(lastReply) < time.Hour {
-			h.unknownMu.Unlock()
+		if text == "" {
+			return // Ignore non-text from unknown users (audio, etc)
+		}
+		log.Printf("Unknown number %s: %s", sender, text)
+		response, respErr := h.orchestrator.ProcessUnknown(ctx, sender, text)
+		if respErr != nil {
+			log.Printf("Error processing unknown user %s: %v", sender, respErr)
 			return
 		}
-		h.unknownReplied[sender] = time.Now()
-		h.unknownMu.Unlock()
-
-		log.Printf("Unknown number: %s", sender)
-		h.sendText(senderJID, "Ola! Sou o assistente da Itacitrus. Obrigado pela mensagem! Se precisar de algo, fale com o responsavel que te passou meu contato.")
+		if response != "" {
+			h.sendText(senderJID, response)
+		}
 		return
 	}
 	if err != nil {
@@ -142,37 +160,22 @@ func (h *Handler) handleMessage(msg *events.Message) {
 		return
 	}
 
-	ctx := context.Background()
-
-	var text string
-
-	if audioMsg := msg.Message.GetAudioMessage(); audioMsg != nil {
-		audioData, err := h.client.Download(ctx, audioMsg)
-		if err != nil {
-			log.Printf("Error downloading audio from %s: %v", sender, err)
-			h.sendText(senderJID, "Nao consegui baixar o audio. Tente novamente.")
-			return
+	// For registered users, also handle audio (unknown users only get text)
+	if text == "" {
+		if audioMsg := msg.Message.GetAudioMessage(); audioMsg != nil {
+			audioData, audioErr := h.client.Download(ctx, audioMsg)
+			if audioErr != nil {
+				log.Printf("Error downloading audio from %s: %v", sender, audioErr)
+				h.sendText(senderJID, "Nao consegui baixar o audio. Tente novamente.")
+				return
+			}
+			text, audioErr = h.orchestrator.transcription.Transcribe(audioData, "audio.ogg")
+			if audioErr != nil {
+				log.Printf("Error transcribing audio from %s: %v", sender, audioErr)
+				h.sendText(senderJID, "Nao consegui transcrever o audio. Tente novamente.")
+				return
+			}
 		}
-		text, err = h.orchestrator.transcription.Transcribe(audioData, "audio.ogg")
-		if err != nil {
-			log.Printf("Error transcribing audio from %s: %v", sender, err)
-			h.sendText(senderJID, "Nao consegui transcrever o audio. Tente novamente.")
-			return
-		}
-	} else if textMsg := msg.Message.GetConversation(); textMsg != "" {
-		text = textMsg
-	} else if extMsg := msg.Message.GetExtendedTextMessage(); extMsg != nil {
-		text = extMsg.GetText()
-	} else if contactMsg := msg.Message.GetContactMessage(); contactMsg != nil {
-		// Extract contact info from vCard
-		text = h.parseContactMessage(contactMsg)
-	} else if contactsMsg := msg.Message.GetContactsArrayMessage(); contactsMsg != nil {
-		// Multiple contacts shared
-		var parts []string
-		for _, c := range contactsMsg.GetContacts() {
-			parts = append(parts, h.parseContactMessage(c))
-		}
-		text = strings.Join(parts, "\n")
 	}
 
 	if text == "" {

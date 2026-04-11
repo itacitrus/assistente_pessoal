@@ -16,6 +16,17 @@ func NewOrchestrator(agent *Agent, transcription *TranscriptionClient, db *DB) *
 	return &Orchestrator{agent: agent, transcription: transcription, db: db}
 }
 
+// ProcessUnknown handles messages from non-registered users.
+// Acts like a polite messenger — answers briefly, clarifies doubts about
+// a delivered message, but doesn't engage in long conversations or take requests.
+func (o *Orchestrator) ProcessUnknown(ctx context.Context, senderPhone, message string) (string, error) {
+	response, err := o.agent.RunForUnknown(ctx, senderPhone, message)
+	if err != nil {
+		return "", fmt.Errorf("agent unknown: %w", err)
+	}
+	return response, nil
+}
+
 func (o *Orchestrator) Process(ctx context.Context, user *User, message string) (string, error) {
 	// Save user message to history
 	o.db.AddConversationMessage(user.ID, "user", message)

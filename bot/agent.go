@@ -35,6 +35,43 @@ func NewAgent(apiKey string, cal *CalendarClient, db *DB, cfg *Config, sendMsg f
 	}
 }
 
+// RunForUnknown handles messages from non-registered users.
+// No tools, no history — just a polite, brief response like a human messenger would give.
+func (a *Agent) RunForUnknown(ctx context.Context, senderPhone, message string) (string, error) {
+	prompt := `Voce e o assistente da Itacitrus. Alguem que NAO esta cadastrado te mandou uma mensagem.
+
+Voce age como um mensageiro educado:
+- Se a pessoa agradeceu ou confirmou presenca: responda brevemente ("Obrigado! Qualquer duvida, fale com quem te convidou.")
+- Se a pessoa tem duvida sobre uma reuniao/convite que voce entregou: responda com base no que sabe.
+- Se a pessoa pedir algo (marcar reuniao, consultar agenda, etc): diga educadamente que so pode atender usuarios cadastrados e sugira falar com quem passou seu contato.
+- Se ja se apresentou antes na conversa, NAO se apresente de novo.
+- NUNCA inicie conversas longas. Seja breve e educado — 1 frase no maximo.
+- Portugues informal.`
+
+	userMsg := message
+	messages := []anthropic.Message{
+		{Role: anthropic.RoleUser, Content: []anthropic.MessageContent{{Type: "text", Text: &userMsg}}},
+	}
+
+	temp := float32(0.3)
+	resp, err := a.client.CreateMessages(ctx, anthropic.MessagesRequest{
+		Model:       anthropic.ModelClaudeHaiku4Dot5,
+		MaxTokens:   256,
+		Temperature: &temp,
+		System:      prompt,
+		Messages:    messages,
+	})
+	if err != nil {
+		return "", fmt.Errorf("claude API: %w", err)
+	}
+
+	if len(resp.Content) == 0 {
+		return "", nil
+	}
+
+	return resp.Content[0].GetText(), nil
+}
+
 // Run processes a user message using Sonnet with tool use.
 func (a *Agent) Run(ctx context.Context, user *User, message string) (string, error) {
 	history, _ := a.db.GetConversationHistory(user.ID, 30)
@@ -223,7 +260,8 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"duration_minutes": {"type": "integer", "description": "Duracao em minutos (default: 60)"},
 					"location": {"type": "string", "description": "Local do evento (opcional)"},
 					"com_meet": {"type": "boolean", "description": "Se true, gera link do Google Meet automaticamente"},
-					"attendees": {"type": "array", "items": {"type": "string"}, "description": "Emails de participantes (opcional, NAO peca proativamente)"}
+					"attendees": {"type": "array", "items": {"type": "string"}, "description": "Emails de participantes (opcional, NAO peca proativamente)"},
+					"force_conflict": {"type": "boolean", "description": "Se true, cria mesmo com conflito de horario (so usar apos usuario confirmar)"}
 				},
 				"required": ["title", "date", "time"]
 			}`),
