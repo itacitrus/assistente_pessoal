@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -73,9 +74,25 @@ Voce age como um mensageiro educado:
 }
 
 // Run processes a user message using Sonnet with tool use.
-func (a *Agent) Run(ctx context.Context, user *User, message string) (string, error) {
+func (a *Agent) Run(ctx context.Context, user *User, message string, imageData []byte, imageMime string) (string, error) {
 	history, _ := a.db.GetConversationHistory(user.ID, 30)
 	messages := buildMessages(history, message)
+
+	// If image is attached, add it to the last (current) user message
+	if len(imageData) > 0 && imageMime != "" {
+		lastIdx := len(messages) - 1
+		imgContent := anthropic.NewImageMessageContent(anthropic.MessageContentSource{
+			Type:      anthropic.MessagesContentSourceTypeBase64,
+			MediaType: imageMime,
+			Data:      base64.StdEncoding.EncodeToString(imageData),
+		})
+		messages[lastIdx].Content = append(messages[lastIdx].Content, imgContent)
+		if message == "" {
+			// If no text, add a prompt for the image
+			hint := "[Imagem enviada pelo usuario. Analise e identifique compromissos, eventos ou informacoes relevantes.]"
+			messages[lastIdx].Content = append([]anthropic.MessageContent{anthropic.NewTextMessageContent(hint)}, messages[lastIdx].Content...)
+		}
+	}
 
 	response, _, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, buildSystemPrompt(user.Name))
 	if err != nil {
@@ -211,6 +228,10 @@ Exemplos de raciocinio correto:
 - "meu pai" → buscar_memoria primeiro, so pedir info se nao encontrar.
 - "coloca o dia inteiro" sobre evento existente → editar_evento com new_time="00:00" e new_duration_minutes=1440.
 
+TIMEZONE:
+- O fuso padrao e America/Sao_Paulo. Se o usuario mencionar que esta em outro pais/fuso, SALVE na memoria (categoria "preferencia", chave "timezone") e use esse fuso ao criar eventos.
+- Antes de criar eventos para usuarios que viajam, use buscar_memoria para checar se ha timezone salvo.
+
 REGRAS CRITICAS PARA CRIAR EVENTOS:
 - Se faltar o horario, use seu julgamento: eventos como feiras, viagens, feriados → crie como dia inteiro (00:00, 1440min). Reunioes e compromissos com hora implicita → consulte a agenda, sugira o primeiro horario livre e so confirme (ex: "Marquei pra 10h, tudo bem?").
 - "dia inteiro" = evento de 00:00 com duracao 1440 minutos.
@@ -275,7 +296,8 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"location": {"type": "string", "description": "Local do evento (opcional)"},
 					"com_meet": {"type": "boolean", "description": "Se true, gera link do Google Meet automaticamente"},
 					"attendees": {"type": "array", "items": {"type": "string"}, "description": "Emails de participantes (opcional, NAO peca proativamente)"},
-					"force_conflict": {"type": "boolean", "description": "Se true, cria mesmo com conflito de horario (so usar apos usuario confirmar)"}
+					"force_conflict": {"type": "boolean", "description": "Se true, cria mesmo com conflito de horario (so usar apos usuario confirmar)"},
+					"timezone": {"type": "string", "description": "Fuso horario IANA (ex: Europe/London). Default: America/Sao_Paulo. Use buscar_memoria para checar timezone do usuario."}
 				},
 				"required": ["title", "date", "time"]
 			}`),

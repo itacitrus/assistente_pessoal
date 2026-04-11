@@ -69,6 +69,7 @@ type criarEventoParams struct {
 	Attendees       []string `json:"attendees"`
 	ComMeet         bool     `json:"com_meet"`
 	ForceConflict   bool     `json:"force_conflict"`
+	Timezone        string   `json:"timezone"`
 }
 
 func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
@@ -82,7 +83,14 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 		return "", fmt.Errorf("decrypt credentials: %w", err)
 	}
 
-	loc := BRT()
+	tz := p.Timezone
+	if tz == "" {
+		tz = "America/Sao_Paulo"
+	}
+	loc, _ := time.LoadLocation(tz)
+	if loc == nil {
+		loc = BRT()
+	}
 	startTime, err := time.ParseInLocation("2006-01-02 15:04", p.Date+" "+p.Time, loc)
 	if err != nil {
 		return "", fmt.Errorf("parse event time: %w", err)
@@ -120,6 +128,7 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 		Title:     p.Title,
 		Location:  p.Location,
 		Attendees: p.Attendees,
+		Timezone:  tz,
 		Start:     startTime,
 		End:       endTime,
 	}

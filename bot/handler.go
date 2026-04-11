@@ -160,25 +160,42 @@ func (h *Handler) handleMessage(msg *events.Message) {
 		return
 	}
 
-	// For registered users, also handle audio (unknown users only get text)
-	if text == "" {
-		if audioMsg := msg.Message.GetAudioMessage(); audioMsg != nil {
-			audioData, audioErr := h.client.Download(ctx, audioMsg)
-			if audioErr != nil {
-				log.Printf("Error downloading audio from %s: %v", sender, audioErr)
-				h.sendText(senderJID, "Nao consegui baixar o audio. Tente novamente.")
-				return
+	// For registered users, also handle audio and images
+	var imageData []byte
+	var imageMime string
+	if audioMsg := msg.Message.GetAudioMessage(); audioMsg != nil && text == "" {
+		audioData, audioErr := h.client.Download(ctx, audioMsg)
+		if audioErr != nil {
+			log.Printf("Error downloading audio from %s: %v", sender, audioErr)
+			h.sendText(senderJID, "Nao consegui baixar o audio. Tente novamente.")
+			return
+		}
+		text, audioErr = h.orchestrator.transcription.Transcribe(audioData, "audio.ogg")
+		if audioErr != nil {
+			log.Printf("Error transcribing audio from %s: %v", sender, audioErr)
+			h.sendText(senderJID, "Nao consegui transcrever o audio. Tente novamente.")
+			return
+		}
+	}
+	if imgMsg := msg.Message.GetImageMessage(); imgMsg != nil {
+		imgData, imgErr := h.client.Download(ctx, imgMsg)
+		if imgErr != nil {
+			log.Printf("Error downloading image from %s: %v", sender, imgErr)
+		} else {
+			imageData = imgData
+			imageMime = imgMsg.GetMimetype()
+			if imageMime == "" {
+				imageMime = "image/jpeg"
 			}
-			text, audioErr = h.orchestrator.transcription.Transcribe(audioData, "audio.ogg")
-			if audioErr != nil {
-				log.Printf("Error transcribing audio from %s: %v", sender, audioErr)
-				h.sendText(senderJID, "Nao consegui transcrever o audio. Tente novamente.")
-				return
+			// Use caption as text if available
+			if caption := imgMsg.GetCaption(); caption != "" && text == "" {
+				text = caption
 			}
+			log.Printf("[%s] Image received (%d bytes, %s)", user.Name, len(imageData), imageMime)
 		}
 	}
 
-	if text == "" {
+	if text == "" && len(imageData) == 0 {
 		return
 	}
 
@@ -198,7 +215,7 @@ func (h *Handler) handleMessage(msg *events.Message) {
 		}
 	}
 
-	response, err := h.orchestrator.Process(ctx, user, text)
+	response, err := h.orchestrator.Process(ctx, user, text, imageData, imageMime)
 	if err != nil {
 		log.Printf("Error processing message from %s: %v", sender, err)
 		h.sendText(senderJID, "Ocorreu um erro ao processar sua mensagem. Tente novamente.")

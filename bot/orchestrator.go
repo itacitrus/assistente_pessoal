@@ -27,12 +27,12 @@ func (o *Orchestrator) ProcessUnknown(ctx context.Context, senderPhone, message 
 	return response, nil
 }
 
-func (o *Orchestrator) Process(ctx context.Context, user *User, message string) (string, error) {
+func (o *Orchestrator) Process(ctx context.Context, user *User, message string, imageData []byte, imageMime string) (string, error) {
 	// Save user message to history
 	o.db.AddConversationMessage(user.ID, "user", message)
 
 	// Run agent
-	response, err := o.agent.Run(ctx, user, message)
+	response, err := o.agent.Run(ctx, user, message, imageData, imageMime)
 	if err != nil {
 		log.Printf("[%s] Agent error: %v", user.Name, err)
 		return "", fmt.Errorf("agent: %w", err)

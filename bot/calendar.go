@@ -22,7 +22,8 @@ type CalendarEvent struct {
 	End       time.Time
 	Location  string
 	MeetLink  string
-	Attendees []string // email addresses of participants
+	Attendees []string
+	Timezone  string // defaults to America/Sao_Paulo
 }
 
 func NewCalendarClient(clientID, clientSecret, redirectURI string) *CalendarClient {
@@ -57,16 +58,21 @@ func (c *CalendarClient) CreateEvent(ctx context.Context, refreshToken, calendar
 		return nil, fmt.Errorf("calendar service: %w", err)
 	}
 
+	tz := ev.Timezone
+	if tz == "" {
+		tz = "America/Sao_Paulo"
+	}
+
 	event := &calendar.Event{
 		Summary:  ev.Title,
 		Location: ev.Location,
 		Start: &calendar.EventDateTime{
 			DateTime: ev.Start.Format(time.RFC3339),
-			TimeZone: "America/Sao_Paulo",
+			TimeZone: tz,
 		},
 		End: &calendar.EventDateTime{
 			DateTime: ev.End.Format(time.RFC3339),
-			TimeZone: "America/Sao_Paulo",
+			TimeZone: tz,
 		},
 	}
 
