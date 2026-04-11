@@ -13,11 +13,11 @@ func TestBuildSystemPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "Waldyr") {
 		t.Fatal("prompt should contain user name")
 	}
-	if !strings.Contains(prompt, "ferramentas") {
+	if !strings.Contains(prompt, "Ferramentas") {
 		t.Fatal("prompt should mention tools")
 	}
-	if !strings.Contains(prompt, "PENSE") {
-		t.Fatal("prompt should tell agent to think first")
+	if !strings.Contains(prompt, "NUNCA pergunte") {
+		t.Fatal("prompt should tell agent to not ask unnecessary questions")
 	}
 }
 

@@ -151,7 +151,7 @@ func (db *DB) AddConversationMessage(userID int64, role, content string) error {
 	}
 	// Keep only last 20 messages per user
 	db.conn.Exec(`DELETE FROM conversation_history WHERE user_id = ? AND id NOT IN (
-		SELECT id FROM conversation_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 20
+		SELECT id FROM conversation_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 50
 	)`, userID, userID)
 	return nil
 }
