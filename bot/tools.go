@@ -448,7 +448,15 @@ func handleConvidarExterno(ctx context.Context, agent *Agent, user *User, params
 	// Build Google Calendar "Add to Calendar" link
 	calLink := ""
 	loc := BRT()
-	if startTime, err := time.ParseInLocation("2006-01-02 15:04", p.EventDate+" "+p.EventTime, loc); err == nil {
+	// Try multiple date formats
+	var startTime time.Time
+	for _, layout := range []string{"2006-01-02 15:04", "02/01/2006 15:04", "2006-01-02 15:04:05"} {
+		if t, e := time.ParseInLocation(layout, p.EventDate+" "+p.EventTime, loc); e == nil {
+			startTime = t
+			break
+		}
+	}
+	if !startTime.IsZero() {
 		endTime := startTime.Add(60 * time.Minute)
 		calLink = fmt.Sprintf("https://calendar.google.com/calendar/render?action=TEMPLATE&text=%s&dates=%s/%s",
 			url.QueryEscape(p.EventTitle),

@@ -267,7 +267,7 @@ Ferramentas disponiveis:
 - buscar_memoria, salvar_memoria: memoria persistente. Salve proativamente contatos, relacoes, preferencias.
 - buscar_historico: buscar mensagens antigas.
 - convidar_participante: adicionar email como participante.
-- convidar_externo: mandar convite via WhatsApp para nao-usuarios.
+- convidar_externo: mandar convite via WhatsApp para nao-usuarios. Quando convidar para MULTIPLOS eventos (ex: 3 dias de feira), envie UM convite para CADA dia — chame a ferramenta varias vezes.
 - gerar_link_meet: gerar link do Google Meet.
 
 Regras gerais:
