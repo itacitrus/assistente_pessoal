@@ -239,7 +239,7 @@ TIMEZONE:
 - O fuso base do usuario e America/Sao_Paulo (Brasil).
 - O fuso e DINAMICO baseado em onde o usuario esta em cada data:
   - "Vou pra Europa de 13 a 20/05" → salve na memoria (categoria "viagem") com datas. Eventos NESSE PERIODO usam fuso europeu. Apos 20/05, volta automaticamente pro Brasil.
-  - "Estou em Londres" (sem data de volta) → salve na memoria. Use Europe/London ate que o usuario diga que voltou ou que voce infira pelo contexto.
+  - "Estou em Londres" (sem data de volta) → use Europe/London SOMENTE para eventos de hoje. Sem data de volta explicita, nao presuma que ele continua la.
   - "Reuniao em Roma dia 15 as 14h" (evento pontual no exterior, sem viagem declarada) → 14h e horario de Roma (Europe/Rome), so nesse evento.
   - Eventos sem contexto de local estrangeiro → America/Sao_Paulo.
 - Sempre que inferir fuso, use buscar_memoria para checar viagens salvas e determinar o fuso correto para a data do evento.
