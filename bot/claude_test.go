@@ -5,21 +5,8 @@ import (
 	"testing"
 )
 
-func TestBuildHaikuSystemPrompt(t *testing.T) {
-	prompt := buildHaikuSystemPrompt("Waldyr")
-	if prompt == "" {
-		t.Fatal("expected non-empty prompt")
-	}
-	if !strings.Contains(prompt, "Waldyr") {
-		t.Fatal("prompt should contain user name")
-	}
-	if !strings.Contains(prompt, "ESCALE") {
-		t.Fatal("prompt should contain escalation instruction")
-	}
-}
-
-func TestBuildSonnetSystemPrompt(t *testing.T) {
-	prompt := buildSonnetSystemPrompt("Waldyr")
+func TestBuildSystemPrompt(t *testing.T) {
+	prompt := buildSystemPrompt("Waldyr")
 	if prompt == "" {
 		t.Fatal("expected non-empty prompt")
 	}
@@ -29,25 +16,8 @@ func TestBuildSonnetSystemPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "ferramentas") {
 		t.Fatal("prompt should mention tools")
 	}
-}
-
-func TestIsEscalation(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected bool
-	}{
-		{`{"escalate": true, "reason": "complex"}`, true},
-		{`{"escalate": false}`, false},
-		{`Ola, como posso ajudar?`, false},
-		{`{"escalate": true}`, true},
-		{`  {"escalate": true, "reason": "test"}  `, true},
-	}
-
-	for _, tt := range tests {
-		got := isEscalation(tt.input)
-		if got != tt.expected {
-			t.Errorf("isEscalation(%q) = %v, want %v", tt.input, got, tt.expected)
-		}
+	if !strings.Contains(prompt, "PENSE") {
+		t.Fatal("prompt should tell agent to think first")
 	}
 }
 

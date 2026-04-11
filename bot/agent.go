@@ -35,25 +35,14 @@ func NewAgent(apiKey string, cal *CalendarClient, db *DB, cfg *Config, sendMsg f
 	}
 }
 
-// Run tries Haiku first, escalates to Sonnet if needed.
+// Run processes a user message using Sonnet with tool use.
 func (a *Agent) Run(ctx context.Context, user *User, message string) (string, error) {
 	history, _ := a.db.GetConversationHistory(user.ID, 10)
 	messages := buildMessages(history, message)
 
-	// Try Haiku first
-	response, escalated, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeHaiku4Dot5, buildHaikuSystemPrompt(user.Name))
+	response, _, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, buildSystemPrompt(user.Name))
 	if err != nil {
-		return "", fmt.Errorf("haiku: %w", err)
-	}
-
-	if escalated {
-		log.Printf("[%s] Escalating to Sonnet", user.Name)
-		// Re-build messages (don't reuse Haiku's modified slice)
-		messages = buildMessages(history, message)
-		response, _, err = a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, buildSonnetSystemPrompt(user.Name))
-		if err != nil {
-			return "", fmt.Errorf("sonnet: %w", err)
-		}
+		return "", fmt.Errorf("agent: %w", err)
 	}
 
 	log.Printf("[%s] Agent final response (%d chars): %.100s", user.Name, len(response), response)
@@ -90,13 +79,6 @@ func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Me
 		log.Printf("[%s] Agent response: stop=%s content_blocks=%d", user.Name, resp.StopReason, len(resp.Content))
 
 		// Check for escalation: if first content is text that looks like {"escalate": true, ...}
-		if len(resp.Content) > 0 && resp.Content[0].Type == anthropic.MessagesContentTypeText {
-			text := resp.Content[0].GetText()
-			if isEscalation(text) {
-				return "", true, nil
-			}
-		}
-
 		if resp.StopReason == anthropic.MessagesStopReasonEndTurn || resp.StopReason == anthropic.MessagesStopReasonMaxTokens {
 			// Extract text from response
 			var textParts []string
@@ -175,70 +157,30 @@ func buildMessages(history []ConversationMessage, userMsg string) []anthropic.Me
 	return msgs
 }
 
-func isEscalation(text string) bool {
-	text = strings.TrimSpace(text)
-	if !strings.HasPrefix(text, "{") {
-		return false
-	}
-	var esc struct {
-		Escalate bool   `json:"escalate"`
-		Reason   string `json:"reason"`
-	}
-	if err := json.Unmarshal([]byte(text), &esc); err != nil {
-		return false
-	}
-	return esc.Escalate
-}
-
-func buildHaikuSystemPrompt(userName string) string {
+func buildSystemPrompt(userName string) string {
 	now := time.Now().Format("2006-01-02 15:04 (Monday)")
 	return fmt.Sprintf(`Voce e o assistente pessoal de %s via WhatsApp.
 
-IMPORTANTE: Voce e o modelo rapido. Se a mensagem envolver QUALQUER dos cenarios abaixo,
-NAO tente resolver — responda APENAS com o texto: {"escalate": true, "reason": "motivo"}
+ANTES DE RESPONDER, PENSE. Nao responda na pressa. Use as ferramentas para buscar informacao antes de pedir ao usuario.
 
-Cenarios para escalar:
-- Criar mais de 1 evento por mensagem
-- Referencia a conversas passadas que precisa buscar
-- Pedidos ambiguos que exigem interpretacao criativa
-- Editar/mover multiplos eventos
-- Mensagens longas com multiplas instrucoes
-- Agendar na agenda de outro usuario
-- Qualquer coisa que voce nao tenha 90%% de certeza
+Capacidades:
+- O usuario pode te mandar audios e contatos — sao transcritos automaticamente. Voce CONSEGUE entender audios.
+- Voce tem MEMORIA persistente (salvar_memoria/buscar_memoria). Salve proativamente contatos, relacoes, preferencias. Busque ANTES de pedir informacoes.
+- Voce tem ferramentas para gerenciar a agenda do Google Calendar.
 
-Na duvida, ESCALE. Errar pra cima e melhor que errar pra baixo.
+Regras:
+- SEMPRE use buscar_agenda para responder sobre compromissos. NUNCA use memoria da conversa para isso.
+- Quando o usuario pedir algo sobre a agenda, PRIMEIRO consulte a agenda, DEPOIS responda.
+- Ao criar evento com informacoes claras, crie DIRETO (nao peca confirmacao). Use criar_evento com todos os params de uma vez (meet, attendees, etc).
+- ANTES de criar um evento, confira no historico se ja foi criado. Nao duplique.
+- NUNCA finja ter executado uma acao sem chamar a ferramenta.
+- So peca confirmacao quando houver ambiguidade real ou acao destrutiva (cancelar/editar).
+- NAO peca email de participantes proativamente — so use quando o usuario fornecer.
 
-Se for simples e voce tiver certeza, use as ferramentas disponiveis.
-O usuario pode te mandar audios e contatos — eles sao transcritos/convertidos em texto automaticamente antes de chegar a voce. Voce CONSEGUE entender audios.
-Voce tem MEMORIA persistente. Quando o usuario mencionar contatos, relacoes (pai, mae, chefe), enderecos ou preferencias, SALVE proativamente com salvar_memoria. Quando precisar de uma informacao que o usuario ja pode ter dado antes (ex: numero do pai), use buscar_memoria ANTES de perguntar.
-SEMPRE use as ferramentas para executar acoes. NUNCA finja que fez algo sem chamar a ferramenta. Se o usuario pedir pra fazer algo (mandar convite, criar evento, consultar agenda), voce DEVE chamar a ferramenta correspondente. NUNCA responda sobre agenda ou acoes usando apenas memoria da conversa.
-ANTES de criar um evento, verifique no historico da conversa se voce (assistente) ja informou que o evento foi criado. Se ja foi criado, NAO crie de novo.
-Ao criar evento com informacoes claras, crie DIRETO e avise (nao peca confirmacao).
-Responda em portugues, informal mas profissional. Seja MUITO conciso — maximo 2-3 frases. Sem emojis excessivos. Va direto ao ponto.
-
-Formatacao WhatsApp: *negrito*, _italico_, ~tachado~, ` + "```codigo```" + `. NAO use markdown (**, ##, etc).
-
-Data/hora atual: %s`, userName, now)
-}
-
-func buildSonnetSystemPrompt(userName string) string {
-	now := time.Now().Format("2006-01-02 15:04 (Monday)")
-	return fmt.Sprintf(`Voce e o assistente pessoal de %s via WhatsApp. Seja conciso e amigavel.
-
-O usuario pode te mandar audios e contatos — eles sao transcritos/convertidos em texto automaticamente. Voce CONSEGUE entender audios.
-
-Voce tem MEMORIA persistente. Quando o usuario mencionar contatos, relacoes (pai, mae, chefe), enderecos ou preferencias, SALVE proativamente com salvar_memoria. Quando precisar de uma informacao pessoal, use buscar_memoria ANTES de perguntar.
-
-Voce tem ferramentas para gerenciar a agenda. Use-as livremente:
-- SEMPRE use buscar_agenda quando o usuario perguntar sobre compromissos — NUNCA responda sobre agenda usando memoria da conversa
-- Ao criar evento com informacoes claras, crie DIRETO e avise (nao peca confirmacao)
-- ANTES de criar um evento, verifique no historico da conversa se voce (assistente) ja informou que o evento foi criado. Se ja foi criado, NAO crie de novo. Apenas execute a acao pendente (ex: convidar alguem).
-- So peca confirmacao quando houver ambiguidade, conflito de horario, ou acao destrutiva (cancelar/editar)
-- Para agendar na agenda de outro usuario, verifique permissao primeiro
-- Se o usuario referir algo de conversas anteriores, use buscar_historico
-- Responda em portugues, informal mas profissional. Seja MUITO conciso — maximo 2-3 frases. Sem emojis excessivos. Va direto ao ponto.
-
-Formatacao WhatsApp: *negrito*, _italico_, ~tachado~, ` + "```codigo```" + `. NAO use markdown (**, ##, etc).
+Estilo:
+- Portugues, informal mas profissional.
+- MUITO conciso — maximo 2-3 frases. Direto ao ponto.
+- Formatacao WhatsApp: *negrito*, _italico_, ~tachado~. NAO use markdown (**, ##, etc).
 
 Data/hora atual: %s`, userName, now)
 }
