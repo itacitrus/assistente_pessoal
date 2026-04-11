@@ -95,14 +95,24 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 	endTime := startTime.Add(duration)
 
 	// Check for conflicts before creating (unless user confirmed)
+	var allDayNotes []string
 	if !p.ForceConflict {
 		existing, _ := agent.cal.ListEvents(ctx, refreshToken, user.GoogleCalendarID, startTime, endTime)
-		if len(existing) > 0 {
-		var conflicts []string
+		var realConflicts []CalendarEvent
 		for _, e := range existing {
-			conflicts = append(conflicts, fmt.Sprintf("- %s (%s - %s)", e.Title, e.Start.Format("15:04"), e.End.Format("15:04")))
+			// All-day events have zero hour start and duration >= 24h — they don't block time
+			if e.Start.Hour() == 0 && e.Start.Minute() == 0 && (e.End.IsZero() || e.End.Sub(e.Start) >= 24*time.Hour) {
+				allDayNotes = append(allDayNotes, e.Title)
+			} else {
+				realConflicts = append(realConflicts, e)
+			}
 		}
-		return fmt.Sprintf("CONFLITO: ja existem eventos nesse horario:\n%s\nO usuario precisa confirmar se quer marcar mesmo assim. Se confirmar, chame criar_evento novamente com force_conflict=true.", strings.Join(conflicts, "\n")), nil
+		if len(realConflicts) > 0 {
+			var conflicts []string
+			for _, e := range realConflicts {
+				conflicts = append(conflicts, fmt.Sprintf("- %s (%s - %s)", e.Title, e.Start.Format("15:04"), e.End.Format("15:04")))
+			}
+			return fmt.Sprintf("CONFLITO: ja existem eventos nesse horario:\n%s\nO usuario precisa confirmar se quer marcar mesmo assim. Se confirmar, chame criar_evento novamente com force_conflict=true.", strings.Join(conflicts, "\n")), nil
 		}
 	}
 
@@ -126,6 +136,9 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 	result := FormatEventCreated(*created)
 	if created.MeetLink != "" {
 		result += fmt.Sprintf("\nLink do Meet: %s", created.MeetLink)
+	}
+	if len(allDayNotes) > 0 {
+		result += fmt.Sprintf("\nLembrete: nesse dia voce tem: %s", strings.Join(allDayNotes, ", "))
 	}
 	return result, nil
 }
