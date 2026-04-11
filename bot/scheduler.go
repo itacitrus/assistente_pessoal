@@ -158,6 +158,10 @@ func (s *Scheduler) checkDailySummaries() {
 			continue
 		}
 
+		if len(events) == 0 {
+			continue // Don't send daily summary if no events
+		}
+
 		msg := FormatDailySummary(user.Name, events, dayStart)
 		s.sendMsg(user.PhoneNumber, msg)
 		log.Printf("Scheduler: sent daily summary to %s (%d events)", user.Name, len(events))
