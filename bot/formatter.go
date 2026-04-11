@@ -92,7 +92,7 @@ func FormatEventList(events []CalendarEvent) string {
 			sb.WriteString(fmt.Sprintf("*%s %s*\n", weekday, dayKey))
 			currentDay = dayKey
 		}
-		sb.WriteString(fmt.Sprintf("  %s - %s: %s\n", ev.Start.Format("15:04"), ev.End.Format("15:04"), ev.Title))
+		sb.WriteString(fmt.Sprintf("  %s - %s: %s [id:%s]\n", ev.Start.Format("15:04"), ev.End.Format("15:04"), ev.Title, ev.ID))
 	}
 	return sb.String()
 }

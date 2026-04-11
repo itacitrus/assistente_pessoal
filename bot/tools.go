@@ -144,6 +144,7 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 }
 
 type editarEventoParams struct {
+	EventID         string `json:"event_id"`
 	SearchQuery     string `json:"search_query"`
 	NewTitle        string `json:"new_title"`
 	NewDate         string `json:"new_date"`
@@ -163,9 +164,25 @@ func handleEditarEvento(ctx context.Context, agent *Agent, user *User, params js
 		return "", fmt.Errorf("decrypt credentials: %w", err)
 	}
 
-	ev, err := agent.cal.FindEvent(ctx, refreshToken, user.GoogleCalendarID, p.SearchQuery)
-	if err != nil {
-		return fmt.Sprintf("Nao encontrei o evento: %v", err), nil
+	var ev *CalendarEvent
+	if p.EventID != "" {
+		// Direct lookup by ID — more reliable
+		ev = &CalendarEvent{ID: p.EventID}
+		// Get full event details
+		events, _ := agent.cal.ListEvents(ctx, refreshToken, user.GoogleCalendarID, time.Now().Add(-30*24*time.Hour), time.Now().Add(365*24*time.Hour))
+		for _, e := range events {
+			if e.ID == p.EventID {
+				ev = &e
+				break
+			}
+		}
+	} else if p.SearchQuery != "" {
+		ev, err = agent.cal.FindEvent(ctx, refreshToken, user.GoogleCalendarID, p.SearchQuery)
+		if err != nil {
+			return fmt.Sprintf("Nao encontrei o evento: %v", err), nil
+		}
+	} else {
+		return "Preciso do event_id ou search_query para encontrar o evento.", nil
 	}
 
 	updated := *ev
@@ -206,6 +223,7 @@ func handleEditarEvento(ctx context.Context, agent *Agent, user *User, params js
 }
 
 type cancelarEventoParams struct {
+	EventID     string `json:"event_id"`
 	SearchQuery string `json:"search_query"`
 }
 
@@ -220,17 +238,27 @@ func handleCancelarEvento(ctx context.Context, agent *Agent, user *User, params 
 		return "", fmt.Errorf("decrypt credentials: %w", err)
 	}
 
-	ev, err := agent.cal.FindEvent(ctx, refreshToken, user.GoogleCalendarID, p.SearchQuery)
-	if err != nil {
-		return fmt.Sprintf("Nao encontrei o evento: %v", err), nil
+	var eventID, eventTitle string
+	if p.EventID != "" {
+		eventID = p.EventID
+		eventTitle = p.EventID
+	} else if p.SearchQuery != "" {
+		ev, findErr := agent.cal.FindEvent(ctx, refreshToken, user.GoogleCalendarID, p.SearchQuery)
+		if findErr != nil {
+			return fmt.Sprintf("Nao encontrei o evento: %v", findErr), nil
+		}
+		eventID = ev.ID
+		eventTitle = ev.Title
+	} else {
+		return "Preciso do event_id ou search_query para encontrar o evento.", nil
 	}
 
-	if err := agent.cal.DeleteEvent(ctx, refreshToken, user.GoogleCalendarID, ev.ID); err != nil {
+	if err := agent.cal.DeleteEvent(ctx, refreshToken, user.GoogleCalendarID, eventID); err != nil {
 		return "", fmt.Errorf("delete event: %w", err)
 	}
 
-	agent.audit.Log(user.ID, "cancelar_evento", "", ev.Title)
-	return fmt.Sprintf("Evento *%s* cancelado.", ev.Title), nil
+	agent.audit.Log(user.ID, "cancelar_evento", "", eventTitle)
+	return fmt.Sprintf("Evento *%s* cancelado.", eventTitle), nil
 }
 
 type buscarHistoricoParams struct {

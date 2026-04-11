@@ -217,10 +217,13 @@ REGRAS CRITICAS PARA CRIAR EVENTOS:
 - Quando o usuario pedir multiplos eventos, crie TODOS de uma vez (chame criar_evento varias vezes na mesma resposta).
 
 REGRAS CRITICAS PARA EDITAR EVENTOS:
-- Quando o usuario pedir pra mudar algo em um evento, use editar_evento. NUNCA sugira cancelar e recriar.
-- Se o usuario quer mudar um evento de horario especifico pra "dia inteiro", use editar_evento com new_time="00:00" e new_duration_minutes=1440.
-- Se o usuario quer mudar SOMENTE um dos eventos repetidos, edite SÓ aquele. NAO cancele os outros.
+- ANTES de editar ou cancelar, SEMPRE use buscar_agenda para encontrar o evento exato. Nunca tente editar sem consultar a agenda primeiro.
+- Use editar_evento para modificar. NUNCA sugira cancelar e recriar.
+- Se o usuario quer mudar horario/duracao, use editar_evento com os campos new_time e/ou new_duration_minutes.
+- "dia inteiro" = new_time="00:00" e new_duration_minutes=1440.
+- Se o usuario quer mudar SOMENTE um dos eventos repetidos, edite SÓ aquele.
 - NUNCA peca ao usuario para fazer algo manualmente que voce pode fazer com suas ferramentas.
+- NUNCA diga que nao encontrou um evento se o usuario acabou de mencionar. Use buscar_agenda com o periodo certo.
 
 Ferramentas disponiveis:
 - buscar_agenda: consultar eventos. SEMPRE use antes de responder sobre compromissos.
@@ -279,29 +282,29 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 		},
 		{
 			Name:        "editar_evento",
-			Description: "Edita um evento existente na agenda.",
+			Description: "Edita um evento existente na agenda. SEMPRE use buscar_agenda antes para obter o event_id.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"search_query": {"type": "string", "description": "Texto para encontrar o evento"},
+					"event_id": {"type": "string", "description": "ID do evento (obtido via buscar_agenda). Preferivel ao search_query."},
+					"search_query": {"type": "string", "description": "Texto para encontrar o evento (fallback se nao tiver event_id)"},
 					"new_title": {"type": "string", "description": "Novo titulo (opcional)"},
 					"new_date": {"type": "string", "description": "Nova data YYYY-MM-DD (opcional)"},
 					"new_time": {"type": "string", "description": "Novo horario HH:MM (opcional)"},
 					"new_duration_minutes": {"type": "integer", "description": "Nova duracao em minutos (opcional)"},
 					"new_location": {"type": "string", "description": "Novo local (opcional)"}
-				},
-				"required": ["search_query"]
+				}
 			}`),
 		},
 		{
 			Name:        "cancelar_evento",
-			Description: "Cancela (deleta) um evento da agenda.",
+			Description: "Cancela (deleta) um evento da agenda. SEMPRE use buscar_agenda antes para obter o event_id.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"search_query": {"type": "string", "description": "Texto para encontrar o evento a cancelar"}
-				},
-				"required": ["search_query"]
+					"event_id": {"type": "string", "description": "ID do evento (obtido via buscar_agenda). Preferivel."},
+					"search_query": {"type": "string", "description": "Texto para encontrar o evento (fallback)"}
+				}
 			}`),
 		},
 		{
