@@ -245,6 +245,12 @@ TIMEZONE:
 - Sempre que inferir fuso, use buscar_memoria para checar viagens salvas e determinar o fuso correto para a data do evento.
 - 14h em Paris = 14h de Paris. NUNCA converta — use o fuso do local.
 
+RECORRENCIA:
+- Aniversarios → RRULE:FREQ=YEARLY (sempre recorrente, sem perguntar)
+- "toda segunda" → RRULE:FREQ=WEEKLY;BYDAY=MO
+- "todo dia" → RRULE:FREQ=DAILY
+- "todo mes" → RRULE:FREQ=MONTHLY
+
 REGRAS CRITICAS PARA CRIAR EVENTOS:
 - Se faltar o horario, use seu julgamento: eventos como feiras, viagens, feriados → crie como dia inteiro (00:00, 1440min). Reunioes e compromissos com hora implicita → consulte a agenda, sugira o primeiro horario livre e so confirme (ex: "Marquei pra 10h, tudo bem?").
 - "dia inteiro" = evento de 00:00 com duracao 1440 minutos.
@@ -310,7 +316,8 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"com_meet": {"type": "boolean", "description": "Se true, gera link do Google Meet automaticamente"},
 					"attendees": {"type": "array", "items": {"type": "string"}, "description": "Emails de participantes (opcional, NAO peca proativamente)"},
 					"force_conflict": {"type": "boolean", "description": "Se true, cria mesmo com conflito de horario (so usar apos usuario confirmar)"},
-					"timezone": {"type": "string", "description": "Fuso horario IANA (ex: Europe/London). Default: America/Sao_Paulo. Use buscar_memoria para checar timezone do usuario."}
+					"timezone": {"type": "string", "description": "Fuso horario IANA (ex: Europe/London). Default: America/Sao_Paulo."},
+					"recurrence": {"type": "string", "description": "Regra de recorrencia iCal. Ex: RRULE:FREQ=YEARLY para aniversarios, RRULE:FREQ=WEEKLY;BYDAY=MO para toda segunda"}
 				},
 				"required": ["title", "date", "time"]
 			}`),

@@ -16,14 +16,15 @@ type CalendarClient struct {
 }
 
 type CalendarEvent struct {
-	ID        string
-	Title     string
-	Start     time.Time
-	End       time.Time
-	Location  string
-	MeetLink  string
-	Attendees []string
-	Timezone  string // defaults to America/Sao_Paulo
+	ID         string
+	Title      string
+	Start      time.Time
+	End        time.Time
+	Location   string
+	MeetLink   string
+	Attendees  []string
+	Timezone   string   // defaults to America/Sao_Paulo
+	Recurrence []string // iCal RRULE, e.g. ["RRULE:FREQ=YEARLY"]
 }
 
 func NewCalendarClient(clientID, clientSecret, redirectURI string) *CalendarClient {
@@ -74,6 +75,11 @@ func (c *CalendarClient) CreateEvent(ctx context.Context, refreshToken, calendar
 			DateTime: ev.End.Format(time.RFC3339),
 			TimeZone: tz,
 		},
+	}
+
+	// Add recurrence
+	if len(ev.Recurrence) > 0 {
+		event.Recurrence = ev.Recurrence
 	}
 
 	// Add attendees

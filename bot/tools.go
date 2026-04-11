@@ -70,6 +70,7 @@ type criarEventoParams struct {
 	ComMeet         bool     `json:"com_meet"`
 	ForceConflict   bool     `json:"force_conflict"`
 	Timezone        string   `json:"timezone"`
+	Recurrence      string   `json:"recurrence"`
 }
 
 func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
@@ -131,6 +132,9 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 		Timezone:  tz,
 		Start:     startTime,
 		End:       endTime,
+	}
+	if p.Recurrence != "" {
+		ev.Recurrence = []string{p.Recurrence}
 	}
 	if p.ComMeet {
 		ev.MeetLink = "generate"
