@@ -38,8 +38,6 @@ func (h *Handler) HandleEvent(evt interface{}) {
 	switch v := evt.(type) {
 	case *events.Message:
 		h.handleMessage(v)
-	default:
-		log.Printf("DEBUG_EVENT: type=%T", evt)
 	}
 }
 
@@ -65,6 +63,16 @@ func normalizeBRPhone(phone string) []string {
 }
 
 func (h *Handler) handleMessage(msg *events.Message) {
+	// Ignore non-DM messages: groups, broadcasts, newsletters, status updates
+	chat := msg.Info.Chat
+	if msg.Info.IsGroup || chat.Server == "g.us" || chat.Server == "broadcast" || chat.Server == "newsletter" {
+		return
+	}
+	// Ignore status updates (status@broadcast)
+	if chat.User == "status" {
+		return
+	}
+
 	// Dedup: skip if we already processed this message ID
 	msgID := msg.Info.ID
 	h.processedMu.Lock()
