@@ -131,7 +131,7 @@ func (h *Handler) handleMessage(msg *events.Message) {
 		h.unknownMu.Unlock()
 
 		log.Printf("Unknown number: %s", sender)
-		h.sendText(senderJID, "Nao te conheço ainda. Peca ao administrador para te cadastrar.")
+		h.sendText(senderJID, "Ola! Sou o assistente da Itacitrus. Obrigado pela mensagem! Se precisar de algo, fale com o responsavel que te passou meu contato.")
 		return
 	}
 	if err != nil {
