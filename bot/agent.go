@@ -74,27 +74,45 @@ Voce age como um mensageiro educado:
 }
 
 // Run processes a user message using Sonnet with tool use.
-func (a *Agent) Run(ctx context.Context, user *User, message string, imageData []byte, imageMime string) (string, error) {
+func (a *Agent) Run(ctx context.Context, user *User, message string, images []ImageAttachment) (string, error) {
 	history, _ := a.db.GetConversationHistory(user.ID, 30)
 	messages := buildMessages(history, message)
 
-	// If image is attached, add it to the last (current) user message
-	if len(imageData) > 0 && imageMime != "" {
+	// Attach all images to the last (current) user message
+	if len(images) > 0 {
 		lastIdx := len(messages) - 1
-		imgContent := anthropic.NewImageMessageContent(anthropic.MessageContentSource{
-			Type:      anthropic.MessagesContentSourceTypeBase64,
-			MediaType: imageMime,
-			Data:      base64.StdEncoding.EncodeToString(imageData),
-		})
-		messages[lastIdx].Content = append(messages[lastIdx].Content, imgContent)
+		for _, img := range images {
+			if len(img.Data) == 0 {
+				continue
+			}
+			mime := img.Mime
+			if mime == "" {
+				mime = "image/jpeg"
+			}
+			imgContent := anthropic.NewImageMessageContent(anthropic.MessageContentSource{
+				Type:      anthropic.MessagesContentSourceTypeBase64,
+				MediaType: mime,
+				Data:      base64.StdEncoding.EncodeToString(img.Data),
+			})
+			messages[lastIdx].Content = append(messages[lastIdx].Content, imgContent)
+		}
 		if message == "" {
-			// If no text, add a prompt for the image
-			hint := "[Imagem enviada pelo usuario. Analise e identifique compromissos, eventos ou informacoes relevantes.]"
+			hint := "[Imagem(ns) enviada(s) pelo usuario. Analise e identifique compromissos, eventos ou informacoes relevantes.]"
 			messages[lastIdx].Content = append([]anthropic.MessageContent{anthropic.NewTextMessageContent(hint)}, messages[lastIdx].Content...)
 		}
 	}
 
-	response, _, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, buildSystemPrompt(user.Name))
+	systemPrompt := buildSystemPrompt(user.Name)
+	if req, err := a.db.GetPendingPermissionRequest(user.ID); err == nil && req != nil {
+		systemPrompt += fmt.Sprintf(`
+
+CONTEXTO ATUAL — SOLICITACAO DE PERMISSAO PENDENTE:
+%s pediu autorizacao para criar um evento na agenda deste usuario. Dados do evento: %s
+Se a resposta do usuario for para autorizar ou negar essa solicitacao, chame responder_permissao com a decisao apropriada (once/always/deny) baseada em como ele respondeu em linguagem natural. Se a resposta dele nao for sobre essa solicitacao, ignore este contexto e prossiga normalmente.`,
+			req.RequesterName, req.EventData)
+	}
+
+	response, _, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, systemPrompt)
 	if err != nil {
 		return "", fmt.Errorf("agent: %w", err)
 	}
@@ -235,15 +253,17 @@ Exemplos de raciocinio correto:
 - "meu pai" → buscar_memoria primeiro, so pedir info se nao encontrar.
 - "coloca o dia inteiro" sobre evento existente → editar_evento com new_time="00:00" e new_duration_minutes=1440.
 
-TIMEZONE:
+TIMEZONE E VIAGENS:
 - O fuso base do usuario e America/Sao_Paulo (Brasil).
-- O fuso e DINAMICO baseado em onde o usuario esta em cada data:
-  - "Vou pra Europa de 13 a 20/05" → salve na memoria (categoria "viagem") com datas. Eventos NESSE PERIODO usam fuso europeu. Apos 20/05, volta automaticamente pro Brasil.
-  - "Estou em Londres" (sem data de volta) → PERGUNTE quando ele volta para ajustar o fuso dos compromissos nesse periodo.
-  - "Reuniao em Roma dia 15 as 14h" (evento pontual no exterior, sem viagem declarada) → 14h e horario de Roma (Europe/Rome), so nesse evento.
-  - Eventos sem contexto de local estrangeiro → America/Sao_Paulo.
-- Sempre que inferir fuso, use buscar_memoria para checar viagens salvas e determinar o fuso correto para a data do evento.
-- 14h em Paris = 14h de Paris. NUNCA converta — use o fuso do local.
+- O fuso e DINAMICO por periodo: quando o usuario vai estar em outro lugar, use registrar_viagem.
+- Fluxo:
+  - Declaracao EXPLICITA com datas ("vou pra Paris de 15 a 17/05") → chame registrar_viagem direto. O sistema ja lista os compromissos que ja existem na janela; pergunte ao usuario em linguagem natural quais ele quer manter no horario de Brasilia e quais quer converter para o fuso local.
+  - Declaracao SEM data de volta ("estou em Londres") → PERGUNTE quando ele volta antes de chamar registrar_viagem.
+  - Inferencia IMPLICITA ("amanha vou ao Louvre as 14h") → PRIMEIRO pergunte "voce vai estar em Paris amanha?" em texto natural, so chame registrar_viagem apos confirmacao. NUNCA registre viagem baseado so em inferencia.
+  - Viagem cancelada ou adiada → cancelar_viagem.
+  - Antes de criar evento em outro fuso, voce nao precisa checar nada: o sistema aplica automaticamente o fuso do periodo de viagem ativo na data do evento. So passe date/time como o usuario informou (no fuso local do destino).
+- "14h em Paris" = 14h no horario de Paris. NUNCA converta manualmente — o sistema faz isso via registrar_viagem.
+- Eventos sem contexto de viagem → America/Sao_Paulo (padrao).
 
 RECORRENCIA:
 - Aniversarios → RRULE:FREQ=YEARLY (sempre recorrente, sem perguntar)
@@ -275,6 +295,7 @@ Ferramentas disponiveis:
 - convidar_participante: adicionar email como participante.
 - convidar_externo: mandar convite via WhatsApp para nao-usuarios. Quando convidar para MULTIPLOS eventos (ex: 3 dias de feira), envie UM convite para CADA dia — chame a ferramenta varias vezes.
 - gerar_link_meet: gerar link do Google Meet.
+- registrar_viagem, listar_viagens, cancelar_viagem: gerenciar periodos em outro fuso horario (veja secao TIMEZONE E VIAGENS).
 
 Regras gerais:
 - NUNCA finja ter executado uma acao sem chamar a ferramenta.
@@ -439,6 +460,51 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"search_query": {"type": "string", "description": "Texto para encontrar o evento"}
 				},
 				"required": ["search_query"]
+			}`),
+		},
+		{
+			Name:        "registrar_viagem",
+			Description: "Registra um periodo em que o usuario estara em outro fuso horario. Eventos criados ou listados nessas datas sao interpretados no fuso do destino; fora do periodo, tudo volta ao fuso padrao (America/Sao_Paulo). Chame sempre que o usuario declarar viagem EXPLICITA (ex: 'estarei em Paris de 15 a 17/05'). Para inferencias implicitas (ex: 'amanha vou ao Louvre as 14h'), PRIMEIRO pergunte em linguagem natural se ele estara mesmo em Paris nessa data e so chame a tool apos confirmacao.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"start_date": {"type": "string", "description": "Data de inicio da viagem (YYYY-MM-DD)"},
+					"end_date": {"type": "string", "description": "Data de fim da viagem (YYYY-MM-DD, inclusiva)"},
+					"timezone": {"type": "string", "description": "Fuso IANA do destino (ex: Europe/Paris, America/New_York)"},
+					"location_name": {"type": "string", "description": "Nome legivel do local (ex: Paris, Nova York)"}
+				},
+				"required": ["start_date", "end_date", "timezone", "location_name"]
+			}`),
+		},
+		{
+			Name:        "listar_viagens",
+			Description: "Lista as viagens futuras registradas pelo usuario.",
+			InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
+		},
+		{
+			Name:        "cancelar_viagem",
+			Description: "Remove um periodo de viagem registrado. Use quando o usuario cancelar ou adiar uma viagem.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"period_id": {"type": "integer", "description": "ID do periodo (obtido via listar_viagens). Preferivel."},
+					"location_name": {"type": "string", "description": "Nome do local (fallback; busca fuzzy)"}
+				}
+			}`),
+		},
+		{
+			Name:        "responder_permissao",
+			Description: "Responde a uma solicitacao pendente de permissao de acesso a agenda (quando outro usuario pediu para criar evento na agenda deste). Use SO quando o contexto indicar que ha uma solicitacao pendente e o usuario respondeu autorizando ou negando. Interprete a resposta em linguagem natural e escolha a decisao adequada.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"decision": {
+						"type": "string",
+						"enum": ["once", "always", "deny"],
+						"description": "once = autoriza so desta vez; always = autoriza permanente; deny = nega"
+					}
+				},
+				"required": ["decision"]
 			}`),
 		},
 	}

@@ -122,27 +122,37 @@ func (pm *PermissionManager) RequestPermission(requester *User, target *User, ev
 	}
 
 	msg := fmt.Sprintf(
-		"%s quer criar um evento na sua agenda.\n\nResponda:\n1 - Permitir esta vez\n2 - Permitir sempre\n3 - Negar",
+		"%s quer criar um evento na sua agenda. Voce autoriza? Pode responder em texto livre — por exemplo: sim (so desta vez), sempre (autoriza permanente), ou nao.",
 		requester.Name,
 	)
 	return msg, nil
 }
 
-// HandlePermissionResponse processes a "1", "2", or "3" reply from the target user.
-// Returns (messageToTarget, messageToRequester, requesterPhone, error).
-func (pm *PermissionManager) HandlePermissionResponse(target *User, choice string) (string, string, string, error) {
+// ResolvePermissionDecision represents the target user's decision on a pending
+// permission request. Decoded by the LLM from the user's free-text reply.
+type ResolvePermissionDecision string
+
+const (
+	DecisionAllowOnce   ResolvePermissionDecision = "once"
+	DecisionAllowAlways ResolvePermissionDecision = "always"
+	DecisionDeny        ResolvePermissionDecision = "deny"
+)
+
+// ResolvePendingPermission resolves the target user's pending permission request
+// according to the decision. Returns (messageToTarget, messageToRequester,
+// requesterPhone, error).
+func (pm *PermissionManager) ResolvePendingPermission(target *User, decision ResolvePermissionDecision) (string, string, string, error) {
 	req, err := pm.db.GetPendingPermissionRequest(target.ID)
 	if err != nil {
 		return "", "", "", fmt.Errorf("get pending permission request: %w", err)
 	}
-
 	requester, err := pm.db.GetUserByID(req.RequesterID)
 	if err != nil {
 		return "", "", "", fmt.Errorf("get requester: %w", err)
 	}
 
-	switch strings.TrimSpace(choice) {
-	case "1": // allow once
+	switch decision {
+	case DecisionAllowOnce:
 		if err := pm.db.ResolvePermissionRequest(req.ID, "approved_once"); err != nil {
 			return "", "", "", err
 		}
@@ -150,7 +160,7 @@ func (pm *PermissionManager) HandlePermissionResponse(target *User, choice strin
 			fmt.Sprintf("%s permitiu a criacao do evento (uma vez).", target.Name),
 			requester.PhoneNumber, nil
 
-	case "2": // allow always
+	case DecisionAllowAlways:
 		if err := pm.Grant(requester.ID, target.ID); err != nil {
 			return "", "", "", err
 		}
@@ -161,7 +171,7 @@ func (pm *PermissionManager) HandlePermissionResponse(target *User, choice strin
 			fmt.Sprintf("%s concedeu acesso permanente a voce.", target.Name),
 			requester.PhoneNumber, nil
 
-	case "3": // deny
+	case DecisionDeny:
 		if err := pm.db.ResolvePermissionRequest(req.ID, "denied"); err != nil {
 			return "", "", "", err
 		}
@@ -170,6 +180,6 @@ func (pm *PermissionManager) HandlePermissionResponse(target *User, choice strin
 			requester.PhoneNumber, nil
 
 	default:
-		return "", "", "", fmt.Errorf("invalid choice: %s", choice)
+		return "", "", "", fmt.Errorf("invalid decision: %s", decision)
 	}
 }

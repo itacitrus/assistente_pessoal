@@ -88,7 +88,17 @@ func (cm *ConfirmationManager) executeConfirmation(user *User, pc *PendingConfir
 		return "", fmt.Errorf("unmarshal event data: %w", err)
 	}
 
-	startTime, err := time.ParseInLocation("2006-01-02 15:04", data.Date+" "+data.Time, time.Local)
+	// Resolve tz from travel period. If event is for another user (TargetUser),
+	// use that user's periods; otherwise use the requesting user's.
+	targetForTz := user.ID
+	if data.TargetUser != "" {
+		if tu, err := cm.db.GetUserByName(data.TargetUser); err == nil {
+			targetForTz = tu.ID
+		}
+	}
+	parsedDate, _ := time.ParseInLocation("2006-01-02", data.Date, BRT())
+	loc := cm.db.GetEventTimezone(targetForTz, parsedDate)
+	startTime, err := time.ParseInLocation("2006-01-02 15:04", data.Date+" "+data.Time, loc)
 	if err != nil {
 		return "", fmt.Errorf("parse event time: %w", err)
 	}

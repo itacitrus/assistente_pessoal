@@ -137,6 +137,18 @@ func (db *DB) migrate() error {
 		content    TEXT NOT NULL,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
+
+	CREATE TABLE IF NOT EXISTS user_travel_periods (
+		id            INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id       INTEGER NOT NULL REFERENCES users(id),
+		start_date    TEXT NOT NULL,
+		end_date      TEXT NOT NULL,
+		timezone      TEXT NOT NULL,
+		location_name TEXT NOT NULL DEFAULT '',
+		created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_user_travel_periods_user_date
+		ON user_travel_periods(user_id, start_date, end_date);
 	`
 	_, err := db.conn.Exec(schema)
 	return err

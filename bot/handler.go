@@ -14,6 +14,18 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 )
 
+// bufferDelay is how long we wait for additional messages from the same user
+// before processing the accumulated batch. Resets on every new message.
+const bufferDelay = 5 * time.Second
+
+type pendingBuffer struct {
+	texts     []string
+	images    []ImageAttachment
+	timer     *time.Timer
+	senderJID types.JID
+	gen       uint64 // incremented on each reset; flush checks this to ignore stale timers
+}
+
 type Handler struct {
 	client         *whatsmeow.Client
 	db             *DB
@@ -22,6 +34,8 @@ type Handler struct {
 	unknownMu      sync.Mutex
 	processedMsgs  map[string]bool // dedup by message ID
 	processedMu    sync.Mutex
+	buffers        map[string]*pendingBuffer
+	bufMu          sync.Mutex
 }
 
 func NewHandler(client *whatsmeow.Client, db *DB, orchestrator *Orchestrator) *Handler {
@@ -31,6 +45,7 @@ func NewHandler(client *whatsmeow.Client, db *DB, orchestrator *Orchestrator) *H
 		orchestrator:   orchestrator,
 		unknownReplied: make(map[string]time.Time),
 		processedMsgs:  make(map[string]bool),
+		buffers:        make(map[string]*pendingBuffer),
 	}
 }
 
@@ -141,15 +156,8 @@ func (h *Handler) handleMessage(msg *events.Message) {
 		if text == "" {
 			return // Ignore non-text from unknown users (audio, etc)
 		}
-		log.Printf("Unknown number %s: %s", sender, text)
-		response, respErr := h.orchestrator.ProcessUnknown(ctx, sender, text)
-		if respErr != nil {
-			log.Printf("Error processing unknown user %s: %v", sender, respErr)
-			return
-		}
-		if response != "" {
-			h.sendText(senderJID, response)
-		}
+		log.Printf("Unknown number %s: %s (buffering)", sender, text)
+		h.bufferAndSchedule(sender, senderJID, text, nil)
 		return
 	}
 	if err != nil {
@@ -161,8 +169,7 @@ func (h *Handler) handleMessage(msg *events.Message) {
 	}
 
 	// For registered users, also handle audio and images
-	var imageData []byte
-	var imageMime string
+	var images []ImageAttachment
 	if audioMsg := msg.Message.GetAudioMessage(); audioMsg != nil && text == "" {
 		audioData, audioErr := h.client.Download(ctx, audioMsg)
 		if audioErr != nil {
@@ -182,50 +189,105 @@ func (h *Handler) handleMessage(msg *events.Message) {
 		if imgErr != nil {
 			log.Printf("Error downloading image from %s: %v", sender, imgErr)
 		} else {
-			imageData = imgData
-			imageMime = imgMsg.GetMimetype()
-			if imageMime == "" {
-				imageMime = "image/jpeg"
+			mime := imgMsg.GetMimetype()
+			if mime == "" {
+				mime = "image/jpeg"
 			}
+			images = append(images, ImageAttachment{Data: imgData, Mime: mime})
 			// Use caption as text if available
 			if caption := imgMsg.GetCaption(); caption != "" && text == "" {
 				text = caption
 			}
-			log.Printf("[%s] Image received (%d bytes, %s)", user.Name, len(imageData), imageMime)
+			log.Printf("[%s] Image received (%d bytes, %s)", user.Name, len(imgData), mime)
 		}
 	}
 
-	if text == "" && len(imageData) == 0 {
+	if text == "" && len(images) == 0 {
 		return
 	}
 
 	log.Printf("[%s] %s: %s", user.Name, sender, text)
 
-	// Intercept "1"/"2"/"3" responses for pending permission requests
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "1" || trimmed == "2" || trimmed == "3" {
-		reply, handled, err := h.orchestrator.HandlePermissionResponse(ctx, user, trimmed)
-		if err != nil {
-			log.Printf("Error handling permission response from %s: %v", sender, err)
-		} else if handled {
-			if reply != "" {
-				h.sendText(senderJID, reply)
-			}
-			return
+	h.bufferAndSchedule(sender, senderJID, text, images)
+}
+
+// bufferAndSchedule appends a message to the per-user pending buffer and
+// (re)arms a 5s timer. When the timer fires without new messages, the batch
+// is flushed to the orchestrator as a single request.
+func (h *Handler) bufferAndSchedule(phone string, senderJID types.JID, text string, images []ImageAttachment) {
+	h.bufMu.Lock()
+	defer h.bufMu.Unlock()
+
+	pb, ok := h.buffers[phone]
+	if !ok {
+		pb = &pendingBuffer{senderJID: senderJID}
+		h.buffers[phone] = pb
+	}
+	if text != "" {
+		pb.texts = append(pb.texts, text)
+	}
+	pb.images = append(pb.images, images...)
+
+	pb.gen++
+	gen := pb.gen
+	if pb.timer != nil {
+		pb.timer.Stop()
+	}
+	pb.timer = time.AfterFunc(bufferDelay, func() { h.flushBuffer(phone, gen) })
+}
+
+// flushBuffer drains the pending buffer for phone and dispatches the batch.
+// The gen parameter guards against stale timer fires: if another message
+// arrived between the timer firing and us acquiring the lock, the generation
+// won't match and we return without processing (the new timer will flush).
+func (h *Handler) flushBuffer(phone string, gen uint64) {
+	h.bufMu.Lock()
+	pb, ok := h.buffers[phone]
+	if !ok || pb.gen != gen {
+		h.bufMu.Unlock()
+		return
+	}
+	delete(h.buffers, phone)
+	h.bufMu.Unlock()
+
+	text := strings.Join(pb.texts, "\n")
+	ctx := context.Background()
+
+	// Re-lookup user at flush time in case state changed during buffering.
+	var user *User
+	for _, variant := range normalizeBRPhone(phone) {
+		if u, err := h.db.GetUserByPhone(variant); err == nil {
+			user = u
+			break
 		}
 	}
 
-	response, err := h.orchestrator.Process(ctx, user, text, imageData, imageMime)
-	if err != nil {
-		log.Printf("Error processing message from %s: %v", sender, err)
-		h.sendText(senderJID, "Ocorreu um erro ao processar sua mensagem. Tente novamente.")
+	if user == nil {
+		log.Printf("Flushing unknown buffer %s (%d msgs)", phone, len(pb.texts))
+		response, err := h.orchestrator.ProcessUnknown(ctx, phone, text)
+		if err != nil {
+			log.Printf("Error processing unknown user %s: %v", phone, err)
+			return
+		}
+		if response != "" {
+			h.sendText(pb.senderJID, response)
+		}
+		return
+	}
+	if !user.IsActive {
 		return
 	}
 
+	log.Printf("[%s] Flushing buffer (%d msgs, %d imgs)", user.Name, len(pb.texts), len(pb.images))
+	response, err := h.orchestrator.Process(ctx, user, text, pb.images)
+	if err != nil {
+		log.Printf("Error processing message from %s: %v", phone, err)
+		h.sendText(pb.senderJID, "Ocorreu um erro ao processar sua mensagem. Tente novamente.")
+		return
+	}
 	if response != "" {
-		// Save bot response to conversation history
 		h.db.AddConversationMessage(user.ID, "assistant", response)
-		h.sendText(senderJID, response)
+		h.sendText(pb.senderJID, response)
 	}
 }
 

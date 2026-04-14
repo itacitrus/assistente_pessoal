@@ -22,6 +22,10 @@ var toolHandlers = map[string]ToolHandler{
 	"convidar_participante":      handleConvidarParticipante,
 	"salvar_memoria":             handleSalvarMemoria,
 	"buscar_memoria":             handleBuscarMemoria,
+	"registrar_viagem":           handleRegistrarViagem,
+	"listar_viagens":             handleListarViagens,
+	"cancelar_viagem":            handleCancelarViagem,
+	"responder_permissao":        handleResponderPermissao,
 }
 
 type buscarAgendaParams struct {
@@ -55,6 +59,7 @@ func handleBuscarAgenda(ctx context.Context, agent *Agent, user *User, params js
 	if err != nil {
 		return "", fmt.Errorf("list events: %w", err)
 	}
+	agent.db.ApplyEventTimezones(user.ID, events)
 
 	agent.audit.Log(user.ID, "consultar_agenda", "", fmt.Sprintf("%s a %s", p.StartDate, p.EndDate))
 	return FormatEventList(events), nil
@@ -84,13 +89,18 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 		return "", fmt.Errorf("decrypt credentials: %w", err)
 	}
 
+	// Resolve the timezone from the event's calendar date via the travel
+	// period helper. An explicit Timezone param still wins (lets the agent
+	// override for one-off foreign events without a registered travel).
+	parsedDate, _ := time.ParseInLocation("2006-01-02", p.Date, BRT())
+	loc := agent.db.GetEventTimezone(user.ID, parsedDate)
 	tz := p.Timezone
-	if tz == "" {
-		tz = "America/Sao_Paulo"
-	}
-	loc, _ := time.LoadLocation(tz)
-	if loc == nil {
-		loc = BRT()
+	if tz != "" {
+		if l, err := time.LoadLocation(tz); err == nil {
+			loc = l
+		}
+	} else {
+		tz = loc.String()
 	}
 	startTime, err := time.ParseInLocation("2006-01-02 15:04", p.Date+" "+p.Time, loc)
 	if err != nil {
@@ -107,6 +117,7 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 	var allDayNotes []string
 	if !p.ForceConflict {
 		existing, _ := agent.cal.ListEvents(ctx, refreshToken, user.GoogleCalendarID, startTime, endTime)
+		agent.db.ApplyEventTimezones(user.ID, existing)
 		var realConflicts []CalendarEvent
 		for _, e := range existing {
 			// All-day events have zero hour start and duration >= 24h — they don't block time
@@ -183,6 +194,7 @@ func handleEditarEvento(ctx context.Context, agent *Agent, user *User, params js
 		ev = &CalendarEvent{ID: p.EventID}
 		// Get full event details
 		events, _ := agent.cal.ListEvents(ctx, refreshToken, user.GoogleCalendarID, time.Now().Add(-30*24*time.Hour), time.Now().Add(365*24*time.Hour))
+		agent.db.ApplyEventTimezones(user.ID, events)
 		for _, e := range events {
 			if e.ID == p.EventID {
 				ev = &e
@@ -197,12 +209,12 @@ func handleEditarEvento(ctx context.Context, agent *Agent, user *User, params js
 	} else {
 		return "Preciso do event_id ou search_query para encontrar o evento.", nil
 	}
+	agent.db.ApplyEventTimezone(user.ID, ev)
 
 	updated := *ev
 	if p.NewTitle != "" {
 		updated.Title = p.NewTitle
 	}
-	loc := BRT()
 	if p.NewDate != "" || p.NewTime != "" {
 		// Keep existing date/time if only one is provided
 		dateStr := ev.Start.Format("2006-01-02")
@@ -213,6 +225,11 @@ func handleEditarEvento(ctx context.Context, agent *Agent, user *User, params js
 		if p.NewTime != "" {
 			timeStr = p.NewTime
 		}
+		// Interpret the new date/time in whatever tz applies on that calendar date
+		// (travel period tz, or BRT default). Prevents editing a Paris-period
+		// event as if the new time were in BRT.
+		parsedDate, _ := time.ParseInLocation("2006-01-02", dateStr, BRT())
+		loc := agent.db.GetEventTimezone(user.ID, parsedDate)
 		newStart, parseErr := time.ParseInLocation("2006-01-02 15:04", dateStr+" "+timeStr, loc)
 		if parseErr == nil {
 			duration := ev.End.Sub(ev.Start)
@@ -366,7 +383,10 @@ func handleCriarEventoOutroUsuario(ctx context.Context, agent *Agent, user *User
 		return "", fmt.Errorf("decrypt target credentials: %w", err)
 	}
 
-	loc := BRT()
+	// Use the TARGET user's travel period (if any) to interpret date/time —
+	// the event is on their calendar, so their location is what matters.
+	parsedDate, _ := time.ParseInLocation("2006-01-02", p.Date, BRT())
+	loc := agent.db.GetEventTimezone(target.ID, parsedDate)
 	startTime, err := time.ParseInLocation("2006-01-02 15:04", p.Date+" "+p.Time, loc)
 	if err != nil {
 		return "", fmt.Errorf("parse event time: %w", err)
@@ -382,6 +402,7 @@ func handleCriarEventoOutroUsuario(ctx context.Context, agent *Agent, user *User
 		Location: p.Location,
 		Start:    startTime,
 		End:      startTime.Add(duration),
+		Timezone: loc.String(),
 	}
 
 	created, err := agent.cal.CreateEvent(ctx, targetToken, target.GoogleCalendarID, ev)
@@ -476,7 +497,7 @@ func handleConvidarExterno(ctx context.Context, agent *Agent, user *User, params
 
 	// Build invite message
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Ola, %s! Sou Charles Lurch, assistente do %s.\n\n", p.Name, user.Name))
+	sb.WriteString(fmt.Sprintf("Ola, %s! Sou Charles Lurch, assistente do Waldyr.\n\n", p.Name))
 	sb.WriteString(fmt.Sprintf("*%s* te convidou para:\n", user.Name))
 	sb.WriteString(fmt.Sprintf("*%s*\n", p.EventTitle))
 	sb.WriteString(fmt.Sprintf("Data: %s as %s\n", p.EventDate, p.EventTime))

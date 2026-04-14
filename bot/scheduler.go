@@ -76,6 +76,7 @@ func (s *Scheduler) checkUserReminders(user *User) {
 		log.Printf("Scheduler: error listing events for %s: %v", user.Name, err)
 		return
 	}
+	s.db.ApplyEventTimezones(user.ID, events)
 
 	for _, ev := range events {
 		sent, _ := s.db.HasSentReminder(user.ID, ev.ID)
@@ -157,6 +158,7 @@ func (s *Scheduler) checkDailySummaries() {
 			log.Printf("Scheduler: error getting daily events for %s: %v", user.Name, err)
 			continue
 		}
+		s.db.ApplyEventTimezones(user.ID, events)
 
 		if len(events) == 0 {
 			continue // Don't send daily summary if no events
@@ -222,6 +224,7 @@ func (s *Scheduler) checkWeeklySummaries() {
 			log.Printf("Scheduler: error getting weekly events for %s: %v", user.Name, err)
 			continue
 		}
+		s.db.ApplyEventTimezones(user.ID, events)
 
 		msg := FormatWeeklySummary(user.Name, events, weekStart)
 		s.sendMsg(user.PhoneNumber, msg)
