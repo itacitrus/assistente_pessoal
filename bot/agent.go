@@ -159,7 +159,10 @@ func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Me
 			return "", false, fmt.Errorf("claude API: %w", err)
 		}
 
-		log.Printf("[%s] Agent response: stop=%s content_blocks=%d", user.Name, resp.StopReason, len(resp.Content))
+		u := resp.Usage
+		log.Printf("[%s] Agent response: stop=%s content_blocks=%d tokens=in:%d/out:%d cache=write:%d/read:%d",
+			user.Name, resp.StopReason, len(resp.Content),
+			u.InputTokens, u.OutputTokens, u.CacheCreationInputTokens, u.CacheReadInputTokens)
 
 		// Check for escalation: if first content is text that looks like {"escalate": true, ...}
 		if resp.StopReason == anthropic.MessagesStopReasonEndTurn || resp.StopReason == anthropic.MessagesStopReasonMaxTokens {
