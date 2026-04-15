@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
@@ -29,6 +30,7 @@ func main() {
 		fmt.Println("  grant-access   Grant a user permission to schedule on another's calendar")
 		fmt.Println("  revoke-access  Revoke a user's permission to schedule on another's calendar")
 		fmt.Println("  list-access    List users a given user can schedule for")
+		fmt.Println("  test-birthday  Create and delete a birthday event to validate Google API constraints")
 		os.Exit(1)
 	}
 
@@ -47,10 +49,87 @@ func main() {
 		revokeAccess()
 	case "list-access":
 		listAccess()
+	case "test-birthday":
+		testBirthday()
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])
 		os.Exit(1)
 	}
+}
+
+// testBirthday creates a one-off birthday event and deletes it immediately.
+// Lets us validate Google's eventType=birthday constraints without burning
+// Anthropic tokens on agent retries. Usage:
+//
+//	bot test-birthday --phone=5561... --date=2026-12-31 --title="Teste"
+//
+// Prints the full Google API error on failure so we can see which constraint
+// is missing. On success, deletes the event and confirms.
+func testBirthday() {
+	fs := flag.NewFlagSet("test-birthday", flag.ExitOnError)
+	phone := fs.String("phone", "", "Phone number of a registered user (whose credentials we use)")
+	date := fs.String("date", "", "YYYY-MM-DD (any date — the birthday will recur yearly)")
+	title := fs.String("title", "TESTE - Aniversario Dummy", "Event title")
+	keep := fs.Bool("keep", false, "If set, don't delete the event after creating (useful for inspecting in UI)")
+	fs.Parse(os.Args[2:])
+
+	if *phone == "" || *date == "" {
+		fmt.Println("Usage: bot test-birthday --phone=5561... --date=2026-12-31 [--title=...] [--keep]")
+		os.Exit(1)
+	}
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+	db, err := NewDB("data/bot.db")
+	if err != nil {
+		log.Fatalf("Failed to init database: %v", err)
+	}
+	defer db.Close()
+
+	user, err := db.GetUserByPhone(*phone)
+	if err != nil {
+		log.Fatalf("User %s not found: %v", *phone, err)
+	}
+	refreshToken, err := Decrypt(user.GoogleCredentials, cfg.EncryptionKey)
+	if err != nil {
+		log.Fatalf("Decrypt credentials: %v", err)
+	}
+
+	bdayStart, err := time.ParseInLocation(dateLayout, *date, BRT())
+	if err != nil {
+		log.Fatalf("Parse date %q: %v", *date, err)
+	}
+
+	cal := NewCalendarClient(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRedirectURI)
+	ev := CalendarEvent{
+		Title:     *title,
+		Start:     bdayStart,
+		End:       bdayStart.AddDate(0, 0, 1),
+		EventType: "birthday",
+	}
+
+	fmt.Printf("Creating birthday event for %s on %s...\n", user.Name, bdayStart.Format("2006-01-02"))
+	created, err := cal.CreateEvent(context.Background(), refreshToken, user.GoogleCalendarID, ev)
+	if err != nil {
+		fmt.Printf("\n❌ FAILED: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("✅ Created event %s (%q)\n", created.ID, created.Title)
+
+	if *keep {
+		fmt.Println("--keep set, leaving event in calendar for inspection.")
+		return
+	}
+
+	fmt.Printf("Deleting event %s...\n", created.ID)
+	if err := cal.DeleteEvent(context.Background(), refreshToken, user.GoogleCalendarID, created.ID); err != nil {
+		fmt.Printf("⚠️  Create worked, delete failed: %v\n", err)
+		fmt.Printf("   The event is still in calendar — delete manually.\n")
+		os.Exit(2)
+	}
+	fmt.Println("✅ Deleted. Birthday constraints are satisfied.")
 }
 
 func runBot() {
