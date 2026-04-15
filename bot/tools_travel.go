@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -45,12 +46,26 @@ func handleRegistrarViagem(ctx context.Context, agent *Agent, user *User, params
 		return "", fmt.Errorf("create travel period: %w", err)
 	}
 
-	// List events already scheduled in this window so the agent can ask the
-	// user whether to keep them in BRT or convert to the destination tz.
+	// Create a visible all-day marker on the user's calendar spanning the whole
+	// trip, so the agenda shows "Viagem: X" across those days. Non-blocking
+	// (transparency=transparent) — it's a visual cue, not a time reservation.
+	// If this fails we do NOT roll back the DB period: the period itself is
+	// what drives tz normalization and the marker is a nice-to-have.
 	refreshToken, err := Decrypt(user.GoogleCredentials, agent.cfg.EncryptionKey)
 	if err != nil {
 		return "", fmt.Errorf("decrypt credentials: %w", err)
 	}
+	markerTitle := fmt.Sprintf("✈️ Viagem: %s", p.LocationName)
+	if markerID, markerErr := agent.cal.CreateAllDayEvent(ctx, refreshToken, user.GoogleCalendarID, markerTitle, start, end); markerErr != nil {
+		log.Printf("[%s] registrar_viagem: failed to create all-day marker (continuing): %v", user.Name, markerErr)
+	} else if err := agent.db.SetTravelCalendarEventID(period.ID, markerID); err != nil {
+		log.Printf("[%s] registrar_viagem: failed to persist marker event id %s: %v", user.Name, markerID, err)
+	} else {
+		period.CalendarEventID = markerID
+	}
+
+	// List events already scheduled in this window so the agent can ask the
+	// user whether to keep them in BRT or convert to the destination tz.
 	windowStart := start
 	windowEnd := end.Add(24*time.Hour - time.Second)
 
@@ -73,14 +88,25 @@ func handleRegistrarViagem(ctx context.Context, agent *Agent, user *User, params
 		destLoc = BRT()
 	}
 
+	// Filter out the marker event we just created — it'd be noise in the list
+	// of "compromissos ja marcados".
+	var filtered []CalendarEvent
+	for _, ev := range events {
+		if ev.ID == period.CalendarEventID {
+			continue
+		}
+		filtered = append(filtered, ev)
+	}
+	events = filtered
+
 	if len(events) == 0 {
-		return fmt.Sprintf("Viagem registrada: %s de %s a %s (%s). Nenhum compromisso existente nessas datas.",
-			p.LocationName, p.StartDate, p.EndDate, p.Timezone), nil
+		return fmt.Sprintf("Viagem registrada: %s de %s a %s (%s). Marcador '✈️ Viagem: %s' criado na agenda. Nenhum compromisso existente nessas datas.",
+			p.LocationName, p.StartDate, p.EndDate, p.Timezone, p.LocationName), nil
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Viagem registrada: %s de %s a %s (%s).\n\n",
-		p.LocationName, p.StartDate, p.EndDate, p.Timezone)
+	fmt.Fprintf(&sb, "Viagem registrada: %s de %s a %s (%s). Marcador '✈️ Viagem: %s' criado na agenda.\n\n",
+		p.LocationName, p.StartDate, p.EndDate, p.Timezone, p.LocationName)
 	fmt.Fprintf(&sb, "Compromissos ja marcados nessa janela (%d):\n", len(events))
 	for _, ev := range events {
 		origTime := ev.Start.In(BRT()).Format("02/01 15:04")
@@ -155,9 +181,23 @@ func handleCancelarViagem(ctx context.Context, agent *Agent, user *User, params 
 		id = matches[0].ID
 	}
 
+	// Look up the period before deleting so we can also remove the all-day
+	// marker event from Google Calendar. Best-effort: if the delete fails
+	// (event manually removed, token expired, etc) we log and proceed — the
+	// DB period must come down regardless.
+	period, _ := agent.db.GetTravelPeriodByID(id, user.ID)
+	if period != nil && period.CalendarEventID != "" {
+		refreshToken, decErr := Decrypt(user.GoogleCredentials, agent.cfg.EncryptionKey)
+		if decErr != nil {
+			log.Printf("[%s] cancelar_viagem: decrypt failed (skipping marker delete): %v", user.Name, decErr)
+		} else if delErr := agent.cal.DeleteEvent(ctx, refreshToken, user.GoogleCalendarID, period.CalendarEventID); delErr != nil {
+			log.Printf("[%s] cancelar_viagem: marker delete failed (continuing): %v", user.Name, delErr)
+		}
+	}
+
 	if err := agent.db.DeleteTravelPeriod(id, user.ID); err != nil {
 		return "", fmt.Errorf("delete travel period: %w", err)
 	}
 	agent.audit.Log(user.ID, "cancelar_viagem", "", fmt.Sprintf("id=%d", id))
-	return "Viagem cancelada. Compromissos nessas datas voltam a ser interpretados no fuso do Brasil.", nil
+	return "Viagem cancelada e marcador removido da agenda. Compromissos nessas datas voltam a ser interpretados no fuso do Brasil.", nil
 }

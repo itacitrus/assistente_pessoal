@@ -13,13 +13,14 @@ const dateLayout = "2006-01-02"
 // timezone. Events whose date falls within [StartDate, EndDate] are interpreted
 // and displayed in this period's Timezone instead of the user's default (BRT).
 type TravelPeriod struct {
-	ID           int64
-	UserID       int64
-	StartDate    time.Time // date-only (midnight in BRT, used only for comparison)
-	EndDate      time.Time // inclusive
-	Timezone     string    // IANA, e.g. "Europe/Paris"
-	LocationName string
-	CreatedAt    time.Time
+	ID              int64
+	UserID          int64
+	StartDate       time.Time // date-only (midnight in BRT, used only for comparison)
+	EndDate         time.Time // inclusive
+	Timezone        string    // IANA, e.g. "Europe/Paris"
+	LocationName    string
+	CalendarEventID string // ID of the "Viagem" all-day marker event on Google Calendar
+	CreatedAt       time.Time
 }
 
 var ErrTravelPeriodOverlap = errors.New("travel period overlaps with existing period")
@@ -51,9 +52,9 @@ func (db *DB) CreateTravelPeriod(p *TravelPeriod) error {
 	}
 
 	result, err := db.conn.Exec(
-		`INSERT INTO user_travel_periods (user_id, start_date, end_date, timezone, location_name)
-		 VALUES (?, ?, ?, ?, ?)`,
-		p.UserID, startStr, endStr, p.Timezone, p.LocationName)
+		`INSERT INTO user_travel_periods (user_id, start_date, end_date, timezone, location_name, calendar_event_id)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		p.UserID, startStr, endStr, p.Timezone, p.LocationName, p.CalendarEventID)
 	if err != nil {
 		return err
 	}
@@ -61,10 +62,39 @@ func (db *DB) CreateTravelPeriod(p *TravelPeriod) error {
 	return nil
 }
 
+// SetTravelCalendarEventID persists the Google Calendar event ID of the
+// "Viagem" all-day marker so we can delete it if the period is canceled.
+func (db *DB) SetTravelCalendarEventID(periodID int64, eventID string) error {
+	_, err := db.conn.Exec(
+		`UPDATE user_travel_periods SET calendar_event_id = ? WHERE id = ?`,
+		eventID, periodID)
+	return err
+}
+
+// GetTravelPeriodByID returns the single period matching id+userID, or nil
+// if not found. Used by the cancel path to look up the linked calendar event.
+func (db *DB) GetTravelPeriodByID(id, userID int64) (*TravelPeriod, error) {
+	p := &TravelPeriod{}
+	var startStr, endStr string
+	err := db.conn.QueryRow(
+		`SELECT id, user_id, start_date, end_date, timezone, location_name, calendar_event_id, created_at
+		 FROM user_travel_periods WHERE id = ? AND user_id = ?`, id, userID,
+	).Scan(&p.ID, &p.UserID, &startStr, &endStr, &p.Timezone, &p.LocationName, &p.CalendarEventID, &p.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	p.StartDate, _ = time.ParseInLocation(dateLayout, startStr, BRT())
+	p.EndDate, _ = time.ParseInLocation(dateLayout, endStr, BRT())
+	return p, nil
+}
+
 // ListTravelPeriods returns periods for the user ordered by start_date asc.
 // If onlyFuture is true, periods whose end_date is before today are excluded.
 func (db *DB) ListTravelPeriods(userID int64, onlyFuture bool) ([]TravelPeriod, error) {
-	query := `SELECT id, user_id, start_date, end_date, timezone, location_name, created_at
+	query := `SELECT id, user_id, start_date, end_date, timezone, location_name, calendar_event_id, created_at
 	          FROM user_travel_periods WHERE user_id = ?`
 	args := []any{userID}
 	if onlyFuture {
@@ -84,7 +114,7 @@ func (db *DB) ListTravelPeriods(userID int64, onlyFuture bool) ([]TravelPeriod, 
 		var p TravelPeriod
 		var startStr, endStr string
 		if err := rows.Scan(&p.ID, &p.UserID, &startStr, &endStr, &p.Timezone,
-			&p.LocationName, &p.CreatedAt); err != nil {
+			&p.LocationName, &p.CalendarEventID, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		p.StartDate, _ = time.ParseInLocation(dateLayout, startStr, BRT())
@@ -117,11 +147,11 @@ func (db *DB) GetTravelPeriodForDate(userID int64, date time.Time) (*TravelPerio
 	p := &TravelPeriod{}
 	var startStr, endStr string
 	err := db.conn.QueryRow(
-		`SELECT id, user_id, start_date, end_date, timezone, location_name, created_at
+		`SELECT id, user_id, start_date, end_date, timezone, location_name, calendar_event_id, created_at
 		 FROM user_travel_periods
 		 WHERE user_id = ? AND start_date <= ? AND end_date >= ?
 		 ORDER BY created_at DESC LIMIT 1`, userID, dateStr, dateStr,
-	).Scan(&p.ID, &p.UserID, &startStr, &endStr, &p.Timezone, &p.LocationName, &p.CreatedAt)
+	).Scan(&p.ID, &p.UserID, &startStr, &endStr, &p.Timezone, &p.LocationName, &p.CalendarEventID, &p.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

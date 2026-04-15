@@ -172,6 +172,42 @@ func (c *CalendarClient) CreateEvent(ctx context.Context, refreshToken, calendar
 	}, nil
 }
 
+// CreateAllDayEvent creates an all-day event spanning [startDate, endDate] (both
+// inclusive, dates only in BRT). Transparency is "transparent" so the event
+// does not block time — it's a visual marker. Used for travel period markers;
+// could be extended to other all-day non-birthday use cases.
+//
+// Google's Date-format all-day events use an exclusive end date: to span
+// 10 Apr to 12 Apr you set end=13 Apr.
+func (c *CalendarClient) CreateAllDayEvent(ctx context.Context, refreshToken, calendarID, title string, startDate, endDate time.Time) (string, error) {
+	svc, err := c.serviceForUser(ctx, refreshToken)
+	if err != nil {
+		return "", fmt.Errorf("calendar service: %w", err)
+	}
+	event := &calendar.Event{
+		Summary:      title,
+		Transparency: "transparent",
+		Start:        &calendar.EventDateTime{Date: startDate.Format(dateLayout)},
+		End:          &calendar.EventDateTime{Date: endDate.AddDate(0, 0, 1).Format(dateLayout)},
+	}
+	created, err := svc.Events.Insert(calendarID, event).Do()
+	if err != nil {
+		return "", fmt.Errorf("insert all-day event: %w", err)
+	}
+	// Verify — same reason as CreateEvent: prove it landed on the target calendar.
+	verify, verifyErr := svc.Events.Get(calendarID, created.Id).Do()
+	if verifyErr != nil {
+		log.Printf("CreateAllDayEvent verify FAILED: id=%s calendar=%s err=%v",
+			created.Id, calendarID, verifyErr)
+		return "", fmt.Errorf("all-day event created (id=%s) but verification failed: %w",
+			created.Id, verifyErr)
+	}
+	log.Printf("CreateAllDayEvent OK: id=%s calendar=%s title=%q span=%s..%s status=%s",
+		verify.Id, calendarID, title,
+		startDate.Format(dateLayout), endDate.Format(dateLayout), verify.Status)
+	return verify.Id, nil
+}
+
 func (c *CalendarClient) ListEvents(ctx context.Context, refreshToken, calendarID string, start, end time.Time) ([]CalendarEvent, error) {
 	svc, err := c.serviceForUser(ctx, refreshToken)
 	if err != nil {

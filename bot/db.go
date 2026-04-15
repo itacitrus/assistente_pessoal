@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -150,8 +151,24 @@ func (db *DB) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_user_travel_periods_user_date
 		ON user_travel_periods(user_id, start_date, end_date);
 	`
-	_, err := db.conn.Exec(schema)
-	return err
+	if _, err := db.conn.Exec(schema); err != nil {
+		return err
+	}
+
+	// Additive migrations. SQLite has no "ADD COLUMN IF NOT EXISTS", so we
+	// ignore duplicate-column errors and let anything else bubble up.
+	additive := []string{
+		// calendar_event_id links a travel period to the all-day "✈️ Viagem"
+		// marker event on the user's calendar, so we can delete the marker
+		// when the period is canceled.
+		`ALTER TABLE user_travel_periods ADD COLUMN calendar_event_id TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, stmt := range additive {
+		if _, err := db.conn.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("additive migration %q: %w", stmt, err)
+		}
+	}
+	return nil
 }
 
 func (db *DB) AddConversationMessage(userID int64, role, content string) error {
