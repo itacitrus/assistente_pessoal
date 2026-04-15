@@ -28,6 +28,10 @@ type CalendarEvent struct {
 	// EventType mirrors Google Calendar's `eventType` field. Currently we only
 	// create events of type "birthday" (see CreateEvent). Populated on read.
 	EventType string
+	// RecurringEventID is the master event ID when this event is an expanded
+	// instance of a recurring series. Empty for single events. Passing this ID
+	// (not the instance ID) to DeleteEvent removes the whole series.
+	RecurringEventID string
 }
 
 func NewCalendarClient(clientID, clientSecret, redirectURI string) *CalendarClient {
@@ -168,10 +172,11 @@ func (c *CalendarClient) ListEvents(ctx context.Context, refreshToken, calendarI
 	var result []CalendarEvent
 	for _, item := range events.Items {
 		ev := CalendarEvent{
-			ID:        item.Id,
-			Title:     item.Summary,
-			Location:  item.Location,
-			EventType: item.EventType,
+			ID:               item.Id,
+			Title:            item.Summary,
+			Location:         item.Location,
+			EventType:        item.EventType,
+			RecurringEventID: item.RecurringEventId,
 		}
 		parseEventTimes(item, &ev)
 		result = append(result, ev)
@@ -331,10 +336,11 @@ func (c *CalendarClient) FindEvent(ctx context.Context, refreshToken, calendarID
 
 	item := events.Items[0]
 	ev := &CalendarEvent{
-		ID:        item.Id,
-		Title:     item.Summary,
-		Location:  item.Location,
-		EventType: item.EventType,
+		ID:               item.Id,
+		Title:            item.Summary,
+		Location:         item.Location,
+		EventType:        item.EventType,
+		RecurringEventID: item.RecurringEventId,
 	}
 	parseEventTimes(item, ev)
 	return ev, nil

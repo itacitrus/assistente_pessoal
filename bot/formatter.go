@@ -96,7 +96,15 @@ func FormatEventList(events []CalendarEvent) string {
 			sb.WriteString(fmt.Sprintf("*%s %s*\n", weekday, dayKey))
 			currentDay = dayKey
 		}
-		sb.WriteString(fmt.Sprintf("  %s - %s: %s [id:%s]\n", ev.Start.Format("15:04"), ev.End.Format("15:04"), ev.Title, ev.ID))
+		suffix := ""
+		if ev.EventType != "" && ev.EventType != "default" {
+			suffix += fmt.Sprintf(" [type:%s]", ev.EventType)
+		}
+		if ev.RecurringEventID != "" {
+			// Master id is what DeleteEvent needs to remove the whole series.
+			suffix += fmt.Sprintf(" [master:%s]", ev.RecurringEventID)
+		}
+		sb.WriteString(fmt.Sprintf("  %s - %s: %s [id:%s]%s\n", ev.Start.Format("15:04"), ev.End.Format("15:04"), ev.Title, ev.ID, suffix))
 	}
 	return sb.String()
 }
