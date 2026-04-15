@@ -23,5 +23,17 @@ variable "key_name" {
 variable "repo_url" {
   description = "Git repository URL to clone"
   type        = string
-  default     = "https://github.com/giovannirambo/assistente_pessoal.git"
+  default     = "https://github.com/itacitrus/assistente_pessoal.git"
+}
+
+variable "data_volume_size" {
+  description = "Size in GB of the persistent data EBS volume"
+  type        = number
+  default     = 10
+}
+
+variable "backup_bucket_name" {
+  description = "S3 bucket name for database backups"
+  type        = string
+  default     = "assistente-backups"
 }

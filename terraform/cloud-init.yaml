@@ -3,14 +3,72 @@ package_update: true
 packages:
   - docker
   - git
+  - sqlite
+  - cronie
+
+write_files:
+  - path: /etc/cron.d/assistente-backup
+    content: |
+      # Backup SQLite DBs to S3 every 6 hours
+      0 */6 * * * ec2-user S3_BACKUP_BUCKET=${backup_bucket} /bin/bash /opt/assistente/scripts/backup.sh >> /var/log/assistente-backup.log 2>&1
+    permissions: "0644"
 
 runcmd:
+  # Docker + buildx + compose plugin
   - systemctl enable docker
   - systemctl start docker
   - usermod -aG docker ec2-user
   - mkdir -p /usr/local/lib/docker/cli-plugins
-  - curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" -o /usr/local/lib/docker/cli-plugins/docker-compose
+  - curl -fSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" -o /usr/local/lib/docker/cli-plugins/docker-compose
   - chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+  - curl -fSL "https://github.com/docker/buildx/releases/download/v0.19.0/buildx-v0.19.0.linux-amd64" -o /usr/local/lib/docker/cli-plugins/docker-buildx
+  - chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+
+  # Cron
+  - systemctl enable crond
+  - systemctl start crond
+
+  # Timezone
   - timedatectl set-timezone America/Sao_Paulo
-  - mkdir -p /opt/assistente
-  - chown ec2-user:ec2-user /opt/assistente
+
+  # Mount persistent data volume. AL2023 exposes attached EBS as nvme*n1;
+  # the device-id from aws_volume_attachment may not match, so find it by
+  # finding the extra disk that is not the root. Formats only if blank.
+  - |
+    set -eux
+    # Wait up to 60s for the volume to attach
+    for i in $(seq 1 30); do
+      DATA_DEV=$(lsblk -dpno NAME,MOUNTPOINT | awk '$2 == "" {print $1}' | grep -v $(findmnt -n -o SOURCE / | sed 's/p[0-9]*$//') | head -n1)
+      if [ -n "$DATA_DEV" ]; then break; fi
+      sleep 2
+    done
+    if [ -z "$DATA_DEV" ]; then
+      echo "WARN: data volume not found; /opt/assistente/data will use root disk"
+    else
+      # Format if no filesystem
+      if ! blkid "$DATA_DEV" >/dev/null 2>&1; then
+        mkfs.ext4 -L assistente-data "$DATA_DEV"
+      fi
+      mkdir -p /opt/assistente/data
+      # Persistent mount via LABEL (survives device renaming)
+      grep -q "LABEL=assistente-data" /etc/fstab || echo "LABEL=assistente-data /opt/assistente/data ext4 defaults,nofail 0 2" >> /etc/fstab
+      mount -a
+      chown -R ec2-user:ec2-user /opt/assistente/data
+    fi
+
+  # Clone repo into a temp dir and copy the tree into /opt/assistente.
+  # Direct clone fails because /opt/assistente already contains the mounted
+  # data/ directory (EBS) and possibly a pre-existing .env. `cp -a` merges
+  # without deleting untracked paths, so data/ and .env are preserved.
+  - |
+    set -eux
+    if [ ! -d /opt/assistente/.git ]; then
+      TMPDIR=$(mktemp -d)
+      sudo -u ec2-user git clone ${repo_url} "$TMPDIR/repo"
+      # Copy everything including dotfiles (.git, .gitignore, etc.)
+      cp -a "$TMPDIR/repo/." /opt/assistente/
+      rm -rf "$TMPDIR"
+      chown -R ec2-user:ec2-user /opt/assistente
+    fi
+    mkdir -p /opt/assistente/data
+    chown ec2-user:ec2-user /opt/assistente/data
