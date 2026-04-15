@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -102,17 +103,22 @@ func (a *Agent) Run(ctx context.Context, user *User, message string, images []Im
 		}
 	}
 
-	systemPrompt := buildSystemPrompt(user.Name)
-	if req, err := a.db.GetPendingPermissionRequest(user.ID); err == nil && req != nil {
-		systemPrompt += fmt.Sprintf(`
-
-CONTEXTO ATUAL — SOLICITACAO DE PERMISSAO PENDENTE:
-%s pediu autorizacao para criar um evento na agenda deste usuario. Dados do evento: %s
-Se a resposta do usuario for para autorizar ou negar essa solicitacao, chame responder_permissao com a decisao apropriada (once/always/deny) baseada em como ele respondeu em linguagem natural. Se a resposta dele nao for sobre essa solicitacao, ignore este contexto e prossiga normalmente.`,
-			req.RequesterName, req.EventData)
+	pendingReq, _ := a.db.GetPendingPermissionRequest(user.ID)
+	systemParts := []anthropic.MessageSystemPart{
+		{
+			Type: "text",
+			Text: buildSystemPromptStable(user.Name),
+			CacheControl: &anthropic.MessageCacheControl{
+				Type: anthropic.CacheControlTypeEphemeral,
+			},
+		},
+		{
+			Type: "text",
+			Text: buildSystemPromptDynamic(pendingReq),
+		},
 	}
 
-	response, _, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, systemPrompt)
+	response, _, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, systemParts)
 	if err != nil {
 		return "", fmt.Errorf("agent: %w", err)
 	}
@@ -128,21 +134,26 @@ Se a resposta do usuario for para autorizar ou negar essa solicitacao, chame res
 }
 
 // runLoop is the core agent loop: send messages, handle tool_use, repeat.
-func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Message, model anthropic.Model, systemPrompt string) (string, bool, error) {
+func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Message, model anthropic.Model, systemParts []anthropic.MessageSystemPart) (string, bool, error) {
 	tools := buildToolDefinitions()
 	maxIterations := 8
 
 	for i := 0; i < maxIterations; i++ {
 		log.Printf("[%s] Agent loop iteration %d (model=%s, msgs=%d)", user.Name, i+1, model, len(messages))
 
+		// Mark the last content block of the final message with cache_control
+		// so Anthropic caches the conversation prefix up to here. Subsequent
+		// iterations extend the prefix and keep hitting the cache.
+		markLastMessageForCache(messages)
+
 		temp := float32(0.3)
-		resp, err := a.client.CreateMessages(ctx, anthropic.MessagesRequest{
+		resp, err := a.createMessagesWithRetry(ctx, user, anthropic.MessagesRequest{
 			Model:       model,
 			MaxTokens:   4096,
 			Temperature: &temp,
-			System:    systemPrompt,
-			Messages:  messages,
-			Tools:     tools,
+			MultiSystem: systemParts,
+			Messages:    messages,
+			Tools:       tools,
 		})
 		if err != nil {
 			return "", false, fmt.Errorf("claude API: %w", err)
@@ -210,6 +221,76 @@ func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Me
 	return "Desculpe, nao consegui completar a operacao (muitas etapas).", false, nil
 }
 
+// markLastMessageForCache attaches cache_control: ephemeral to the final
+// content block of the final message. Anthropic uses this as a cache
+// breakpoint: the entire prefix up to and including this block is cached for
+// 5 minutes. On the next call, Anthropic does longest-prefix matching — so
+// even as new messages are appended, the cached prefix keeps hitting and only
+// new content counts as uncached input tokens.
+//
+// Clears cache_control from previously-marked blocks first to keep only one
+// active breakpoint (Anthropic allows up to 4, but one at the tail is
+// simplest and avoids drift).
+func markLastMessageForCache(messages []anthropic.Message) {
+	if len(messages) == 0 {
+		return
+	}
+	// Clear any prior breakpoints — we only want one active, at the tail.
+	for i := range messages {
+		for j := range messages[i].Content {
+			messages[i].Content[j].CacheControl = nil
+		}
+	}
+	last := &messages[len(messages)-1]
+	if len(last.Content) == 0 {
+		return
+	}
+	tail := &last.Content[len(last.Content)-1]
+	tail.CacheControl = &anthropic.MessageCacheControl{
+		Type: anthropic.CacheControlTypeEphemeral,
+	}
+}
+
+// createMessagesWithRetry wraps client.CreateMessages with retry on 429
+// (rate limit) and 529/overloaded. Uses exponential backoff with jitter,
+// capped at 30s per wait, max 3 retries. Other errors propagate immediately.
+func (a *Agent) createMessagesWithRetry(ctx context.Context, user *User, req anthropic.MessagesRequest) (anthropic.MessagesResponse, error) {
+	const maxRetries = 3
+	delay := 2 * time.Second
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		resp, err := a.client.CreateMessages(ctx, req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+
+		// Only retry on rate limit / overloaded — other errors (invalid
+		// request, auth, etc.) won't recover by waiting.
+		var apiErr *anthropic.APIError
+		if !errors.As(err, &apiErr) || (!apiErr.IsRateLimitErr() && !apiErr.IsOverloadedErr()) {
+			return resp, err
+		}
+		if attempt == maxRetries {
+			break
+		}
+
+		wait := delay
+		if wait > 30*time.Second {
+			wait = 30 * time.Second
+		}
+		log.Printf("[%s] API %s — retry %d/%d in %s", user.Name, apiErr.Type, attempt+1, maxRetries, wait)
+		select {
+		case <-ctx.Done():
+			return resp, ctx.Err()
+		case <-time.After(wait):
+		}
+		delay *= 2
+	}
+	return anthropic.MessagesResponse{}, lastErr
+}
+
 func buildMessages(history []ConversationMessage, userMsg string) []anthropic.Message {
 	var msgs []anthropic.Message
 	for _, h := range history {
@@ -236,9 +317,17 @@ func buildMessages(history []ConversationMessage, userMsg string) []anthropic.Me
 	return msgs
 }
 
-func buildSystemPrompt(userName string) string {
-	now := time.Now().In(BRT()).Format("2006-01-02 15:04 (Monday)")
-	return fmt.Sprintf(`Voce e Charles Lurch, assistente pessoal de %s via WhatsApp. Seu nome e uma homenagem ao Lurch (Tropeço), o mordomo da Familia Adams. Ocasionalmente, com moderacao e bom timing, insira referencias sutis a isso — um "You rang?" quando chamado, um humor seco, uma formalidade exagerada por um instante. Nao force. Data/hora atual: %s (fuso: America/Sao_Paulo)
+// buildSystemPromptStable returns the large, stable portion of the system
+// prompt. Contains identity, rules, and tool descriptions — everything that
+// does not change across calls. Marked with cache_control so Anthropic caches
+// the prefix (system + tools + this block) for 5 min and subsequent calls in
+// the same conversation only pay full tokens for new messages.
+//
+// userName is included here because it's stable per-user: caching per user
+// still works well, and including it here lets the agent address the user by
+// name in every response without needing a dynamic suffix for just that.
+func buildSystemPromptStable(userName string) string {
+	return fmt.Sprintf(`Voce e Charles Lurch, assistente pessoal de %s via WhatsApp. Seu nome e uma homenagem ao Lurch (Tropeço), o mordomo da Familia Adams. Ocasionalmente, com moderacao e bom timing, insira referencias sutis a isso — um "You rang?" quando chamado, um humor seco, uma formalidade exagerada por um instante. Nao force.
 
 REGRA DE OURO: NUNCA pergunte algo que voce pode descobrir sozinho. Sempre tente resolver ANTES de perguntar.
 
@@ -306,7 +395,25 @@ Regras gerais:
 Estilo:
 - Portugues, informal, profissional. MUITO conciso — 1-2 frases. Direto ao ponto.
 - Formatacao WhatsApp: *negrito*, _italico_. NAO use markdown (**, ##).
-- Sem emojis excessivos.`, userName, now)
+- Sem emojis excessivos.`, userName)
+}
+
+// buildSystemPromptDynamic returns the per-call portion: current date/time
+// (changes every minute) plus any context that varies per request (pending
+// permission requests). Not cached — pays full tokens every call, but the
+// block is small (~100-300 tokens).
+func buildSystemPromptDynamic(pendingReq *PermissionRequest) string {
+	now := time.Now().In(BRT()).Format("2006-01-02 15:04 (Monday)")
+	out := fmt.Sprintf("Data/hora atual: %s (fuso: America/Sao_Paulo).", now)
+	if pendingReq != nil {
+		out += fmt.Sprintf(`
+
+CONTEXTO ATUAL — SOLICITACAO DE PERMISSAO PENDENTE:
+%s pediu autorizacao para criar um evento na agenda deste usuario. Dados do evento: %s
+Se a resposta do usuario for para autorizar ou negar essa solicitacao, chame responder_permissao com a decisao apropriada (once/always/deny) baseada em como ele respondeu em linguagem natural. Se a resposta dele nao for sobre essa solicitacao, ignore este contexto e prossiga normalmente.`,
+			pendingReq.RequesterName, pendingReq.EventData)
+	}
+	return out
 }
 
 func buildToolDefinitions() []anthropic.ToolDefinition {

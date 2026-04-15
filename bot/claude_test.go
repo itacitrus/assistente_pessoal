@@ -3,10 +3,12 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/liushuangls/go-anthropic/v2"
 )
 
-func TestBuildSystemPrompt(t *testing.T) {
-	prompt := buildSystemPrompt("Waldyr")
+func TestBuildSystemPromptStable(t *testing.T) {
+	prompt := buildSystemPromptStable("Waldyr")
 	if prompt == "" {
 		t.Fatal("expected non-empty prompt")
 	}
@@ -18,6 +20,28 @@ func TestBuildSystemPrompt(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "NUNCA pergunte") {
 		t.Fatal("prompt should tell agent to not ask unnecessary questions")
+	}
+	// Stable prompt MUST NOT contain time-varying content — that breaks caching.
+	if strings.Contains(prompt, "Data/hora") {
+		t.Fatal("stable prompt must not contain date/time (would invalidate cache)")
+	}
+}
+
+func TestBuildSystemPromptDynamic(t *testing.T) {
+	// Without pending permission
+	out := buildSystemPromptDynamic(nil)
+	if !strings.Contains(out, "Data/hora atual") {
+		t.Fatal("dynamic prompt should contain current date/time")
+	}
+	if strings.Contains(out, "PERMISSAO PENDENTE") {
+		t.Fatal("no permission context when pendingReq is nil")
+	}
+
+	// With pending permission
+	req := &PermissionRequest{RequesterName: "Giovanni", EventData: `{"title":"reuniao"}`}
+	out = buildSystemPromptDynamic(req)
+	if !strings.Contains(out, "Giovanni") || !strings.Contains(out, "PERMISSAO PENDENTE") {
+		t.Fatal("dynamic prompt with pending req should include requester name and marker")
 	}
 }
 
@@ -38,6 +62,43 @@ func TestBuildMessages(t *testing.T) {
 	}
 	if string(msgs[2].Role) != "user" {
 		t.Fatalf("expected third message role user, got %s", msgs[2].Role)
+	}
+}
+
+func TestMarkLastMessageForCache(t *testing.T) {
+	msgs := []anthropic.Message{
+		{Role: anthropic.RoleUser, Content: []anthropic.MessageContent{anthropic.NewTextMessageContent("a")}},
+		{Role: anthropic.RoleAssistant, Content: []anthropic.MessageContent{anthropic.NewTextMessageContent("b")}},
+		{Role: anthropic.RoleUser, Content: []anthropic.MessageContent{
+			anthropic.NewTextMessageContent("c1"),
+			anthropic.NewTextMessageContent("c2"),
+		}},
+	}
+
+	// First pass: mark the last block of last message.
+	markLastMessageForCache(msgs)
+	if msgs[2].Content[1].CacheControl == nil {
+		t.Fatal("expected cache_control on last block of last message")
+	}
+	if msgs[2].Content[0].CacheControl != nil {
+		t.Fatal("expected no cache_control on other blocks of same message")
+	}
+	if msgs[0].Content[0].CacheControl != nil || msgs[1].Content[0].CacheControl != nil {
+		t.Fatal("expected no cache_control on earlier messages")
+	}
+
+	// Second pass with a new message appended: prior breakpoint must be cleared,
+	// new tail gets the breakpoint.
+	msgs = append(msgs, anthropic.Message{
+		Role:    anthropic.RoleAssistant,
+		Content: []anthropic.MessageContent{anthropic.NewTextMessageContent("d")},
+	})
+	markLastMessageForCache(msgs)
+	if msgs[2].Content[1].CacheControl != nil {
+		t.Fatal("prior cache_control should have been cleared")
+	}
+	if msgs[3].Content[0].CacheControl == nil {
+		t.Fatal("new tail should have cache_control")
 	}
 }
 
