@@ -25,6 +25,9 @@ type CalendarEvent struct {
 	Attendees  []string
 	Timezone   string   // defaults to America/Sao_Paulo
 	Recurrence []string // iCal RRULE, e.g. ["RRULE:FREQ=YEARLY"]
+	// EventType mirrors Google Calendar's `eventType` field. Currently we only
+	// create events of type "birthday" (see CreateEvent). Populated on read.
+	EventType string
 }
 
 func NewCalendarClient(clientID, clientSecret, redirectURI string) *CalendarClient {
@@ -67,19 +70,28 @@ func (c *CalendarClient) CreateEvent(ctx context.Context, refreshToken, calendar
 	event := &calendar.Event{
 		Summary:  ev.Title,
 		Location: ev.Location,
-		Start: &calendar.EventDateTime{
-			DateTime: ev.Start.Format(time.RFC3339),
-			TimeZone: tz,
-		},
-		End: &calendar.EventDateTime{
-			DateTime: ev.End.Format(time.RFC3339),
-			TimeZone: tz,
-		},
 	}
 
-	// Add recurrence
-	if len(ev.Recurrence) > 0 {
-		event.Recurrence = ev.Recurrence
+	if ev.EventType == "birthday" {
+		// Birthdays are native all-day events with automatic yearly recurrence.
+		// Use Date (not DateTime), set EventType + BirthdayProperties.Type, and
+		// skip any user-supplied Recurrence rule — Google adds YEARLY itself.
+		event.EventType = "birthday"
+		event.BirthdayProperties = &calendar.EventBirthdayProperties{Type: "birthday"}
+		event.Start = &calendar.EventDateTime{Date: ev.Start.Format(dateLayout)}
+		event.End = &calendar.EventDateTime{Date: ev.Start.AddDate(0, 0, 1).Format(dateLayout)}
+	} else {
+		event.Start = &calendar.EventDateTime{
+			DateTime: ev.Start.Format(time.RFC3339),
+			TimeZone: tz,
+		}
+		event.End = &calendar.EventDateTime{
+			DateTime: ev.End.Format(time.RFC3339),
+			TimeZone: tz,
+		}
+		if len(ev.Recurrence) > 0 {
+			event.Recurrence = ev.Recurrence
+		}
 	}
 
 	// Add attendees
@@ -146,19 +158,35 @@ func (c *CalendarClient) ListEvents(ctx context.Context, refreshToken, calendarI
 	var result []CalendarEvent
 	for _, item := range events.Items {
 		ev := CalendarEvent{
-			ID:       item.Id,
-			Title:    item.Summary,
-			Location: item.Location,
+			ID:        item.Id,
+			Title:     item.Summary,
+			Location:  item.Location,
+			EventType: item.EventType,
 		}
-		if item.Start.DateTime != "" {
-			ev.Start, _ = time.Parse(time.RFC3339, item.Start.DateTime)
-		}
-		if item.End.DateTime != "" {
-			ev.End, _ = time.Parse(time.RFC3339, item.End.DateTime)
-		}
+		parseEventTimes(item, &ev)
 		result = append(result, ev)
 	}
 	return result, nil
+}
+
+// parseEventTimes fills ev.Start/ev.End from a Google Calendar event item.
+// Handles both timed events (DateTime field) and all-day events (Date field,
+// e.g. birthdays, holidays, multi-day events imported from external sources).
+func parseEventTimes(item *calendar.Event, ev *CalendarEvent) {
+	if item.Start != nil {
+		if item.Start.DateTime != "" {
+			ev.Start, _ = time.Parse(time.RFC3339, item.Start.DateTime)
+		} else if item.Start.Date != "" {
+			ev.Start, _ = time.ParseInLocation(dateLayout, item.Start.Date, BRT())
+		}
+	}
+	if item.End != nil {
+		if item.End.DateTime != "" {
+			ev.End, _ = time.Parse(time.RFC3339, item.End.DateTime)
+		} else if item.End.Date != "" {
+			ev.End, _ = time.ParseInLocation(dateLayout, item.End.Date, BRT())
+		}
+	}
 }
 
 func (c *CalendarClient) DeleteEvent(ctx context.Context, refreshToken, calendarID, eventID string) error {
@@ -187,16 +215,28 @@ func (c *CalendarClient) UpdateEvent(ctx context.Context, refreshToken, calendar
 	if ev.Location != "" {
 		existing.Location = ev.Location
 	}
+	// Preserve the all-day Date format when editing a birthday-typed event.
+	// Google makes EventType immutable after creation; switching to DateTime
+	// would either fail or silently degrade the event.
+	isAllDay := existing.EventType == "birthday"
 	if !ev.Start.IsZero() {
-		existing.Start = &calendar.EventDateTime{
-			DateTime: ev.Start.Format(time.RFC3339),
-			TimeZone: "America/Sao_Paulo",
+		if isAllDay {
+			existing.Start = &calendar.EventDateTime{Date: ev.Start.Format(dateLayout)}
+		} else {
+			existing.Start = &calendar.EventDateTime{
+				DateTime: ev.Start.Format(time.RFC3339),
+				TimeZone: "America/Sao_Paulo",
+			}
 		}
 	}
 	if !ev.End.IsZero() {
-		existing.End = &calendar.EventDateTime{
-			DateTime: ev.End.Format(time.RFC3339),
-			TimeZone: "America/Sao_Paulo",
+		if isAllDay {
+			existing.End = &calendar.EventDateTime{Date: ev.End.Format(dateLayout)}
+		} else {
+			existing.End = &calendar.EventDateTime{
+				DateTime: ev.End.Format(time.RFC3339),
+				TimeZone: "America/Sao_Paulo",
+			}
 		}
 	}
 
@@ -281,15 +321,11 @@ func (c *CalendarClient) FindEvent(ctx context.Context, refreshToken, calendarID
 
 	item := events.Items[0]
 	ev := &CalendarEvent{
-		ID:       item.Id,
-		Title:    item.Summary,
-		Location: item.Location,
+		ID:        item.Id,
+		Title:     item.Summary,
+		Location:  item.Location,
+		EventType: item.EventType,
 	}
-	if item.Start.DateTime != "" {
-		ev.Start, _ = time.Parse(time.RFC3339, item.Start.DateTime)
-	}
-	if item.End.DateTime != "" {
-		ev.End, _ = time.Parse(time.RFC3339, item.End.DateTime)
-	}
+	parseEventTimes(item, ev)
 	return ev, nil
 }

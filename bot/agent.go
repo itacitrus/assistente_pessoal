@@ -358,7 +358,7 @@ TIMEZONE E VIAGENS:
 - Eventos sem contexto de viagem → America/Sao_Paulo (padrao).
 
 RECORRENCIA:
-- Aniversarios → RRULE:FREQ=YEARLY (sempre recorrente, sem perguntar)
+- Aniversarios → use is_birthday=true (NAO use recurrence). O sistema cria como evento nativo de aniversario do Google (emoji 🎂, all-day, repete todo ano). Nao precisa passar time/duration.
 - "toda segunda" → RRULE:FREQ=WEEKLY;BYDAY=MO
 - "todo dia" → RRULE:FREQ=DAILY
 - "todo mes" → RRULE:FREQ=MONTHLY
@@ -448,9 +448,10 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"attendees": {"type": "array", "items": {"type": "string"}, "description": "Emails de participantes (opcional, NAO peca proativamente)"},
 					"force_conflict": {"type": "boolean", "description": "Se true, cria mesmo com conflito de horario (so usar apos usuario confirmar)"},
 					"timezone": {"type": "string", "description": "Fuso horario IANA (ex: Europe/London). Default: America/Sao_Paulo."},
-					"recurrence": {"type": "string", "description": "Regra de recorrencia iCal. Ex: RRULE:FREQ=YEARLY para aniversarios, RRULE:FREQ=WEEKLY;BYDAY=MO para toda segunda"}
+					"recurrence": {"type": "string", "description": "Regra de recorrencia iCal para eventos recorrentes NAO-aniversario. Ex: RRULE:FREQ=WEEKLY;BYDAY=MO para toda segunda. Para aniversarios use is_birthday=true em vez disso."},
+					"is_birthday": {"type": "boolean", "description": "Se true, cria como aniversario nativo do Google (all-day, recorrencia anual automatica, emoji 🎂). Use para qualquer aniversario. Nao precisa de time/duration/recurrence quando true."}
 				},
-				"required": ["title", "date", "time"]
+				"required": ["title", "date"]
 			}`),
 		},
 		{
@@ -501,11 +502,13 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"target_user": {"type": "string", "description": "Nome do usuario alvo"},
 					"title": {"type": "string", "description": "Titulo do evento"},
 					"date": {"type": "string", "description": "Data do evento (YYYY-MM-DD)"},
-					"time": {"type": "string", "description": "Horario de inicio (HH:MM)"},
+					"time": {"type": "string", "description": "Horario de inicio (HH:MM). Obrigatorio exceto para aniversarios."},
 					"duration_minutes": {"type": "integer", "description": "Duracao em minutos (default: 60)"},
-					"location": {"type": "string", "description": "Local do evento (opcional)"}
+					"location": {"type": "string", "description": "Local do evento (opcional)"},
+					"recurrence": {"type": "string", "description": "RRULE para eventos recorrentes nao-aniversario"},
+					"is_birthday": {"type": "boolean", "description": "Se true, cria como aniversario nativo do Google (all-day, anual)"}
 				},
-				"required": ["target_user", "title", "date", "time"]
+				"required": ["target_user", "title", "date"]
 			}`),
 		},
 		{

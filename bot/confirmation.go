@@ -88,31 +88,49 @@ func (cm *ConfirmationManager) executeConfirmation(user *User, pc *PendingConfir
 		return "", fmt.Errorf("unmarshal event data: %w", err)
 	}
 
-	// Resolve tz from travel period. If event is for another user (TargetUser),
-	// use that user's periods; otherwise use the requesting user's.
-	targetForTz := user.ID
-	if data.TargetUser != "" {
-		if tu, err := cm.db.GetUserByName(data.TargetUser); err == nil {
-			targetForTz = tu.ID
+	var ev CalendarEvent
+	if data.IsBirthday {
+		bdayStart, err := time.ParseInLocation(dateLayout, data.Date, BRT())
+		if err != nil {
+			return "", fmt.Errorf("parse birthday date: %w", err)
 		}
-	}
-	parsedDate, _ := time.ParseInLocation("2006-01-02", data.Date, BRT())
-	loc := cm.db.GetEventTimezone(targetForTz, parsedDate)
-	startTime, err := time.ParseInLocation("2006-01-02 15:04", data.Date+" "+data.Time, loc)
-	if err != nil {
-		return "", fmt.Errorf("parse event time: %w", err)
-	}
+		ev = CalendarEvent{
+			Title:     data.Title,
+			Location:  data.Location,
+			Start:     bdayStart,
+			End:       bdayStart.AddDate(0, 0, 1),
+			EventType: "birthday",
+		}
+	} else {
+		// Resolve tz from travel period. If event is for another user (TargetUser),
+		// use that user's periods; otherwise use the requesting user's.
+		targetForTz := user.ID
+		if data.TargetUser != "" {
+			if tu, err := cm.db.GetUserByName(data.TargetUser); err == nil {
+				targetForTz = tu.ID
+			}
+		}
+		parsedDate, _ := time.ParseInLocation("2006-01-02", data.Date, BRT())
+		loc := cm.db.GetEventTimezone(targetForTz, parsedDate)
+		startTime, err := time.ParseInLocation("2006-01-02 15:04", data.Date+" "+data.Time, loc)
+		if err != nil {
+			return "", fmt.Errorf("parse event time: %w", err)
+		}
 
-	duration := time.Duration(data.DurationMinutes) * time.Minute
-	if data.DurationMinutes == 0 {
-		duration = 60 * time.Minute
-	}
+		duration := time.Duration(data.DurationMinutes) * time.Minute
+		if data.DurationMinutes == 0 {
+			duration = 60 * time.Minute
+		}
 
-	ev := CalendarEvent{
-		Title:    data.Title,
-		Location: data.Location,
-		Start:    startTime,
-		End:      startTime.Add(duration),
+		ev = CalendarEvent{
+			Title:    data.Title,
+			Location: data.Location,
+			Start:    startTime,
+			End:      startTime.Add(duration),
+		}
+		if data.Recurrence != "" {
+			ev.Recurrence = []string{data.Recurrence}
+		}
 	}
 
 	// When TargetUser is set, create event on target's calendar instead of user's own

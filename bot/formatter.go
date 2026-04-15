@@ -71,6 +71,10 @@ func FormatReminder(ev CalendarEvent) string {
 
 func FormatEventCreated(ev CalendarEvent) string {
 	weekday := weekdaysPT[ev.Start.Weekday()]
+	if ev.EventType == "birthday" {
+		return fmt.Sprintf("Aniversario criado: *%s*\n%s, %s (repete todo ano)",
+			ev.Title, weekday, ev.Start.Format("02/01"))
+	}
 	return fmt.Sprintf("Evento criado: *%s*\n%s, %s as %s",
 		ev.Title, weekday, ev.Start.Format("02/01"), ev.Start.Format("15:04"))
 }

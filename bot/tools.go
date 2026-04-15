@@ -76,6 +76,7 @@ type criarEventoParams struct {
 	ForceConflict   bool     `json:"force_conflict"`
 	Timezone        string   `json:"timezone"`
 	Recurrence      string   `json:"recurrence"`
+	IsBirthday      bool     `json:"is_birthday"`
 }
 
 func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
@@ -87,6 +88,28 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 	refreshToken, err := Decrypt(user.GoogleCredentials, agent.cfg.EncryptionKey)
 	if err != nil {
 		return "", fmt.Errorf("decrypt credentials: %w", err)
+	}
+
+	// Birthdays are native Google all-day yearly events. Parse only the date;
+	// ignore time/duration/timezone/recurrence/conflicts — none apply.
+	if p.IsBirthday {
+		bdayStart, err := time.ParseInLocation(dateLayout, p.Date, BRT())
+		if err != nil {
+			return "", fmt.Errorf("parse birthday date: %w", err)
+		}
+		ev := CalendarEvent{
+			Title:     p.Title,
+			Location:  p.Location,
+			Start:     bdayStart,
+			End:       bdayStart.AddDate(0, 0, 1),
+			EventType: "birthday",
+		}
+		created, err := agent.cal.CreateEvent(ctx, refreshToken, user.GoogleCalendarID, ev)
+		if err != nil {
+			return "", fmt.Errorf("create birthday event: %w", err)
+		}
+		agent.audit.Log(user.ID, "criar_evento", "", p.Title+" (aniversario)")
+		return FormatEventCreated(*created), nil
 	}
 
 	// Resolve the timezone from the event's calendar date via the travel
@@ -101,6 +124,11 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 		}
 	} else {
 		tz = loc.String()
+	}
+	// Time is required for non-birthday events. If the agent omitted it
+	// (schema now allows that for birthdays), ask for it instead of failing.
+	if p.Time == "" {
+		return "Preciso do horario do evento. Pergunte ao usuario.", nil
 	}
 	startTime, err := time.ParseInLocation("2006-01-02 15:04", p.Date+" "+p.Time, loc)
 	if err != nil {
@@ -334,6 +362,8 @@ type criarEventoOutroUsuarioParams struct {
 	Time            string `json:"time"`
 	DurationMinutes int    `json:"duration_minutes"`
 	Location        string `json:"location"`
+	Recurrence      string `json:"recurrence"`
+	IsBirthday      bool   `json:"is_birthday"`
 }
 
 func handleCriarEventoOutroUsuario(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
@@ -383,26 +413,44 @@ func handleCriarEventoOutroUsuario(ctx context.Context, agent *Agent, user *User
 		return "", fmt.Errorf("decrypt target credentials: %w", err)
 	}
 
-	// Use the TARGET user's travel period (if any) to interpret date/time —
-	// the event is on their calendar, so their location is what matters.
-	parsedDate, _ := time.ParseInLocation("2006-01-02", p.Date, BRT())
-	loc := agent.db.GetEventTimezone(target.ID, parsedDate)
-	startTime, err := time.ParseInLocation("2006-01-02 15:04", p.Date+" "+p.Time, loc)
-	if err != nil {
-		return "", fmt.Errorf("parse event time: %w", err)
-	}
+	var ev CalendarEvent
+	if p.IsBirthday {
+		bdayStart, err := time.ParseInLocation(dateLayout, p.Date, BRT())
+		if err != nil {
+			return "", fmt.Errorf("parse birthday date: %w", err)
+		}
+		ev = CalendarEvent{
+			Title:     p.Title,
+			Location:  p.Location,
+			Start:     bdayStart,
+			End:       bdayStart.AddDate(0, 0, 1),
+			EventType: "birthday",
+		}
+	} else {
+		// Use the TARGET user's travel period (if any) to interpret date/time —
+		// the event is on their calendar, so their location is what matters.
+		parsedDate, _ := time.ParseInLocation("2006-01-02", p.Date, BRT())
+		loc := agent.db.GetEventTimezone(target.ID, parsedDate)
+		startTime, err := time.ParseInLocation("2006-01-02 15:04", p.Date+" "+p.Time, loc)
+		if err != nil {
+			return "", fmt.Errorf("parse event time: %w", err)
+		}
 
-	duration := time.Duration(p.DurationMinutes) * time.Minute
-	if p.DurationMinutes == 0 {
-		duration = 60 * time.Minute
-	}
+		duration := time.Duration(p.DurationMinutes) * time.Minute
+		if p.DurationMinutes == 0 {
+			duration = 60 * time.Minute
+		}
 
-	ev := CalendarEvent{
-		Title:    p.Title,
-		Location: p.Location,
-		Start:    startTime,
-		End:      startTime.Add(duration),
-		Timezone: loc.String(),
+		ev = CalendarEvent{
+			Title:    p.Title,
+			Location: p.Location,
+			Start:    startTime,
+			End:      startTime.Add(duration),
+			Timezone: loc.String(),
+		}
+		if p.Recurrence != "" {
+			ev.Recurrence = []string{p.Recurrence}
+		}
 	}
 
 	created, err := agent.cal.CreateEvent(ctx, targetToken, target.GoogleCalendarID, ev)

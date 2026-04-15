@@ -11,6 +11,8 @@ type IntentData struct {
 	DurationMinutes int    `json:"duration_minutes,omitempty"`
 	Location        string `json:"location,omitempty"`
 	TargetUser      string `json:"target_user,omitempty"`
+	Recurrence      string `json:"recurrence,omitempty"`
+	IsBirthday      bool   `json:"is_birthday,omitempty"`
 
 	StartDate string `json:"start_date,omitempty"`
 	EndDate   string `json:"end_date,omitempty"`
