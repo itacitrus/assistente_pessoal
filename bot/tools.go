@@ -90,8 +90,46 @@ func handleBuscarAgenda(ctx context.Context, agent *Agent, user *User, params js
 	}
 	agent.db.ApplyEventTimezones(user.ID, events)
 
+	// Partition: multi-day background events (travel markers, all-day
+	// conferences, etc) are rendered as a prefix note — otherwise they get
+	// grouped under their *start* date, which confuses users who queried a
+	// later date in the span ("pedi 16/04, apareceu Sexta 10/04").
+	var prefixNotes []string
+	var listEvents []CalendarEvent
+	for _, e := range events {
+		if isBackgroundEvent(e) && spansMultipleCalendarDays(e) {
+			prefixNotes = append(prefixNotes, fmt.Sprintf("%s (%s a %s)",
+				e.Title,
+				e.Start.In(BRT()).Format("02/01"),
+				e.End.In(BRT()).Add(-time.Second).Format("02/01")))
+		} else {
+			listEvents = append(listEvents, e)
+		}
+	}
+
 	agent.audit.Log(user.ID, "consultar_agenda", "", fmt.Sprintf("%s a %s", p.StartDate, p.EndDate))
-	return FormatEventList(events), nil
+
+	body := FormatEventList(listEvents)
+	if len(prefixNotes) > 0 {
+		prefix := "No periodo: " + strings.Join(prefixNotes, "; ") + "\n\n"
+		return prefix + body, nil
+	}
+	return body, nil
+}
+
+// spansMultipleCalendarDays reports whether the event's Start and End fall on
+// different calendar dates in BRT. Used to detect multi-day events that would
+// otherwise get grouped under their start date alone.
+func spansMultipleCalendarDays(e CalendarEvent) bool {
+	if e.End.IsZero() {
+		return false
+	}
+	sY, sM, sD := e.Start.In(BRT()).Date()
+	// Google all-day events use exclusive end (next midnight). Treat
+	// "ends exactly at next day's 00:00" as single-day, not multi-day.
+	effectiveEnd := e.End.In(BRT()).Add(-time.Second)
+	eY, eM, eD := effectiveEnd.Date()
+	return sY != eY || sM != eM || sD != eD
 }
 
 type criarEventoParams struct {
@@ -360,7 +398,14 @@ func handleCancelarEvento(ctx context.Context, agent *Agent, user *User, params 
 	var eventID, eventTitle string
 	if p.EventID != "" {
 		eventID = p.EventID
-		eventTitle = p.EventID
+		// Fetch the real title before deleting so the user sees "Evento *Reunião
+		// com Carlos* cancelado" instead of "Evento *01mbi86jnlam31t7cmclna67dc*
+		// cancelado". Best-effort: if the fetch fails the ID is still usable.
+		if ev, getErr := agent.cal.GetEvent(ctx, refreshToken, user.GoogleCalendarID, p.EventID); getErr == nil && ev.Title != "" {
+			eventTitle = ev.Title
+		} else {
+			eventTitle = p.EventID
+		}
 	} else if p.SearchQuery != "" {
 		ev, findErr := agent.cal.FindEvent(ctx, refreshToken, user.GoogleCalendarID, p.SearchQuery)
 		if findErr != nil {

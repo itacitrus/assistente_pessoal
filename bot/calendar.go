@@ -208,6 +208,29 @@ func (c *CalendarClient) CreateAllDayEvent(ctx context.Context, refreshToken, ca
 	return verify.Id, nil
 }
 
+// GetEvent fetches a single event by ID. Used when we need the title/details
+// for an event we only know by ID (e.g., cancelling by id, showing a nicer
+// confirmation message).
+func (c *CalendarClient) GetEvent(ctx context.Context, refreshToken, calendarID, eventID string) (*CalendarEvent, error) {
+	svc, err := c.serviceForUser(ctx, refreshToken)
+	if err != nil {
+		return nil, fmt.Errorf("calendar service: %w", err)
+	}
+	item, err := svc.Events.Get(calendarID, eventID).Do()
+	if err != nil {
+		return nil, fmt.Errorf("get event: %w", err)
+	}
+	ev := &CalendarEvent{
+		ID:               item.Id,
+		Title:            item.Summary,
+		Location:         item.Location,
+		EventType:        item.EventType,
+		RecurringEventID: item.RecurringEventId,
+	}
+	parseEventTimes(item, ev)
+	return ev, nil
+}
+
 func (c *CalendarClient) ListEvents(ctx context.Context, refreshToken, calendarID string, start, end time.Time) ([]CalendarEvent, error) {
 	svc, err := c.serviceForUser(ctx, refreshToken)
 	if err != nil {
