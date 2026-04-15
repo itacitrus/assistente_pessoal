@@ -73,15 +73,18 @@ func (c *CalendarClient) CreateEvent(ctx context.Context, refreshToken, calendar
 	}
 
 	if ev.EventType == "birthday" {
-		// Birthdays are native all-day events. Google API enforces that
-		// eventType="birthday" MUST include RRULE:FREQ=YEARLY (returns HTTP 400
-		// "'birthday' event type must have an annual recurrence" otherwise).
-		// Use Date (not DateTime) + BirthdayProperties.Type.
+		// Birthdays are native all-day events. Google enforces several
+		// constraints on eventType="birthday" — each as a separate 400:
+		//   - RRULE:FREQ=YEARLY is required ("must have annual recurrence")
+		//   - Transparency must be "transparent" (event doesn't block time)
+		//   - Start/End must use Date (all-day), not DateTime
+		// We set all three explicitly to avoid the discovery-by-error cycle.
 		event.EventType = "birthday"
 		event.BirthdayProperties = &calendar.EventBirthdayProperties{Type: "birthday"}
 		event.Start = &calendar.EventDateTime{Date: ev.Start.Format(dateLayout)}
 		event.End = &calendar.EventDateTime{Date: ev.Start.AddDate(0, 0, 1).Format(dateLayout)}
 		event.Recurrence = []string{"RRULE:FREQ=YEARLY"}
+		event.Transparency = "transparent"
 	} else {
 		event.Start = &calendar.EventDateTime{
 			DateTime: ev.Start.Format(time.RFC3339),
