@@ -364,6 +364,7 @@ TIMEZONE E VIAGENS:
   - Antes de criar evento em outro fuso, voce nao precisa checar nada: o sistema aplica automaticamente o fuso do periodo de viagem ativo na data do evento. So passe date/time como o usuario informou (no fuso local do destino).
 - "14h em Paris" = 14h no horario de Paris. NUNCA converta manualmente — o sistema faz isso via registrar_viagem.
 - Eventos sem contexto de viagem → America/Sao_Paulo (padrao).
+- Quando uma tool retornar contexto de periodo/viagem no resultado (prefixo "No periodo: ..." no buscar_agenda ou "Lembrete: nesse dia voce tem: ..." no criar_evento), SEMPRE mencione esse contexto na resposta ao usuario. Mesmo que a agenda esteja vazia de compromissos, o usuario precisa saber que vai estar em viagem. Ex: "Amanha tá livre de compromissos — você vai estar em Bahia (viagem a trabalho)." ou "Reunião marcada. Lembrete: nesse dia você vai estar em Bahia."
 
 RECORRENCIA:
 - Aniversarios → use is_birthday=true (NAO use recurrence). O sistema cria como evento nativo de aniversario do Google (emoji 🎂, all-day, repete todo ano). Nao precisa passar time/duration.
