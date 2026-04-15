@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -134,9 +135,27 @@ func (c *CalendarClient) CreateEvent(ctx context.Context, refreshToken, calendar
 		return nil, fmt.Errorf("insert event: %w", err)
 	}
 
+	// Verify — re-fetch the event we just created to prove it actually landed
+	// on the calendar we targeted. Without this, a silent drop or a routing
+	// quirk would surface as the user seeing "criado" and then not finding
+	// the event minutes later.
+	verify, verifyErr := svc.Events.Get(calendarID, created.Id).Do()
+	if verifyErr != nil {
+		log.Printf("CreateEvent verify FAILED: id=%s calendar=%s err=%v",
+			created.Id, calendarID, verifyErr)
+		return nil, fmt.Errorf("event created (id=%s) but verification fetch failed: %w",
+			created.Id, verifyErr)
+	}
+	organizerEmail := ""
+	if verify.Organizer != nil {
+		organizerEmail = verify.Organizer.Email
+	}
+	log.Printf("CreateEvent OK: id=%s calendar=%s organizer=%s status=%s htmlLink=%s",
+		verify.Id, calendarID, organizerEmail, verify.Status, verify.HtmlLink)
+
 	meetLink := ""
-	if created.ConferenceData != nil && created.ConferenceData.EntryPoints != nil {
-		for _, ep := range created.ConferenceData.EntryPoints {
+	if verify.ConferenceData != nil && verify.ConferenceData.EntryPoints != nil {
+		for _, ep := range verify.ConferenceData.EntryPoints {
 			if ep.EntryPointType == "video" {
 				meetLink = ep.Uri
 				break
@@ -145,11 +164,11 @@ func (c *CalendarClient) CreateEvent(ctx context.Context, refreshToken, calendar
 	}
 
 	return &CalendarEvent{
-		ID:       created.Id,
-		Title:    created.Summary,
+		ID:       verify.Id,
+		Title:    verify.Summary,
 		MeetLink: meetLink,
 		Start:    ev.Start,
-		End:   ev.End,
+		End:      ev.End,
 	}, nil
 }
 
@@ -209,7 +228,25 @@ func (c *CalendarClient) DeleteEvent(ctx context.Context, refreshToken, calendar
 	if err != nil {
 		return fmt.Errorf("calendar service: %w", err)
 	}
-	return svc.Events.Delete(calendarID, eventID).Do()
+	if err := svc.Events.Delete(calendarID, eventID).Do(); err != nil {
+		return err
+	}
+	// Verify — a successful delete should surface either 410 Gone or a
+	// status="cancelled" when we try to Get. If it still returns an active
+	// event, the delete didn't take — fail loudly.
+	verify, verifyErr := svc.Events.Get(calendarID, eventID).Do()
+	if verifyErr != nil {
+		// Expected path: 404/410. Treat as success.
+		log.Printf("DeleteEvent OK (verify returned err as expected): id=%s calendar=%s", eventID, calendarID)
+		return nil
+	}
+	if verify.Status == "cancelled" {
+		log.Printf("DeleteEvent OK (status=cancelled): id=%s calendar=%s", eventID, calendarID)
+		return nil
+	}
+	log.Printf("DeleteEvent verify FAILED: id=%s calendar=%s status=%s — event still present",
+		eventID, calendarID, verify.Status)
+	return fmt.Errorf("delete API returned OK but event %s is still active (status=%s)", eventID, verify.Status)
 }
 
 func (c *CalendarClient) UpdateEvent(ctx context.Context, refreshToken, calendarID, eventID string, ev CalendarEvent) error {
@@ -255,8 +292,30 @@ func (c *CalendarClient) UpdateEvent(ctx context.Context, refreshToken, calendar
 		}
 	}
 
-	_, err = svc.Events.Update(calendarID, eventID, existing).Do()
-	return err
+	updated, err := svc.Events.Update(calendarID, eventID, existing).Do()
+	if err != nil {
+		return err
+	}
+	// Verify — Update is PUT; Google is consistent so a subsequent Get should
+	// return the new fields. We compare Summary + Start as a sanity check and
+	// log so a post-mortem can correlate.
+	verify, verifyErr := svc.Events.Get(calendarID, eventID).Do()
+	if verifyErr != nil {
+		log.Printf("UpdateEvent verify FAILED: id=%s calendar=%s err=%v",
+			eventID, calendarID, verifyErr)
+		return fmt.Errorf("event updated but verification fetch failed: %w", verifyErr)
+	}
+	var startStr string
+	if verify.Start != nil {
+		if verify.Start.DateTime != "" {
+			startStr = verify.Start.DateTime
+		} else {
+			startStr = verify.Start.Date
+		}
+	}
+	log.Printf("UpdateEvent OK: id=%s calendar=%s summary=%q start=%s status=%s",
+		updated.Id, calendarID, verify.Summary, startStr, verify.Status)
+	return nil
 }
 
 func (c *CalendarClient) AddAttendees(ctx context.Context, refreshToken, calendarID, eventID string, emails []string) error {

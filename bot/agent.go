@@ -191,7 +191,7 @@ func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Me
 					toolID := c.MessageContentToolUse.ID
 					toolInput := c.MessageContentToolUse.Input
 
-					log.Printf("[%s] Tool call: %s", user.Name, toolName)
+					log.Printf("[%s] Tool call: %s input=%s", user.Name, toolName, string(toolInput))
 
 					handler, ok := toolHandlers[toolName]
 					if !ok {
