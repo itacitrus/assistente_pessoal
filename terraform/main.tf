@@ -161,6 +161,13 @@ resource "aws_iam_instance_profile" "bot" {
   role = aws_iam_role.bot.name
 }
 
+# Attach the AWS-managed SSM policy so we can open shell sessions via
+# Session Manager (no SSH port, no IP allowlist — outbound only).
+resource "aws_iam_role_policy_attachment" "bot_ssm" {
+  role       = aws_iam_role.bot.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 # Persistent data volume. Kept separate from the root so the SQLite DBs
 # survive instance recreation.
 resource "aws_ebs_volume" "data" {

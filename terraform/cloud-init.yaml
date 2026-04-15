@@ -14,6 +14,11 @@ write_files:
     permissions: "0644"
 
 runcmd:
+  # SSM agent (not pre-installed on AL2023 by default; we install + enable so
+  # future instances are manageable via Session Manager out of the box).
+  - dnf install -y https://s3.sa-east-1.amazonaws.com/amazon-ssm-sa-east-1/latest/linux_amd64/amazon-ssm-agent.rpm
+  - systemctl enable --now amazon-ssm-agent
+
   # Docker + buildx + compose plugin
   - systemctl enable docker
   - systemctl start docker
