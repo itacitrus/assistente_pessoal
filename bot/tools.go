@@ -128,6 +128,7 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 	// Time is required for non-birthday events. If the agent omitted it
 	// (schema now allows that for birthdays), ask for it instead of failing.
 	if p.Time == "" {
+		log.Printf("[%s] criar_evento early-return: missing time (title=%q date=%s)", user.Name, p.Title, p.Date)
 		return "Preciso do horario do evento. Pergunte ao usuario.", nil
 	}
 	startTime, err := time.ParseInLocation("2006-01-02 15:04", p.Date+" "+p.Time, loc)
@@ -141,26 +142,37 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 	}
 	endTime := startTime.Add(duration)
 
-	// Check for conflicts before creating (unless user confirmed)
+	// Check for conflicts before creating (unless user confirmed).
+	// If the conflict-check API call fails, we do NOT short-circuit creation —
+	// the priority is to actually create the event. We surface the check
+	// failure in the result so the agent reports it to the user.
 	var allDayNotes []string
+	var conflictCheckWarn string
 	if !p.ForceConflict {
-		existing, _ := agent.cal.ListEvents(ctx, refreshToken, user.GoogleCalendarID, startTime, endTime)
-		agent.db.ApplyEventTimezones(user.ID, existing)
-		var realConflicts []CalendarEvent
-		for _, e := range existing {
-			// All-day events have zero hour start and duration >= 24h — they don't block time
-			if e.Start.Hour() == 0 && e.Start.Minute() == 0 && (e.End.IsZero() || e.End.Sub(e.Start) >= 24*time.Hour) {
-				allDayNotes = append(allDayNotes, e.Title)
-			} else {
-				realConflicts = append(realConflicts, e)
+		existing, listErr := agent.cal.ListEvents(ctx, refreshToken, user.GoogleCalendarID, startTime, endTime)
+		if listErr != nil {
+			log.Printf("[%s] criar_evento conflict-check ListEvents failed (continuing anyway): %v", user.Name, listErr)
+			conflictCheckWarn = fmt.Sprintf("\n(aviso: nao consegui checar conflitos: %v)", listErr)
+		} else {
+			agent.db.ApplyEventTimezones(user.ID, existing)
+			var realConflicts []CalendarEvent
+			for _, e := range existing {
+				// All-day events have zero hour start and duration >= 24h — they don't block time
+				if e.Start.Hour() == 0 && e.Start.Minute() == 0 && (e.End.IsZero() || e.End.Sub(e.Start) >= 24*time.Hour) {
+					allDayNotes = append(allDayNotes, e.Title)
+				} else {
+					realConflicts = append(realConflicts, e)
+				}
 			}
-		}
-		if len(realConflicts) > 0 {
-			var conflicts []string
-			for _, e := range realConflicts {
-				conflicts = append(conflicts, fmt.Sprintf("- %s (%s - %s)", e.Title, e.Start.Format("15:04"), e.End.Format("15:04")))
+			if len(realConflicts) > 0 {
+				var conflicts []string
+				for _, e := range realConflicts {
+					conflicts = append(conflicts, fmt.Sprintf("- %s (%s - %s)", e.Title, e.Start.Format("15:04"), e.End.Format("15:04")))
+				}
+				log.Printf("[%s] criar_evento early-return: CONFLITO detected title=%q start=%s conflicts=%d",
+					user.Name, p.Title, startTime.Format(time.RFC3339), len(realConflicts))
+				return fmt.Sprintf("CONFLITO: ja existem eventos nesse horario:\n%s\nO evento NAO foi criado. Pergunte ao usuario se quer marcar mesmo assim. Se ele confirmar, chame criar_evento novamente com force_conflict=true.", strings.Join(conflicts, "\n")), nil
 			}
-			return fmt.Sprintf("CONFLITO: ja existem eventos nesse horario:\n%s\nO usuario precisa confirmar se quer marcar mesmo assim. Se confirmar, chame criar_evento novamente com force_conflict=true.", strings.Join(conflicts, "\n")), nil
 		}
 	}
 
@@ -191,6 +203,9 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 	}
 	if len(allDayNotes) > 0 {
 		result += fmt.Sprintf("\nLembrete: nesse dia voce tem: %s", strings.Join(allDayNotes, ", "))
+	}
+	if conflictCheckWarn != "" {
+		result += conflictCheckWarn
 	}
 	return result, nil
 }

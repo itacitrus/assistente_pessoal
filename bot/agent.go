@@ -204,6 +204,14 @@ func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Me
 						log.Printf("[%s] Tool %s error: %v", user.Name, toolName, err)
 						toolResults = append(toolResults, anthropic.NewToolResultMessageContent(toolID, fmt.Sprintf("Erro: %v", err), true))
 					} else {
+						// Log the exact string we ship back to the model. Lets a
+						// post-mortem see if the agent hallucinated success from
+						// a CONFLITO/error-payload-as-string the handler returned.
+						preview := result
+						if len(preview) > 500 {
+							preview = preview[:500] + "...[truncated]"
+						}
+						log.Printf("[%s] Tool %s result: %s", user.Name, toolName, preview)
 						toolResults = append(toolResults, anthropic.NewToolResultMessageContent(toolID, result, false))
 					}
 				}
