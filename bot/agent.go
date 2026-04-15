@@ -452,7 +452,7 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"time": {"type": "string", "description": "Horario de inicio (HH:MM)"},
 					"duration_minutes": {"type": "integer", "description": "Duracao em minutos (default: 60)"},
 					"location": {"type": "string", "description": "Local do evento (opcional)"},
-					"com_meet": {"type": "boolean", "description": "Se true, gera link do Google Meet automaticamente"},
+					"com_meet": {"type": "boolean", "description": "Gera link do Google Meet. SOMENTE passe true quando o usuario pedir explicitamente (ex: 'com meet', 'remoto', 'online', 'videochamada', 'por video', 'chamada') OU quando o contexto deixar obvio que e remoto (ex: participantes em outra cidade sem local fisico). NUNCA infira Meet so porque e 'reuniao'. Reunioes presenciais sao o default."},
 					"attendees": {"type": "array", "items": {"type": "string"}, "description": "Emails de participantes (opcional, NAO peca proativamente)"},
 					"force_conflict": {"type": "boolean", "description": "Se true, cria mesmo com conflito de horario (so usar apos usuario confirmar)"},
 					"timezone": {"type": "string", "description": "Fuso horario IANA (ex: Europe/London). Default: America/Sao_Paulo."},

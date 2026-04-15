@@ -10,6 +10,35 @@ import (
 	"time"
 )
 
+// isBackgroundEvent returns true when an existing calendar event should NOT
+// be treated as a time-blocking conflict for a new event at the same instant.
+// Covers: birthdays, all-day markers, zero-duration reminders, and events
+// whose duration spans a day or more (travel markers, multi-day conferences
+// shown as day-blocks, etc).
+func isBackgroundEvent(e CalendarEvent) bool {
+	if e.EventType == "birthday" {
+		return true
+	}
+	if e.End.IsZero() {
+		// Some imported events have no End — treat as a point-in-time marker.
+		return true
+	}
+	duration := e.End.Sub(e.Start)
+	if duration <= 0 {
+		// Zero- or negative-duration: a reminder, not a time block.
+		return true
+	}
+	if duration >= 20*time.Hour {
+		// Covers native all-day (24h), multi-day, and near-all-day imports.
+		return true
+	}
+	// Native Google all-day events have Start at midnight + duration multiple of 24h.
+	if e.Start.Hour() == 0 && e.Start.Minute() == 0 && duration >= 24*time.Hour {
+		return true
+	}
+	return false
+}
+
 var toolHandlers = map[string]ToolHandler{
 	"buscar_agenda":              handleBuscarAgenda,
 	"criar_evento":               handleCriarEvento,
@@ -146,6 +175,11 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 	// If the conflict-check API call fails, we do NOT short-circuit creation —
 	// the priority is to actually create the event. We surface the check
 	// failure in the result so the agent reports it to the user.
+	//
+	// "Background" events (birthdays, all-day markers, zero-duration reminders,
+	// travel-day markers) are not time-blocking — they go into allDayNotes
+	// instead of triggering CONFLITO. Only real time-overlapping meetings
+	// raise a conflict.
 	var allDayNotes []string
 	var conflictCheckWarn string
 	if !p.ForceConflict {
@@ -157,8 +191,7 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 			agent.db.ApplyEventTimezones(user.ID, existing)
 			var realConflicts []CalendarEvent
 			for _, e := range existing {
-				// All-day events have zero hour start and duration >= 24h — they don't block time
-				if e.Start.Hour() == 0 && e.Start.Minute() == 0 && (e.End.IsZero() || e.End.Sub(e.Start) >= 24*time.Hour) {
+				if isBackgroundEvent(e) {
 					allDayNotes = append(allDayNotes, e.Title)
 				} else {
 					realConflicts = append(realConflicts, e)
@@ -174,6 +207,19 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 				return fmt.Sprintf("CONFLITO: ja existem eventos nesse horario:\n%s\nO evento NAO foi criado. Pergunte ao usuario se quer marcar mesmo assim. Se ele confirmar, chame criar_evento novamente com force_conflict=true.", strings.Join(conflicts, "\n")), nil
 			}
 		}
+	}
+
+	// Location/travel-period awareness: if the new event's date falls inside a
+	// registered travel period, add a note so the agent can judge whether the
+	// location is physically compatible (e.g., don't marcar encontro presencial
+	// em Brasilia quando o usuario estara em viagem na Bahia). Non-blocking —
+	// just a hint. The agent decides what to do with it.
+	if tp, _ := agent.db.GetTravelPeriodForDate(user.ID, startTime); tp != nil {
+		allDayNotes = append(allDayNotes,
+			fmt.Sprintf("Voce estara em %s nessa data (viagem %s a %s)",
+				tp.LocationName,
+				tp.StartDate.Format("02/01"),
+				tp.EndDate.Format("02/01")))
 	}
 
 	ev := CalendarEvent{
