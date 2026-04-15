@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -96,6 +97,7 @@ func runBot() {
 		for evt := range qrChan {
 			if evt.Event == "code" {
 				fmt.Println("QR Code — scan with WhatsApp:")
+				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
 				fmt.Println(evt.Code)
 			} else {
 				log.Printf("QR event: %s", evt.Event)
