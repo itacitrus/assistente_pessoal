@@ -44,11 +44,11 @@ resource "aws_security_group" "bot" {
   }
 
   ingress {
-    description = "OAuth callback (Google redirect)"
-    from_port   = 8080
-    to_port     = 8080
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    description     = "OAuth callback + health check from shared ALB"
+    from_port       = 8080
+    to_port         = 8080
+    protocol        = "tcp"
+    security_groups = [tolist(data.aws_lb.api.security_groups)[0]]
   }
 
   egress {
@@ -222,4 +222,73 @@ resource "aws_instance" "bot" {
 resource "aws_eip_association" "bot" {
   instance_id   = aws_instance.bot.id
   allocation_id = aws_eip.bot.id
+}
+
+# -----------------------------------------------------------------------------
+# Shared ALB integration
+#
+# We reuse the existing api-sankhya-lb instead of provisioning a new LB just for
+# the bot's OAuth callback — it's low-traffic (one hit per onboarding) and the
+# LB already sits in the same VPC with a valid ACM cert. We attach a host-path
+# rule on the :443 listener that routes /assistente/oauth/callback to a new
+# target group pointing at the bot EC2 on :8080.
+# -----------------------------------------------------------------------------
+
+data "aws_lb" "api" {
+  name = var.shared_alb_name
+}
+
+data "aws_lb_listener" "api_https" {
+  load_balancer_arn = data.aws_lb.api.arn
+  port              = 443
+}
+
+resource "aws_lb_target_group" "bot" {
+  name        = "assistente-bot-tg"
+  port        = 8080
+  protocol    = "HTTP"
+  target_type = "instance"
+  vpc_id      = data.aws_lb.api.vpc_id
+
+  health_check {
+    enabled             = true
+    path                = "/health"
+    port                = "traffic-port"
+    protocol            = "HTTP"
+    matcher             = "200"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 30
+    timeout             = 5
+  }
+
+  tags = {
+    Name = "assistente-bot"
+  }
+}
+
+resource "aws_lb_target_group_attachment" "bot" {
+  target_group_arn = aws_lb_target_group.bot.arn
+  target_id        = aws_instance.bot.id
+  port             = 8080
+}
+
+resource "aws_lb_listener_rule" "bot_oauth" {
+  listener_arn = data.aws_lb_listener.api_https.arn
+  priority     = 100
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.bot.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/assistente/oauth/callback"]
+    }
+  }
+
+  tags = {
+    Name = "assistente-bot-oauth"
+  }
 }

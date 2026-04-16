@@ -210,7 +210,12 @@ func runBot() {
 }
 
 func startOAuthServer(cal *CalendarClient, db *DB, cfg *Config) {
-	http.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "ok")
+	})
+
+	http.HandleFunc("/assistente/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		state := r.URL.Query().Get("state")
 

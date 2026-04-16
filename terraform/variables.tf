@@ -37,3 +37,9 @@ variable "backup_bucket_name" {
   type        = string
   default     = "assistente-backups"
 }
+
+variable "shared_alb_name" {
+  description = "Name of the existing ALB to reuse for the OAuth callback"
+  type        = string
+  default     = "api-sankhya-lb"
+}

@@ -12,3 +12,8 @@ output "ssh_tunnel_oauth" {
   description = "SSH tunnel for OAuth callback"
   value       = "ssh -L 8080:localhost:8080 -i ~/.ssh/${var.key_name}.pem ec2-user@${aws_eip.bot.public_ip}"
 }
+
+output "oauth_redirect_uri" {
+  description = "Public OAuth redirect URI served through the shared ALB"
+  value       = "https://api.itacitrus.com.br/assistente/oauth/callback"
+}

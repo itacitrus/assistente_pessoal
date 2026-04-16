@@ -42,7 +42,7 @@ func LoadConfig() (*Config, error) {
 		cfg.TranscriptionURL = "http://localhost:8000"
 	}
 	if cfg.GoogleRedirectURI == "" {
-		cfg.GoogleRedirectURI = "http://localhost:8080/oauth/callback"
+		cfg.GoogleRedirectURI = "http://localhost:8080/assistente/oauth/callback"
 	}
 
 	var err error
