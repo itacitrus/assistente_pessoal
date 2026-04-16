@@ -16,80 +16,122 @@ func writeOAuthSuccess(w http.ResponseWriter, userName string) {
 	}
 }
 
-// oauthSuccessHTML is rendered after a user completes the Google OAuth
-// consent flow. Kept self-contained (no external assets) so the page works
-// even if the user's network blocks CDNs. Confetti is adapted from the
-// packing_house repo's animations/confetti.js — only the ES `export` was
-// stripped so it runs as a classic script.
+// oauthSuccessHTML mirrors the Charles Lurch / Itacitrus brand used on
+// assistente.itacitrus.com.br: Plus Jakarta Sans, light theme, green #4bb71b
+// accent. Confetti animation kept (adapted from the packing_house repo's
+// animations/confetti.js — ES `export` stripped to run as a classic script).
 const oauthSuccessHTML = `<!doctype html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Autorizado</title>
+<title>Autorizado — Charles Lurch</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%234bb71b'/%3E%3Ctext x='16' y='21' font-family='system-ui,sans-serif' font-size='14' font-weight='700' text-anchor='middle' fill='white'%3EC%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap">
 <style>
+  :root {
+    --ink: #131a15;
+    --ink-soft: #3a4640;
+    --ink-muted: #6a7671;
+    --ink-faint: #97a29d;
+    --paper: #ffffff;
+    --paper-2: #f6faf4;
+    --line: #e3eade;
+    --line-soft: #edf1e8;
+    --green: #4bb71b;
+    --green-dark: #2a8a0e;
+  }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body {
     height: 100%;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-    background: radial-gradient(ellipse at top, #1a2b1e 0%, #0d1117 55%, #010409 100%);
-    color: #e6edf3;
-    overflow: hidden;
+    font-family: "Plus Jakarta Sans", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    color: var(--ink);
+    background:
+      radial-gradient(ellipse at 50% -10%, #e9f5dc 0%, transparent 55%),
+      radial-gradient(ellipse at 10% 110%, #f0f9e6 0%, transparent 50%),
+      var(--paper);
+    background-attachment: fixed;
+    overflow: hidden;
   }
-  body { display: flex; align-items: center; justify-content: center; padding: 1.25rem; }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.25rem;
+  }
   .card {
     position: relative;
     z-index: 2;
-    background: rgba(22, 27, 34, 0.72);
-    border: 1px solid rgba(75, 183, 27, 0.18);
+    background: var(--paper);
+    border: 1px solid var(--line);
     border-radius: 22px;
-    padding: 3rem 2.25rem 2.5rem;
+    padding: 2.5rem 2.25rem 2.25rem;
     text-align: center;
-    max-width: 440px;
+    max-width: 460px;
     width: 100%;
-    backdrop-filter: blur(16px) saturate(140%);
-    -webkit-backdrop-filter: blur(16px) saturate(140%);
     box-shadow:
-      0 28px 80px rgba(0, 0, 0, 0.45),
-      0 1px 0 rgba(255, 255, 255, 0.04) inset;
+      0 32px 60px -28px rgba(18, 62, 12, 0.18),
+      0 6px 18px rgba(19, 26, 21, 0.05);
     animation: cardIn 0.55s cubic-bezier(0.16, 1, 0.3, 1);
   }
   @keyframes cardIn {
-    from { opacity: 0; transform: translateY(16px) scale(0.98); }
+    from { opacity: 0; transform: translateY(14px) scale(0.985); }
     to   { opacity: 1; transform: translateY(0)    scale(1); }
   }
-  h1 {
-    font-size: 1.6rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    margin: 1.75rem 0 0.6rem;
-    color: #f0f6fc;
+  .brand-mark {
+    font-size: 0.88rem;
+    color: var(--ink-muted);
+    margin-bottom: 1.75rem;
+    letter-spacing: -0.005em;
   }
+  .brand-mark strong {
+    color: var(--ink);
+    font-weight: 700;
+    font-size: 0.96rem;
+    letter-spacing: -0.015em;
+    margin-right: 0.3rem;
+  }
+  .brand-mark strong .dot { color: var(--green); }
+  h1 {
+    font-size: clamp(1.45rem, 4vw, 1.65rem);
+    font-weight: 700;
+    letter-spacing: -0.028em;
+    line-height: 1.15;
+    margin: 1.5rem 0 0.55rem;
+    color: var(--ink);
+  }
+  h1 .green { color: var(--green); }
   .lead {
     font-size: 1rem;
     line-height: 1.55;
-    color: #c9d1d9;
+    color: var(--ink-soft);
     margin-bottom: 1.5rem;
   }
-  .name {
-    color: #4bb71b;
+  .lead .name {
+    color: var(--green-dark);
     font-weight: 700;
   }
   .hint {
-    font-size: 0.85rem;
-    color: #656d76;
-    letter-spacing: 0.01em;
+    display: inline-block;
+    font-size: 0.82rem;
+    color: var(--ink-faint);
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--line-soft);
+    width: 100%;
   }
   .checkmark {
-    width: 92px;
-    height: 92px;
+    width: 82px;
+    height: 82px;
     border-radius: 50%;
     display: block;
     stroke-width: 3;
-    stroke: #4bb71b;
+    stroke: var(--green);
     stroke-miterlimit: 10;
-    box-shadow: inset 0 0 0 #4bb71b;
+    box-shadow: inset 0 0 0 var(--green);
     margin: 0 auto;
     animation:
       fill 0.45s ease-in-out 0.45s forwards,
@@ -100,7 +142,7 @@ const oauthSuccessHTML = `<!doctype html>
     stroke-dashoffset: 166;
     stroke-width: 2;
     stroke-miterlimit: 10;
-    stroke: #4bb71b;
+    stroke: var(--green);
     fill: transparent;
     animation: stroke 0.65s cubic-bezier(0.65, 0, 0.45, 1) forwards;
   }
@@ -115,22 +157,24 @@ const oauthSuccessHTML = `<!doctype html>
     0%, 100% { transform: none; }
     50%      { transform: scale3d(1.08, 1.08, 1); }
   }
-  @keyframes fill { to { box-shadow: inset 0 0 0 50px rgba(75, 183, 27, 0.12); } }
+  @keyframes fill { to { box-shadow: inset 0 0 0 50px rgba(75, 183, 27, 0.1); } }
   @media (max-width: 480px) {
-    .card { padding: 2.25rem 1.5rem; }
-    h1 { font-size: 1.35rem; }
-    .lead { font-size: 0.95rem; }
+    .card { padding: 2.25rem 1.5rem 1.75rem; }
   }
 </style>
 </head>
 <body>
 <div class="card">
+  <div class="brand-mark">
+    <strong>Charles Lurch<span class="dot">.</span></strong>
+    por Itacitrus
+  </div>
   <svg class="checkmark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 52 52" aria-hidden="true">
     <circle class="checkmark__circle" cx="26" cy="26" r="25" fill="none"/>
     <path class="checkmark__check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8"/>
   </svg>
-  <h1>Google Calendar conectado</h1>
-  <p class="lead">Boa, <span class="name">{{.UserName}}</span>! Agora o assistente já consegue enxergar e montar sua agenda.</p>
+  <h1>Google Calendar conectado<span class="green">.</span></h1>
+  <p class="lead">Boa, <span class="name">{{.UserName}}</span>! A sua agenda agora está em boas mãos — o Charles toma conta.</p>
   <p class="hint">Pode fechar esta janela e voltar ao WhatsApp.</p>
 </div>
 <script>
@@ -147,7 +191,7 @@ var confetti = {
   confetti.isPaused = isConfettiPaused; confetti.remove = removeConfetti;
   confetti.isRunning = isConfettiRunning;
   var supportsAnimationFrame = window.requestAnimationFrame || window.webkitRequestAnimationFrame || window.mozRequestAnimationFrame || window.oRequestAnimationFrame || window.msRequestAnimationFrame;
-  var colors = ["rgba(75,183,27,","rgba(30,144,255,","rgba(255,215,0,","rgba(255,192,203,","rgba(106,90,205,","rgba(173,216,230,","rgba(238,130,238,","rgba(152,251,152,","rgba(70,130,180,","rgba(244,164,96,","rgba(210,105,30,","rgba(220,20,60,"];
+  var colors = ["rgba(75,183,27,","rgba(42,138,14,","rgba(139,195,74,","rgba(233,212,67,","rgba(255,215,0,","rgba(152,251,152,","rgba(173,216,230,","rgba(255,192,203,","rgba(106,90,205,","rgba(244,164,96,","rgba(238,130,238,","rgba(210,105,30,"];
   var streamingConfetti = false, animationTimer = null, pause = false;
   var lastFrameTime = Date.now(), particles = [], waveAngle = 0, context = null;
   function resetParticle(particle, width, height) {
@@ -259,7 +303,7 @@ var confetti = {
 })();
 window.addEventListener("load", function() {
   confetti.start();
-  setTimeout(function() { confetti.stop(); }, 2000);
+  setTimeout(function() { confetti.stop(); }, 2200);
 });
 </script>
 </body>
