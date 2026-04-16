@@ -248,7 +248,7 @@ func startOAuthServer(cal *CalendarClient, db *DB, cfg *Config) {
 			return
 		}
 
-		fmt.Fprintf(w, "Google Calendar autorizado com sucesso para %s! Pode fechar esta janela.", user.Name)
+		writeOAuthSuccess(w, user.Name)
 		log.Printf("OAuth completed for %s (%s)", user.Name, state)
 	})
 
