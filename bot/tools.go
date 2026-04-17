@@ -180,11 +180,16 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 		return FormatEventCreated(*created), nil
 	}
 
-	// Resolve the timezone from the event's calendar date via the travel
-	// period helper. An explicit Timezone param still wins (lets the agent
-	// override for one-off foreign events without a registered travel).
-	parsedDate, _ := time.ParseInLocation("2006-01-02", p.Date, BRT())
-	loc := agent.db.GetEventTimezone(user.ID, parsedDate)
+	// Hint inicial de data para lookup de fuso: data explicita se houver,
+	// senao "agora" (caminho inferred). Apos resolver a data final, checamos
+	// de novo se o fuso muda (caso viagem comece na data resolvida).
+	var parsedDateHint time.Time
+	if p.Date != "" {
+		parsedDateHint, _ = time.ParseInLocation("2006-01-02", p.Date, BRT())
+	} else {
+		parsedDateHint = time.Now().In(BRT())
+	}
+	loc := agent.db.GetEventTimezone(user.ID, parsedDateHint)
 	tz := p.Timezone
 	if tz != "" {
 		if l, err := time.LoadLocation(tz); err == nil {
@@ -193,16 +198,44 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 	} else {
 		tz = loc.String()
 	}
-	// Time is required for non-birthday events. If the agent omitted it
-	// (schema now allows that for birthdays), ask for it instead of failing.
 	if p.Time == "" {
 		log.Printf("[%s] criar_evento early-return: missing time (title=%q date=%s)", user.Name, p.Title, p.Date)
 		return "Preciso do horario do evento. Pergunte ao usuario.", nil
 	}
-	startTime, err := time.ParseInLocation("2006-01-02 15:04", p.Date+" "+p.Time, loc)
-	if err != nil {
-		return "", fmt.Errorf("parse event time: %w", err)
+	if p.DateSource == "" {
+		// Defensive: o schema exige date_source, mas se vier vazio tratamos
+		// como explicit pra preservar comportamento anterior. Logamos pra
+		// monitorar se acontece em producao.
+		log.Printf("[%s] criar_evento warn: date_source vazio (title=%q date=%s) — tratando como explicit", user.Name, p.Title, p.Date)
+		p.DateSource = string(DateSourceExplicit)
 	}
+	res, err := ResolveEventDate(ResolveInput{
+		Source:       DateSource(p.DateSource),
+		ExplicitDate: p.Date,
+		Time:         p.Time,
+		Now:          time.Now().In(loc),
+		Loc:          loc,
+	})
+	if err != nil {
+		return "", fmt.Errorf("resolve event date: %w", err)
+	}
+	// Se a data resolvida cai em outro fuso (viagem comecando nessa data),
+	// re-resolver com o novo Loc.
+	if resolvedLoc := agent.db.GetEventTimezone(user.ID, res.Start); resolvedLoc.String() != loc.String() && p.Timezone == "" {
+		loc = resolvedLoc
+		tz = loc.String()
+		res, err = ResolveEventDate(ResolveInput{
+			Source:       DateSource(p.DateSource),
+			ExplicitDate: p.Date,
+			Time:         p.Time,
+			Now:          time.Now().In(loc),
+			Loc:          loc,
+		})
+		if err != nil {
+			return "", fmt.Errorf("resolve event date (re-tz): %w", err)
+		}
+	}
+	startTime := res.Start
 
 	duration := time.Duration(p.DurationMinutes) * time.Minute
 	if p.DurationMinutes == 0 {
@@ -282,17 +315,20 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 	}
 
 	agent.audit.Log(user.ID, "criar_evento", "", p.Title)
-	result := FormatEventCreated(*created)
+	display := FormatEventCreated(*created)
+	if res.AdjustNote != "" {
+		display = res.AdjustNote + display
+	}
 	if created.MeetLink != "" {
-		result += fmt.Sprintf("\nLink do Meet: %s", created.MeetLink)
+		display += fmt.Sprintf("\nLink do Meet: %s", created.MeetLink)
 	}
 	if len(allDayNotes) > 0 {
-		result += fmt.Sprintf("\nLembrete: nesse dia voce tem: %s", strings.Join(allDayNotes, ", "))
+		display += fmt.Sprintf("\nLembrete: nesse dia voce tem: %s", strings.Join(allDayNotes, ", "))
 	}
 	if conflictCheckWarn != "" {
-		result += conflictCheckWarn
+		display += conflictCheckWarn
 	}
-	return result, nil
+	return "OK_CRIADO|display=" + display, nil
 }
 
 type editarEventoParams struct {
