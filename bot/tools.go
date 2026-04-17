@@ -134,6 +134,7 @@ func spansMultipleCalendarDays(e CalendarEvent) bool {
 
 type criarEventoParams struct {
 	Title           string   `json:"title"`
+	DateSource      string   `json:"date_source"` // "explicit" | "inferred"
 	Date            string   `json:"date"`
 	Time            string   `json:"time"`
 	DurationMinutes int      `json:"duration_minutes"`

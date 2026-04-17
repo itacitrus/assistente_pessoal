@@ -449,8 +449,9 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 				"type": "object",
 				"properties": {
 					"title": {"type": "string", "description": "Titulo do evento"},
-					"date": {"type": "string", "description": "Data do evento (YYYY-MM-DD)"},
-					"time": {"type": "string", "description": "Horario de inicio (HH:MM)"},
+					"date_source": {"type": "string", "enum": ["explicit", "inferred"], "description": "explicit quando o usuario mencionou qualquer marcador temporal (data, dia da semana, amanha, hoje, daqui N dias). inferred quando o usuario mencionou APENAS hora, sem nenhum marcador temporal. OBRIGATORIO."},
+					"date": {"type": "string", "description": "Data YYYY-MM-DD. Obrigatorio quando date_source=explicit. IGNORADO pelo sistema quando date_source=inferred (o sistema resolve via regra deterministica: hora > agora -> hoje; hora <= agora -> amanha)."},
+					"time": {"type": "string", "description": "Horario de inicio HH:MM. Para horas bare menores que 07:00 sem qualificador, aplique PM-default (ex: '2h' -> 14:00, '5h' -> 17:00). Qualificadores 'da madrugada'/'da manha' mantem AM."},
 					"duration_minutes": {"type": "integer", "description": "Duracao em minutos (default: 60)"},
 					"location": {"type": "string", "description": "Local do evento (opcional)"},
 					"com_meet": {"type": "boolean", "description": "Gera link do Google Meet. SOMENTE passe true quando o usuario pedir explicitamente (ex: 'com meet', 'remoto', 'online', 'videochamada', 'por video', 'chamada') OU quando o contexto deixar obvio que e remoto (ex: participantes em outra cidade sem local fisico). NUNCA infira Meet so porque e 'reuniao'. Reunioes presenciais sao o default."},
@@ -460,7 +461,7 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"recurrence": {"type": "string", "description": "Regra de recorrencia iCal para eventos recorrentes NAO-aniversario. Ex: RRULE:FREQ=WEEKLY;BYDAY=MO para toda segunda. Para aniversarios use is_birthday=true em vez disso."},
 					"is_birthday": {"type": "boolean", "description": "Se true, cria como aniversario nativo do Google (all-day, recorrencia anual automatica, emoji 🎂). Use para qualquer aniversario. Nao precisa de time/duration/recurrence quando true."}
 				},
-				"required": ["title", "date"]
+				"required": ["title", "date_source"]
 			}`),
 		},
 		{
