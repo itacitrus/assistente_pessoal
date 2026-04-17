@@ -183,6 +183,9 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 	// Hint inicial de data para lookup de fuso: data explicita se houver,
 	// senao "agora" (caminho inferred). Apos resolver a data final, checamos
 	// de novo se o fuso muda (caso viagem comece na data resolvida).
+	// Hint de fuso: se p.Date for invalido, parsedDateHint vira zero-time.
+	// GetEventTimezone retornara BRT por default; o erro sera capturado
+	// depois em ResolveEventDate com diagnostico adequado.
 	var parsedDateHint time.Time
 	if p.Date != "" {
 		parsedDateHint, _ = time.ParseInLocation("2006-01-02", p.Date, BRT())
@@ -324,11 +327,13 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 			}
 		}
 	}
-	agent.audit.LogCriarEvento(user.ID, p.Title, userMsgSnippet, p.DateSource, p.Date, p.Time,
-		res.Start.Format(time.RFC3339), res.Adjusted)
+	if auditErr := agent.audit.LogCriarEvento(user.ID, p.Title, userMsgSnippet, p.DateSource, p.Date, p.Time,
+		res.Start.Format(time.RFC3339), res.Adjusted); auditErr != nil {
+		log.Printf("[%s] LogCriarEvento failed: %v", user.Name, auditErr)
+	}
 	display := FormatEventCreated(*created)
 	if res.AdjustNote != "" {
-		display = res.AdjustNote + display
+		display = res.AdjustNote + "\n" + display
 	}
 	if created.MeetLink != "" {
 		display += fmt.Sprintf("\nLink do Meet: %s", created.MeetLink)

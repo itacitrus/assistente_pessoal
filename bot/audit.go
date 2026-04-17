@@ -74,8 +74,8 @@ var actionLabelsPT = map[string]string{
 // pipe-separado: "title=...|user_msg=...|date_source=...|claude_date=...|claude_time=...|resolved_start=...|adjusted=...".
 func (a *AuditLog) LogCriarEvento(userID int64, title, userMsgSnippet, dateSource, claudeDate, claudeTime, resolvedStart string, adjusted bool) error {
 	snippet := userMsgSnippet
-	if len(snippet) > 120 {
-		snippet = snippet[:120]
+	if runes := []rune(snippet); len(runes) > 120 {
+		snippet = string(runes[:120])
 	}
 	details := fmt.Sprintf(
 		"title=%s|user_msg=%s|date_source=%s|claude_date=%s|claude_time=%s|resolved_start=%s|adjusted=%t",

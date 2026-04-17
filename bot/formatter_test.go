@@ -137,16 +137,19 @@ func TestRelativeDayLabel(t *testing.T) {
 
 func TestFormatEventCreated_RelativeLabel(t *testing.T) {
 	brt, _ := time.LoadLocation("America/Sao_Paulo")
+	// Evento com data fixa; asserta o formato estatico do output (titulo
+	// + weekday + DD/MM + HH:MM). O rotulo HOJE/AMANHA depende de time.Now()
+	// internamente e e coberto pelo TestRelativeDayLabel diretamente.
 	ev := CalendarEvent{
 		Title: "Reuniao com OTC",
-		Start: time.Now().In(brt).Add(1 * time.Hour),
-		End:   time.Now().In(brt).Add(2 * time.Hour),
+		Start: time.Date(2026, 4, 16, 9, 0, 0, 0, brt),
+		End:   time.Date(2026, 4, 16, 10, 0, 0, 0, brt),
 	}
 	out := FormatEventCreated(ev)
 	if !strings.Contains(out, "Reuniao com OTC") {
 		t.Fatalf("output deveria conter titulo, got: %s", out)
 	}
-	if !strings.Contains(out, "HOJE") {
-		t.Fatalf("evento 1h no futuro deveria ter rotulo HOJE, got: %s", out)
+	if !strings.Contains(out, "Quinta, 16/04 as 09:00") {
+		t.Fatalf("output deveria conter weekday/data/hora, got: %s", out)
 	}
 }

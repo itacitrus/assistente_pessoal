@@ -56,7 +56,7 @@ func ResolveEventDate(in ResolveInput) (ResolveOutput, error) {
 			return ResolveOutput{
 				Start:      candidate.AddDate(0, 0, 1),
 				Adjusted:   true,
-				AdjustNote: "Esse horario ja passou hoje. Marquei pra amanha nesse horario. ",
+				AdjustNote: "Esse horario ja passou hoje. Marquei pra amanha nesse horario.",
 			}, nil
 		}
 		if eventDay.Before(today) {
