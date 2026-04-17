@@ -169,3 +169,99 @@ func TestResolveEventDate_Explicit(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveEventDate_Errors(t *testing.T) {
+	brt, _ := time.LoadLocation("America/Sao_Paulo")
+	now := time.Date(2026, 4, 16, 7, 2, 0, 0, brt)
+
+	t.Run("time invalido retorna erro", func(t *testing.T) {
+		_, err := ResolveEventDate(ResolveInput{
+			Source: DateSourceInferred,
+			Time:   "25:00",
+			Now:    now,
+			Loc:    brt,
+		})
+		if err == nil {
+			t.Fatalf("esperava erro, deu nil")
+		}
+	})
+
+	t.Run("explicit date invalido retorna erro", func(t *testing.T) {
+		_, err := ResolveEventDate(ResolveInput{
+			Source:       DateSourceExplicit,
+			ExplicitDate: "nao-e-data",
+			Time:         "09:00",
+			Now:          now,
+			Loc:          brt,
+		})
+		if err == nil {
+			t.Fatalf("esperava erro, deu nil")
+		}
+	})
+
+	t.Run("Loc nil retorna erro", func(t *testing.T) {
+		_, err := ResolveEventDate(ResolveInput{
+			Source: DateSourceInferred,
+			Time:   "09:00",
+			Now:    now,
+			Loc:    nil,
+		})
+		if err == nil {
+			t.Fatalf("esperava erro, deu nil")
+		}
+	})
+
+	t.Run("date_source invalido retorna erro", func(t *testing.T) {
+		_, err := ResolveEventDate(ResolveInput{
+			Source: "lixo",
+			Time:   "09:00",
+			Now:    now,
+			Loc:    brt,
+		})
+		if err == nil {
+			t.Fatalf("esperava erro, deu nil")
+		}
+	})
+}
+
+func TestResolveEventDate_Timezone(t *testing.T) {
+	paris, _ := time.LoadLocation("Europe/Paris")
+	brt, _ := time.LoadLocation("America/Sao_Paulo")
+
+	t.Run("inferred em fuso Paris: hoje e amanha seguem calendario local", func(t *testing.T) {
+		// Em BRT 23:45 de 16/04, em Paris sao 04:45 de 17/04.
+		// "reuniao as 9h" em Paris deve ser hoje (17/04) em Paris 09:00.
+		now := time.Date(2026, 4, 16, 23, 45, 0, 0, brt)
+		got, err := ResolveEventDate(ResolveInput{
+			Source: DateSourceInferred,
+			Time:   "09:00",
+			Now:    now,
+			Loc:    paris,
+		})
+		if err != nil {
+			t.Fatalf("erro inesperado: %v", err)
+		}
+		want := time.Date(2026, 4, 17, 9, 0, 0, 0, paris)
+		if !got.Start.Equal(want) {
+			t.Fatalf("Start = %s, queria %s", got.Start, want)
+		}
+	})
+
+	t.Run("explicit em fuso Paris respeita data local", func(t *testing.T) {
+		now := time.Date(2026, 4, 16, 23, 45, 0, 0, brt)
+		got, err := ResolveEventDate(ResolveInput{
+			Source:       DateSourceExplicit,
+			ExplicitDate: "2026-04-17",
+			Time:         "08:00",
+			Now:          now,
+			Loc:          paris,
+		})
+		if err != nil {
+			t.Fatalf("erro inesperado: %v", err)
+		}
+		want := time.Date(2026, 4, 17, 8, 0, 0, 0, paris)
+		if !got.Start.Equal(want) {
+			t.Fatalf("Start = %s, queria %s", got.Start, want)
+		}
+	})
+}
