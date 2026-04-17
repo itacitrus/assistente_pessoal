@@ -87,3 +87,67 @@ func TestAutoConfirmExpiry(t *testing.T) {
 		t.Fatalf("expected user name Test, got %s", expired[0].UserName)
 	}
 }
+
+func TestRegressao_BugReuniaoOTC(t *testing.T) {
+	// Incidente 16/04/2026 07:02: usuario disse "Reuniao as 9h com OTC".
+	// Regra sagrada: 9h > 7h:02 -> HOJE (16/04) 09:00.
+	// Bot criou para 18/04 e confirmou "amanha as 9h" -> divergencia tripla.
+	// Este teste blinda: com date_source=inferred, o resolver produz a
+	// data correta, e o FormatEventCreated aplica rotulo HOJE.
+	brt, _ := time.LoadLocation("America/Sao_Paulo")
+	incidentNow := time.Date(2026, 4, 16, 7, 2, 0, 0, brt)
+
+	res, err := ResolveEventDate(ResolveInput{
+		Source: DateSourceInferred,
+		Time:   "09:00",
+		Now:    incidentNow,
+		Loc:    brt,
+	})
+	if err != nil {
+		t.Fatalf("resolver falhou: %v", err)
+	}
+	wantStart := time.Date(2026, 4, 16, 9, 0, 0, 0, brt)
+	if !res.Start.Equal(wantStart) {
+		t.Fatalf("BUG REINCIDENTE: resolver deu %s, esperava %s (HOJE 09:00)", res.Start, wantStart)
+	}
+	if res.Adjusted {
+		t.Fatalf("Adjusted deveria ser false em inferred")
+	}
+
+	// Validar formatacao da narrativa.
+	ev := CalendarEvent{
+		Title: "Reuniao com OTC",
+		Start: res.Start,
+		End:   res.Start.Add(time.Hour),
+	}
+	// A funcao FormatEventCreated usa time.Now() internamente. Validamos
+	// relativeDayLabel diretamente com incidentNow injetado.
+	label := relativeDayLabel(ev.Start, incidentNow)
+	if label != "HOJE" {
+		t.Fatalf("BUG NARRATIVO: relativeDayLabel retornou %q, esperava HOJE", label)
+	}
+}
+
+func TestRegressao_InferredTardeVaiProHoje(t *testing.T) {
+	// Caso PM-default: "call as 5h" as 07:02 -> Claude converte pra 17:00,
+	// resolver coloca hoje 17:00 (17 > 7:02).
+	brt, _ := time.LoadLocation("America/Sao_Paulo")
+	now := time.Date(2026, 4, 16, 7, 2, 0, 0, brt)
+
+	res, err := ResolveEventDate(ResolveInput{
+		Source: DateSourceInferred,
+		Time:   "17:00",
+		Now:    now,
+		Loc:    brt,
+	})
+	if err != nil {
+		t.Fatalf("resolver falhou: %v", err)
+	}
+	want := time.Date(2026, 4, 16, 17, 0, 0, 0, brt)
+	if !res.Start.Equal(want) {
+		t.Fatalf("PM-default path quebrou: deu %s, esperava %s", res.Start, want)
+	}
+	if relativeDayLabel(res.Start, now) != "HOJE" {
+		t.Fatalf("rotulo relativo deveria ser HOJE")
+	}
+}
