@@ -52,7 +52,7 @@ func ResolveEventDate(in ResolveInput) (ResolveOutput, error) {
 		candidate := time.Date(d.Year(), d.Month(), d.Day(), hh, mm, 0, 0, in.Loc)
 		today := time.Date(nowInLoc.Year(), nowInLoc.Month(), nowInLoc.Day(), 0, 0, 0, 0, in.Loc)
 		eventDay := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, in.Loc)
-		if eventDay.Equal(today) && candidate.Before(nowInLoc) {
+		if eventDay.Equal(today) && !candidate.After(nowInLoc) {
 			return ResolveOutput{
 				Start:      candidate.AddDate(0, 0, 1),
 				Adjusted:   true,

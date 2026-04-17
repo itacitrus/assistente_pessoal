@@ -136,6 +136,26 @@ func TestResolveEventDate_Explicit(t *testing.T) {
 		}
 	})
 
+	t.Run("explicit hoje com hora == now: auto-ajusta para amanha (simetria com inferred)", func(t *testing.T) {
+		got, err := ResolveEventDate(ResolveInput{
+			Source:       DateSourceExplicit,
+			ExplicitDate: "2026-04-16",
+			Time:         "07:02",
+			Now:          now0702,
+			Loc:          brt,
+		})
+		if err != nil {
+			t.Fatalf("erro inesperado: %v", err)
+		}
+		want := time.Date(2026, 4, 17, 7, 2, 0, 0, brt)
+		if !got.Start.Equal(want) {
+			t.Fatalf("Start = %s, queria %s (deve auto-ajustar para amanha quando time == now)", got.Start, want)
+		}
+		if !got.Adjusted {
+			t.Fatalf("Adjusted deveria ser true")
+		}
+	})
+
 	t.Run("explicit data passada retorna erro", func(t *testing.T) {
 		_, err := ResolveEventDate(ResolveInput{
 			Source:       DateSourceExplicit,
