@@ -16,6 +16,26 @@ var weekdaysPT = map[time.Weekday]string{
 	time.Saturday:  "Sabado",
 }
 
+// relativeDayLabel retorna "HOJE" se eventStart e now caem no mesmo dia
+// calendario (no fuso de eventStart); "AMANHA" se eventStart e o dia
+// calendario seguinte; string vazia caso contrario. Ancora narrativa
+// para impedir freehand divergente do agente.
+func relativeDayLabel(eventStart, now time.Time) string {
+	loc := eventStart.Location()
+	nowInLoc := now.In(loc)
+	sY, sM, sD := eventStart.Date()
+	nY, nM, nD := nowInLoc.Date()
+	if sY == nY && sM == nM && sD == nD {
+		return "HOJE"
+	}
+	tomorrow := nowInLoc.AddDate(0, 0, 1)
+	tY, tM, tD := tomorrow.Date()
+	if sY == tY && sM == tM && sD == tD {
+		return "AMANHA"
+	}
+	return ""
+}
+
 func FormatDailySummary(userName string, events []CalendarEvent, date time.Time) string {
 	dayStr := date.Format("02/01/2006")
 	weekday := weekdaysPT[date.Weekday()]
@@ -75,8 +95,13 @@ func FormatEventCreated(ev CalendarEvent) string {
 		return fmt.Sprintf("Aniversario criado: *%s*\n%s, %s (repete todo ano)",
 			ev.Title, weekday, ev.Start.Format("02/01"))
 	}
-	return fmt.Sprintf("Evento criado: *%s*\n%s, %s as %s",
-		ev.Title, weekday, ev.Start.Format("02/01"), ev.Start.Format("15:04"))
+	rel := relativeDayLabel(ev.Start, time.Now())
+	prefix := ""
+	if rel != "" {
+		prefix = rel + " — "
+	}
+	return fmt.Sprintf("Evento criado: *%s*\n%s%s, %s as %s",
+		ev.Title, prefix, weekday, ev.Start.Format("02/01"), ev.Start.Format("15:04"))
 }
 
 func FormatEventList(events []CalendarEvent) string {

@@ -107,3 +107,46 @@ func TestFormatEventList_ShowsEventTypeAndMaster(t *testing.T) {
 		t.Errorf("one-off event should have no type/master suffix, got:\n%s", out)
 	}
 }
+
+func TestRelativeDayLabel(t *testing.T) {
+	brt, _ := time.LoadLocation("America/Sao_Paulo")
+	now := time.Date(2026, 4, 16, 10, 0, 0, 0, brt)
+
+	cases := []struct {
+		name      string
+		eventTime time.Time
+		want      string
+	}{
+		{"mesmo dia retorna HOJE", time.Date(2026, 4, 16, 15, 0, 0, 0, brt), "HOJE"},
+		{"mesmo dia mais cedo retorna HOJE", time.Date(2026, 4, 16, 6, 0, 0, 0, brt), "HOJE"},
+		{"proximo dia retorna AMANHA", time.Date(2026, 4, 17, 5, 0, 0, 0, brt), "AMANHA"},
+		{"2 dias no futuro retorna vazio", time.Date(2026, 4, 18, 10, 0, 0, 0, brt), ""},
+		{"ontem retorna vazio", time.Date(2026, 4, 15, 10, 0, 0, 0, brt), ""},
+		{"travessia meia-noite: evento amanha 00:30 vs agora 23:59", time.Date(2026, 4, 17, 0, 30, 0, 0, brt), "AMANHA"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := relativeDayLabel(tc.eventTime, now)
+			if got != tc.want {
+				t.Fatalf("relativeDayLabel = %q, queria %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFormatEventCreated_RelativeLabel(t *testing.T) {
+	brt, _ := time.LoadLocation("America/Sao_Paulo")
+	ev := CalendarEvent{
+		Title: "Reuniao com OTC",
+		Start: time.Now().In(brt).Add(1 * time.Hour),
+		End:   time.Now().In(brt).Add(2 * time.Hour),
+	}
+	out := FormatEventCreated(ev)
+	if !strings.Contains(out, "Reuniao com OTC") {
+		t.Fatalf("output deveria conter titulo, got: %s", out)
+	}
+	if !strings.Contains(out, "HOJE") {
+		t.Fatalf("evento 1h no futuro deveria ter rotulo HOJE, got: %s", out)
+	}
+}
