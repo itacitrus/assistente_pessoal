@@ -45,7 +45,24 @@ func ResolveEventDate(in ResolveInput) (ResolveOutput, error) {
 		return ResolveOutput{Start: today.AddDate(0, 0, 1)}, nil
 
 	case DateSourceExplicit:
-		return ResolveOutput{}, fmt.Errorf("caminho explicit ainda nao implementado")
+		d, err := time.ParseInLocation("2006-01-02", in.ExplicitDate, in.Loc)
+		if err != nil {
+			return ResolveOutput{}, fmt.Errorf("ExplicitDate invalido %q: %w", in.ExplicitDate, err)
+		}
+		candidate := time.Date(d.Year(), d.Month(), d.Day(), hh, mm, 0, 0, in.Loc)
+		today := time.Date(nowInLoc.Year(), nowInLoc.Month(), nowInLoc.Day(), 0, 0, 0, 0, in.Loc)
+		eventDay := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, in.Loc)
+		if eventDay.Equal(today) && candidate.Before(nowInLoc) {
+			return ResolveOutput{
+				Start:      candidate.AddDate(0, 0, 1),
+				Adjusted:   true,
+				AdjustNote: "Esse horario ja passou hoje. Marquei pra amanha nesse horario. ",
+			}, nil
+		}
+		if eventDay.Before(today) {
+			return ResolveOutput{}, fmt.Errorf("data explicita no passado: %s", in.ExplicitDate)
+		}
+		return ResolveOutput{Start: candidate}, nil
 
 	default:
 		return ResolveOutput{}, fmt.Errorf("date_source invalido: %q", in.Source)

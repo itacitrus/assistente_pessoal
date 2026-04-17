@@ -68,3 +68,84 @@ func TestResolveEventDate_Inferred(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveEventDate_Explicit(t *testing.T) {
+	brt, _ := time.LoadLocation("America/Sao_Paulo")
+	now0702 := time.Date(2026, 4, 16, 7, 2, 0, 0, brt)
+
+	t.Run("explicit data futura sem ajuste", func(t *testing.T) {
+		got, err := ResolveEventDate(ResolveInput{
+			Source:       DateSourceExplicit,
+			ExplicitDate: "2026-04-20",
+			Time:         "14:00",
+			Now:          now0702,
+			Loc:          brt,
+		})
+		if err != nil {
+			t.Fatalf("erro inesperado: %v", err)
+		}
+		want := time.Date(2026, 4, 20, 14, 0, 0, 0, brt)
+		if !got.Start.Equal(want) {
+			t.Fatalf("Start = %s, queria %s", got.Start, want)
+		}
+		if got.Adjusted {
+			t.Fatalf("Adjusted deveria ser false")
+		}
+	})
+
+	t.Run("explicit hoje com hora no futuro sem ajuste", func(t *testing.T) {
+		got, err := ResolveEventDate(ResolveInput{
+			Source:       DateSourceExplicit,
+			ExplicitDate: "2026-04-16",
+			Time:         "09:00",
+			Now:          now0702,
+			Loc:          brt,
+		})
+		if err != nil {
+			t.Fatalf("erro inesperado: %v", err)
+		}
+		want := time.Date(2026, 4, 16, 9, 0, 0, 0, brt)
+		if !got.Start.Equal(want) {
+			t.Fatalf("Start = %s, queria %s", got.Start, want)
+		}
+		if got.Adjusted {
+			t.Fatalf("Adjusted deveria ser false")
+		}
+	})
+
+	t.Run("explicit hoje com hora passada: auto-ajusta para amanha", func(t *testing.T) {
+		got, err := ResolveEventDate(ResolveInput{
+			Source:       DateSourceExplicit,
+			ExplicitDate: "2026-04-16",
+			Time:         "05:00",
+			Now:          now0702,
+			Loc:          brt,
+		})
+		if err != nil {
+			t.Fatalf("erro inesperado: %v", err)
+		}
+		want := time.Date(2026, 4, 17, 5, 0, 0, 0, brt)
+		if !got.Start.Equal(want) {
+			t.Fatalf("Start = %s, queria %s", got.Start, want)
+		}
+		if !got.Adjusted {
+			t.Fatalf("Adjusted deveria ser true")
+		}
+		if got.AdjustNote == "" {
+			t.Fatalf("AdjustNote deveria ser preenchido")
+		}
+	})
+
+	t.Run("explicit data passada retorna erro", func(t *testing.T) {
+		_, err := ResolveEventDate(ResolveInput{
+			Source:       DateSourceExplicit,
+			ExplicitDate: "2026-04-10",
+			Time:         "09:00",
+			Now:          now0702,
+			Loc:          brt,
+		})
+		if err == nil {
+			t.Fatalf("esperava erro, deu nil")
+		}
+	})
+}
