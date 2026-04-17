@@ -69,6 +69,24 @@ var actionLabelsPT = map[string]string{
 	"consultar_log":      "Consultou historico",
 }
 
+// LogCriarEvento registra criacao de evento com campos estruturados para
+// observabilidade da regra de data implicita. Details armazena um blob
+// pipe-separado: "title=...|user_msg=...|date_source=...|claude_date=...|claude_time=...|resolved_start=...|adjusted=...".
+func (a *AuditLog) LogCriarEvento(userID int64, title, userMsgSnippet, dateSource, claudeDate, claudeTime, resolvedStart string, adjusted bool) error {
+	snippet := userMsgSnippet
+	if len(snippet) > 120 {
+		snippet = snippet[:120]
+	}
+	details := fmt.Sprintf(
+		"title=%s|user_msg=%s|date_source=%s|claude_date=%s|claude_time=%s|resolved_start=%s|adjusted=%t",
+		title, snippet, dateSource, claudeDate, claudeTime, resolvedStart, adjusted,
+	)
+	_, err := a.db.conn.Exec(
+		`INSERT INTO action_log (user_id, action, target_user, details) VALUES (?, ?, ?, ?)`,
+		userID, "criar_evento", "", details)
+	return err
+}
+
 func FormatAuditLog(userName string, entries []AuditEntry) string {
 	if len(entries) == 0 {
 		return fmt.Sprintf("%s, nenhuma acao registrada nesse periodo.", userName)

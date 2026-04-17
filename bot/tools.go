@@ -314,7 +314,18 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 		return "", fmt.Errorf("create event: %w", err)
 	}
 
-	agent.audit.Log(user.ID, "criar_evento", "", p.Title)
+	// Snippet da ultima mensagem do usuario pra observabilidade de data implicita.
+	var userMsgSnippet string
+	if hist, histErr := agent.db.GetConversationHistory(user.ID, 5); histErr == nil {
+		for i := len(hist) - 1; i >= 0; i-- {
+			if hist[i].Role == "user" {
+				userMsgSnippet = hist[i].Content
+				break
+			}
+		}
+	}
+	agent.audit.LogCriarEvento(user.ID, p.Title, userMsgSnippet, p.DateSource, p.Date, p.Time,
+		res.Start.Format(time.RFC3339), res.Adjusted)
 	display := FormatEventCreated(*created)
 	if res.AdjustNote != "" {
 		display = res.AdjustNote + display
