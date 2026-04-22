@@ -162,6 +162,10 @@ func (db *DB) migrate() error {
 		// marker event on the user's calendar, so we can delete the marker
 		// when the period is canceled.
 		`ALTER TABLE user_travel_periods ADD COLUMN calendar_event_id TEXT NOT NULL DEFAULT ''`,
+		// reauth_notified_at tracks when the user last received an automatic
+		// reauth-link message. NULL means never notified or already reauthorized.
+		// Used to rate-limit the per-minute scheduler from spamming.
+		`ALTER TABLE users ADD COLUMN reauth_notified_at DATETIME`,
 	}
 	for _, stmt := range additive {
 		if _, err := db.conn.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
@@ -372,8 +376,30 @@ func (db *DB) ListActiveUsers() ([]User, error) {
 
 func (db *DB) UpdateUserCredentials(userID int64, encryptedCredentials string) error {
 	_, err := db.conn.Exec(
-		`UPDATE users SET google_credentials = ? WHERE id = ?`,
+		`UPDATE users SET google_credentials = ?, reauth_notified_at = NULL WHERE id = ?`,
 		encryptedCredentials, userID)
+	return err
+}
+
+func (db *DB) GetReauthNotifiedAt(userID int64) (*time.Time, error) {
+	var notifiedAt sql.NullTime
+	err := db.conn.QueryRow(
+		`SELECT reauth_notified_at FROM users WHERE id = ?`, userID,
+	).Scan(&notifiedAt)
+	if err != nil {
+		return nil, err
+	}
+	if !notifiedAt.Valid {
+		return nil, nil
+	}
+	t := notifiedAt.Time
+	return &t, nil
+}
+
+func (db *DB) SetReauthNotifiedAt(userID int64, t time.Time) error {
+	_, err := db.conn.Exec(
+		`UPDATE users SET reauth_notified_at = ? WHERE id = ?`, t.UTC(), userID,
+	)
 	return err
 }
 

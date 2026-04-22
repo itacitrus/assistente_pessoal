@@ -74,6 +74,11 @@ func (s *Scheduler) checkUserReminders(user *User) {
 	events, err := s.cal.ListEvents(ctx, refreshToken, user.GoogleCalendarID, windowStart, windowEnd)
 	if err != nil {
 		log.Printf("Scheduler: error listing events for %s: %v", user.Name, err)
+		if IsInvalidGrantErr(err) {
+			if _, reauthErr := SendReauthLinkIfDue(s.db, s.cal, s.sendMsg, user, time.Now()); reauthErr != nil {
+				log.Printf("Scheduler: SendReauthLinkIfDue for %s: %v", user.Name, reauthErr)
+			}
+		}
 		return
 	}
 	s.db.ApplyEventTimezones(user.ID, events)
@@ -156,6 +161,11 @@ func (s *Scheduler) checkDailySummaries() {
 		events, err := s.cal.ListEvents(ctx, refreshToken, user.GoogleCalendarID, dayStart, dayEnd)
 		if err != nil {
 			log.Printf("Scheduler: error getting daily events for %s: %v", user.Name, err)
+			if IsInvalidGrantErr(err) {
+				if _, reauthErr := SendReauthLinkIfDue(s.db, s.cal, s.sendMsg, &user, time.Now()); reauthErr != nil {
+					log.Printf("Scheduler: SendReauthLinkIfDue for %s: %v", user.Name, reauthErr)
+				}
+			}
 			continue
 		}
 		s.db.ApplyEventTimezones(user.ID, events)

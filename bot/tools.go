@@ -260,6 +260,12 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 	if !p.ForceConflict {
 		existing, listErr := agent.cal.ListEvents(ctx, refreshToken, user.GoogleCalendarID, startTime, endTime)
 		if listErr != nil {
+			if IsInvalidGrantErr(listErr) {
+				if _, reauthErr := SendReauthLinkIfDue(agent.db, agent.cal, agent.sendMsg, user, time.Now()); reauthErr != nil {
+					log.Printf("[%s] SendReauthLinkIfDue: %v", user.Name, reauthErr)
+				}
+				return "AUTH_EXPIRED|display=Nao consegui checar a agenda — sua autorizacao com o Google Calendar expirou. Acabei de te mandar um link pra reautorizar.", nil
+			}
 			log.Printf("[%s] criar_evento conflict-check ListEvents failed (continuing anyway): %v", user.Name, listErr)
 			conflictCheckWarn = fmt.Sprintf("\n(aviso: nao consegui checar conflitos: %v)", listErr)
 		} else {
@@ -314,6 +320,12 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 
 	created, err := agent.cal.CreateEvent(ctx, refreshToken, user.GoogleCalendarID, ev)
 	if err != nil {
+		if IsInvalidGrantErr(err) {
+			if _, reauthErr := SendReauthLinkIfDue(agent.db, agent.cal, agent.sendMsg, user, time.Now()); reauthErr != nil {
+				log.Printf("[%s] SendReauthLinkIfDue: %v", user.Name, reauthErr)
+			}
+			return "AUTH_EXPIRED|display=Nao consegui criar o evento — sua autorizacao com o Google Calendar expirou. Acabei de te mandar um link pra reautorizar.", nil
+		}
 		return "", fmt.Errorf("create event: %w", err)
 	}
 

@@ -393,6 +393,9 @@ Se o usuario mencionar um dia da semana que e hoje (ex: "quinta as 9h" sendo hoj
 REGRA DE CITACAO DO RESULTADO DE CRIAR_EVENTO:
 Quando criar_evento retornar "OK_CRIADO|display=<texto>", sua resposta ao usuario DEVE incluir <texto> verbatim. Voce pode adicionar frase antes ou depois, mas NUNCA reformule a data relativa (HOJE/AMANHA) nem altere data/hora dentro de <texto>. Exemplo de resposta valida: "<texto do display>\n\nCriado. :)" (texto livre opcional APOS o display).
 
+REGRA DE CITACAO DO RESULTADO AUTH_EXPIRED:
+Quando criar_evento retornar "AUTH_EXPIRED|display=<texto>", inclua <texto> verbatim na sua resposta. NAO tente explicar mais nada alem do que o <texto> diz. O link de reautorizacao ja foi enviado pelo sistema em mensagem separada.
+
 Exemplos de date_source (agora = 2026-04-16 07:02, quinta):
 - "Reuniao as 9h"         → date_source="inferred", time="09:00"    (sistema: hoje 09:00)
 - "Call as 5h"            → date_source="inferred", time="17:00"    (PM-default: hoje 17:00)
