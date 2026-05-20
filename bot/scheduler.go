@@ -11,21 +11,58 @@ import (
 )
 
 type Scheduler struct {
-	cron    *cron.Cron
-	db      *DB
-	cal     *CalendarClient
-	cfg     *Config
-	sendMsg func(phone, text string) error
+	cron     *cron.Cron
+	db       *DB
+	cal      *CalendarClient
+	cfg      *Config
+	sendMsg  func(phone, text string) error // mantido pra jobs antigos
+	notifier Notifier                       // Fase 3: medicamento + escalacao
+	eng      *EscalationEngine              // Fase 3: motor de escalacao
+
+	// Fase 4 (idosos): companion + proatividade. agent eh o ponteiro que
+	// o checkInactivity usa pra chamar RunProactive. Pode ser nil em
+	// testes que nao exercitam o companion — checkInactivity faz guard.
+	agent *Agent
+	// nowFunc permite injetar relogio em testes (ex: fixar 03:00 BRT).
+	// Em prod, sempre time.Now.
+	nowFunc func() time.Time
 }
 
-func NewScheduler(db *DB, cal *CalendarClient, cfg *Config, sendMsg func(phone, text string) error) *Scheduler {
+// NewScheduler agora aceita notifier e engine de escalacao para os jobs da
+// Fase 3. notifier e eng podem ser nil em CLI/testes que nao exercitam
+// medicamento — o Start ainda assim agenda os jobs, mas eles short-circuit
+// quando dependencias faltam.
+func NewScheduler(db *DB, cal *CalendarClient, cfg *Config,
+	sendMsg func(phone, text string) error,
+	notifier Notifier, eng *EscalationEngine) *Scheduler {
 	return &Scheduler{
-		cron:    cron.New(cron.WithLocation(time.Local)),
-		db:      db,
-		cal:     cal,
-		cfg:     cfg,
-		sendMsg: sendMsg,
+		cron:     cron.New(cron.WithLocation(time.Local)),
+		db:       db,
+		cal:      cal,
+		cfg:      cfg,
+		sendMsg:  sendMsg,
+		notifier: notifier,
+		eng:      eng,
+		nowFunc:  time.Now,
 	}
+}
+
+// WithAgent injeta o agent do companion (Fase 4). NewScheduler nao pede
+// pra preservar API — main.go chama isso depois de construir o Agent.
+// agent=nil eh aceito (testes que nao usam companion).
+func (s *Scheduler) WithAgent(a *Agent) *Scheduler {
+	s.agent = a
+	return s
+}
+
+// withNowFunc permite testes injetarem nowFunc fixo. Nao exposto fora
+// do pacote.
+func (s *Scheduler) withNowFunc(f func() time.Time) *Scheduler {
+	if f == nil {
+		f = time.Now
+	}
+	s.nowFunc = f
+	return s
 }
 
 func (s *Scheduler) Start() {
@@ -34,6 +71,20 @@ func (s *Scheduler) Start() {
 	s.cron.AddFunc("* * * * *", s.checkDailySummaries)
 	s.cron.AddFunc("* * * * *", s.checkWeeklySummaries)
 	s.cron.AddFunc("* * * * *", s.checkExpiredPermissionRequests)
+
+	// Fase 3 (idosos): jobs de medicacao + escalacao.
+	s.cron.AddFunc("* * * * *", s.checkMedicationReminders)
+	s.cron.AddFunc("* * * * *", s.checkMedicationEscalation)
+
+	// Fase 4 (idosos): companion proatividade. Cron 1-min com gating
+	// minute%15==0 dentro do job — evita rajada.
+	s.cron.AddFunc("* * * * *", s.checkInactivity)
+
+	// Fase 5 (idosos): escala inatividade pra responsaveis (cron 1-min,
+	// gating in-process via shouldRunPhase5(30min)) + catchup diario de
+	// snapshot psicologico (cron 1-hora, gating 60min).
+	s.cron.AddFunc("* * * * *", s.checkInactivityEscalation)
+	s.cron.AddFunc("@every 1h", s.runDailyPsychSnapshotCatchup)
 
 	s.cron.Start()
 	log.Println("Scheduler started")

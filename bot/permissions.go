@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 )
@@ -44,7 +45,8 @@ func (pm *PermissionManager) ListTargetsFor(granteeID int64) ([]User, error) {
 	rows, err := pm.db.conn.Query(
 		`SELECT u.id, u.phone_number, u.name, u.google_calendar_id, u.google_credentials,
 		 u.daily_summary_time, u.weekly_summary_day, u.weekly_summary_time,
-		 u.reminder_before, u.auto_confirm_timeout, u.is_active, u.created_at
+		 u.reminder_before, u.auto_confirm_timeout, u.is_active, u.created_at,
+		 u.type, u.last_user_message_at
 		 FROM calendar_permissions cp
 		 JOIN users u ON u.id = cp.grantor_id
 		 WHERE cp.grantee_id = ?`, granteeID)
@@ -56,11 +58,15 @@ func (pm *PermissionManager) ListTargetsFor(granteeID int64) ([]User, error) {
 	var users []User
 	for rows.Next() {
 		var u User
+		var ut sql.NullString
+		var lastMsg sql.NullTime
 		if err := rows.Scan(&u.ID, &u.PhoneNumber, &u.Name, &u.GoogleCalendarID, &u.GoogleCredentials,
 			&u.DailySummaryTime, &u.WeeklySummaryDay, &u.WeeklySummaryTime,
-			&u.ReminderBefore, &u.AutoConfirmTimeout, &u.IsActive, &u.CreatedAt); err != nil {
+			&u.ReminderBefore, &u.AutoConfirmTimeout, &u.IsActive, &u.CreatedAt,
+			&ut, &lastMsg); err != nil {
 			return nil, err
 		}
+		scanUserExtras(&u, ut, lastMsg)
 		users = append(users, u)
 	}
 	return users, rows.Err()
@@ -72,7 +78,8 @@ func (pm *PermissionManager) ResolveByName(name string) (*User, error) {
 	rows, err := pm.db.conn.Query(
 		`SELECT id, phone_number, name, google_calendar_id, google_credentials,
 		 daily_summary_time, weekly_summary_day, weekly_summary_time,
-		 reminder_before, auto_confirm_timeout, is_active, created_at
+		 reminder_before, auto_confirm_timeout, is_active, created_at,
+		 type, last_user_message_at
 		 FROM users WHERE is_active = 1`)
 	if err != nil {
 		return nil, err
@@ -82,11 +89,15 @@ func (pm *PermissionManager) ResolveByName(name string) (*User, error) {
 	lower := strings.ToLower(name)
 	for rows.Next() {
 		var u User
+		var ut sql.NullString
+		var lastMsg sql.NullTime
 		if err := rows.Scan(&u.ID, &u.PhoneNumber, &u.Name, &u.GoogleCalendarID, &u.GoogleCredentials,
 			&u.DailySummaryTime, &u.WeeklySummaryDay, &u.WeeklySummaryTime,
-			&u.ReminderBefore, &u.AutoConfirmTimeout, &u.IsActive, &u.CreatedAt); err != nil {
+			&u.ReminderBefore, &u.AutoConfirmTimeout, &u.IsActive, &u.CreatedAt,
+			&ut, &lastMsg); err != nil {
 			return nil, err
 		}
+		scanUserExtras(&u, ut, lastMsg)
 		if strings.Contains(strings.ToLower(u.Name), lower) {
 			return &u, nil
 		}

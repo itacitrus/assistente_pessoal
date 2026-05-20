@@ -54,19 +54,102 @@ func (a *AuditLog) Query(userID int64, start, end time.Time) ([]AuditEntry, erro
 }
 
 var actionLabelsPT = map[string]string{
-	"criar_evento":       "Criou evento",
-	"editar_evento":      "Editou evento",
-	"cancelar_evento":    "Cancelou evento",
-	"consultar_agenda":   "Consultou agenda",
-	"confirmar":          "Confirmou",
-	"negar":              "Negou",
-	"auto_confirm":       "Auto-confirmou",
-	"grant_access":       "Concedeu acesso",
-	"grant_access_once":  "Concedeu acesso (pontual)",
-	"revoke_access":      "Revogou acesso",
-	"deny_access":        "Negou acesso",
-	"permission_request": "Solicitou acesso",
-	"consultar_log":      "Consultou historico",
+	"criar_evento":                  "Criou evento",
+	"editar_evento":                 "Editou evento",
+	"cancelar_evento":               "Cancelou evento",
+	"consultar_agenda":              "Consultou agenda",
+	"confirmar":                     "Confirmou",
+	"negar":                         "Negou",
+	"auto_confirm":                  "Auto-confirmou",
+	"grant_access":                  "Concedeu acesso",
+	"grant_access_once":             "Concedeu acesso (pontual)",
+	"revoke_access":                 "Revogou acesso",
+	"deny_access":                   "Negou acesso",
+	"permission_request":            "Solicitou acesso",
+	"consultar_log":                 "Consultou historico",
+	"family_link_created":           "Cadastrou familiar",
+	"family_link_removed":           "Removeu familiar",
+	"family_notify_prefs_updated":   "Atualizou alertas de familiar",
+	"user_type_changed":             "Mudou tipo de usuario",
+	// Fase 3 (idosos): medicacao + escalacao.
+	"medication_created":            "Cadastrou medicamento",
+	"medication_edited":             "Editou medicamento",
+	"medication_canceled":           "Cancelou medicamento",
+	"medication_taken":              "Tomou medicamento",
+	"medication_skipped":            "Pulou dose",
+	"medication_missed":             "Dose nao tomada",
+	"medication_escalated":          "Escalou medicamento pra familia",
+	"medication_reminder_sent":      "Lembrete de medicamento enviado",
+	"prescription_image_processed":  "Processou foto de receita",
+	// Fase 4 (idosos): companion + proatividade.
+	"alertar_familia":               "Alertou familia (sinal serio)",
+	"pausar_proatividade":           "Pausou proatividade",
+	"proactive_attempt_sent":        "Tentou puxar conversa",
+	"companion_provider_switch":     "Trocou provider do companion",
+	"comentar_imagem":               "Comentou imagem recebida",
+	"comentar_link":                 "Comentou link recebido",
+	"comentar_link_rejected":        "Rejeitou link fora da allowlist",
+	"comentar_link_error":           "Erro ao buscar Open Graph",
+	"snapshot_updated":              "Snapshot psicologico atualizado",
+	"safety_net_fired":              "Safety net disparou alerta",
+	// Fase 5 (idosos): relatorio longitudinal + alertas + snapshots.
+	"status_dependente_consulted":     "Consultou status do dependente",
+	"timeline_consulted":              "Consultou timeline do dependente",
+	"synthesis_executed":              "Sintese gerada",
+	"synthesis_failed":                "Falha na sintese",
+	"psych_snapshot_written":          "Snapshot psicologico escrito",
+	"psych_snapshot_failed":           "Falha ao escrever snapshot",
+	"safety_alert_from_writer":        "Alerta de seguranca disparado pelo writer",
+	"inactivity_escalation_triggered": "Escalou inatividade para familia",
+	// Fase 2 (web/UI): autenticacao via magic link e gestao de preferencias.
+	"web_login_requested":             "Solicitou link de acesso ao painel",
+	"web_login_succeeded":             "Entrou no painel",
+	"web_login_failed":                "Falha em login no painel",
+	"web_session_revoked":             "Saiu do painel",
+	"user_preferences_updated":        "Atualizou preferencias",
+}
+
+// LogAlertarFamilia registra a chamada da tool alertar_familia.
+// userID = idoso (sujeito do alerta).
+// sentTo / failedFor = nomes dos guardians notificados / falhos.
+// suppressed = true quando o cooldown bloqueou o reenvio.
+func (a *AuditLog) LogAlertarFamilia(userID int64, severity, category, reason string, sentTo, failedFor []string, suppressed bool) error {
+	details := fmt.Sprintf(
+		"severity=%s|category=%s|reason=%s|sent_to=%s|failed_for=%s|suppressed=%t",
+		severity, category, sanitizeAuditReason(reason),
+		strings.Join(sentTo, ","), strings.Join(failedFor, ","),
+		suppressed,
+	)
+	target := strings.Join(sentTo, ",")
+	return a.Log(userID, "alertar_familia", target, details)
+}
+
+// LogProactiveAttemptSent registra que Lurch puxou conversa por inatividade.
+func (a *AuditLog) LogProactiveAttemptSent(userID int64, hoursIdle int, attemptID int64, message string) error {
+	details := fmt.Sprintf(
+		"hours_idle=%d|attempt_id=%d|message=%s",
+		hoursIdle, attemptID, sanitizeAuditReason(message),
+	)
+	return a.Log(userID, "proactive_attempt_sent", "", details)
+}
+
+// LogCompanionProviderSwitch registra qual provider foi escolhido para um
+// turno do companion. Util pra observar shadow mode ou canary (Fase 4 §4.5.11).
+func (a *AuditLog) LogCompanionProviderSwitch(userID int64, providerName string) error {
+	return a.Log(userID, "companion_provider_switch", providerName, "")
+}
+
+// sanitizeAuditReason normaliza um valor de campo livre pra encaixar no
+// blob pipe-separated do action_log.details. Tira | e quebras de linha.
+func sanitizeAuditReason(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.ReplaceAll(s, "|", "/")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	if len(s) > 300 {
+		s = s[:300] + "...[trunc]"
+	}
+	return s
 }
 
 // LogCriarEvento registra criacao de evento com campos estruturados para
@@ -85,6 +168,44 @@ func (a *AuditLog) LogCriarEvento(userID int64, title, userMsgSnippet, dateSourc
 		`INSERT INTO action_log (user_id, action, target_user, details) VALUES (?, ?, ?, ?)`,
 		userID, "criar_evento", "", details)
 	return err
+}
+
+// LogFamilyLinkCreated registra a criacao de um vinculo familiar.
+// userID = ator (quem solicitou a criacao); pode ser o guardian ou um admin.
+// Em geral, sera o guardian; mas mantemos generico pra futuro fluxo de
+// admin/CS criando vinculos manualmente.
+func (a *AuditLog) LogFamilyLinkCreated(userID, guardianID, dependentID int64, relationship string) error {
+	details := fmt.Sprintf(
+		"guardian_id=%d|dependent_id=%d|relationship=%s",
+		guardianID, dependentID, relationship,
+	)
+	return a.Log(userID, "family_link_created", "", details)
+}
+
+// LogFamilyLinkRemoved registra a remocao de um vinculo familiar.
+func (a *AuditLog) LogFamilyLinkRemoved(userID, guardianID, dependentID int64) error {
+	details := fmt.Sprintf("guardian_id=%d|dependent_id=%d", guardianID, dependentID)
+	return a.Log(userID, "family_link_removed", "", details)
+}
+
+// LogFamilyNotifyPrefsUpdated registra mudanca de preferencias de notificacao
+// de um vinculo familiar.
+func (a *AuditLog) LogFamilyNotifyPrefsUpdated(userID, linkID int64, before, after FamilyNotifyPrefs) error {
+	details := fmt.Sprintf(
+		"link_id=%d|before=med:%t,inat:%t,sig:%t|after=med:%t,inat:%t,sig:%t",
+		linkID,
+		before.OnMedicationMiss, before.OnInactivity, before.OnSevereSignal,
+		after.OnMedicationMiss, after.OnInactivity, after.OnSevereSignal,
+	)
+	return a.Log(userID, "family_notify_prefs_updated", "", details)
+}
+
+// LogUserTypeChanged registra mudanca de tipo de usuario.
+// userID       = ator (em geral, o proprio user; em fluxo admin pode ser outro).
+// targetUserID = quem teve o tipo mudado.
+func (a *AuditLog) LogUserTypeChanged(userID, targetUserID int64, before, after UserType) error {
+	details := fmt.Sprintf("target_user_id=%d|before=%s|after=%s", targetUserID, before, after)
+	return a.Log(userID, "user_type_changed", "", details)
 }
 
 func FormatAuditLog(userName string, entries []AuditEntry) string {

@@ -28,6 +28,21 @@ type User struct {
 	AutoConfirmTimeout string
 	IsActive           bool
 	CreatedAt          time.Time
+
+	// Fase 1 (idosos): persona primaria do usuario. Default UserTypeComum
+	// preserva comportamento atual pra todos os usuarios pre-existentes.
+	Type UserType
+	// LastUserMessageAt eh o timestamp da ultima mensagem RECEBIDA do usuario
+	// (nao do bot). nil = nunca recebemos mensagem nesta versao do bot.
+	// Usado por checkInactivity na Fase 4.
+	LastUserMessageAt *time.Time
+
+	// Fase 4 (idosos): horas sem mensagem do idoso antes de Lurch puxar
+	// conversa. Default 24, range util 4..168 (1 semana). 0 = usar default.
+	InactivityThresholdHours int
+	// Fase 4: timestamp UTC ate quando proatividade esta pausada por pedido
+	// do idoso ("nao me chame por 3 dias"). nil = nao pausado.
+	ProactivePausedUntil *time.Time
 }
 
 type PendingConfirmation struct {
@@ -38,6 +53,41 @@ type PendingConfirmation struct {
 	CreatedAt time.Time
 	PhoneNumber string
 	UserName    string
+
+	// Fase 3 (idosos): discriminador. "event" (default) | "medication".
+	// Eventos de calendario continuam ignorando os campos abaixo. Lembretes
+	// de remedio populam Kind="medication" + EscalationPolicy.
+	Kind string
+
+	// EscalationPolicy aponta pra uma chave em escalationPolicies (ex:
+	// "medication_default"). NULL/vazio = sem escalacao.
+	EscalationPolicy *string
+
+	// LastAttemptAt: timestamp UTC da ultima tentativa de escalacao. NULL =
+	// nenhuma ainda. O scheduler usa isto pra decidir se eh hora de tentar
+	// de novo (now - last >= policy.Interval).
+	LastAttemptAt *time.Time
+
+	// AttemptNumber: contador (0..MaxAttempts). Decisao final (escalar pra
+	// familia) acontece quando next > MaxAttempts.
+	AttemptNumber int
+}
+
+// validKinds limita os valores aceitos em pending_confirmations.kind.
+// SQLite nao tem ALTER TABLE ADD CONSTRAINT, entao a validacao vive aqui
+// em Go pra evitar drift entre banco recem-criado e banco migrado.
+var validKinds = map[string]bool{"event": true, "medication": true}
+
+// validatePendingKind retorna erro se k nao for um kind reconhecido.
+// Default "" eh tratado como "event" (compat retro).
+func validatePendingKind(k string) error {
+	if k == "" {
+		return nil
+	}
+	if !validKinds[k] {
+		return fmt.Errorf("invalid pending_confirmations.kind: %q", k)
+	}
+	return nil
 }
 
 type DB struct {
@@ -150,6 +200,97 @@ func (db *DB) migrate() error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_user_travel_periods_user_date
 		ON user_travel_periods(user_id, start_date, end_date);
+
+	-- Fase 1 (idosos): vinculo guardian -> dependent.
+	-- guardian_id eh o responsavel (recebe alertas).
+	-- dependent_id eh quem esta sob cuidado (tipicamente type='idoso',
+	-- mas o schema NAO impoe — flexibilidade pra futuros casos).
+	-- relationship eh livre ("filha", "esposa", "neto"). Notify flags
+	-- granulares por canal de alerta, todos default true (= int 1).
+	CREATE TABLE IF NOT EXISTS family_links (
+		id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+		guardian_id               INTEGER NOT NULL REFERENCES users(id),
+		dependent_id              INTEGER NOT NULL REFERENCES users(id),
+		relationship              TEXT NOT NULL DEFAULT '',
+		notify_on_medication_miss INTEGER NOT NULL DEFAULT 1,
+		notify_on_inactivity      INTEGER NOT NULL DEFAULT 1,
+		notify_on_severe_signal   INTEGER NOT NULL DEFAULT 1,
+		created_at                DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(guardian_id, dependent_id),
+		CHECK (guardian_id != dependent_id)
+	);
+	CREATE INDEX IF NOT EXISTS idx_family_links_guardian  ON family_links(guardian_id);
+	CREATE INDEX IF NOT EXISTS idx_family_links_dependent ON family_links(dependent_id);
+
+	-- Fase 3 (idosos): cadastro mestre de medicamento. Um medication tem 1..N
+	-- schedules. created_by_user_id pode ser != user_id quando responsavel
+	-- cadastra pra idoso.
+	CREATE TABLE IF NOT EXISTS medications (
+		id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		name                TEXT    NOT NULL,
+		dose                TEXT    NOT NULL DEFAULT '',
+		instructions        TEXT    NOT NULL DEFAULT '',
+		active              INTEGER NOT NULL DEFAULT 1,
+		created_by_user_id  INTEGER NOT NULL REFERENCES users(id),
+		created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_medications_user_active
+		ON medications(user_id, active);
+
+	-- Fase 3 (idosos): horarios em RRULE iCal. Multiplos schedules permitidos
+	-- pelo mesmo medication (ex: dias e horarios distintos).
+	CREATE TABLE IF NOT EXISTS medication_schedules (
+		id              INTEGER PRIMARY KEY AUTOINCREMENT,
+		medication_id   INTEGER NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+		rrule           TEXT    NOT NULL,
+		start_date      TEXT    NOT NULL,
+		end_date        TEXT,
+		critical        INTEGER NOT NULL DEFAULT 0,
+		created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_med_sched_med
+		ON medication_schedules(medication_id);
+
+	-- Fase 3 (idosos): historico de tomadas. UNIQUE(medication_id, scheduled_at)
+	-- eh a chave de idempotencia do scheduler — evita duplicar lembretes
+	-- em restart no mesmo segundo.
+	CREATE TABLE IF NOT EXISTS medication_intake_log (
+		id              INTEGER PRIMARY KEY AUTOINCREMENT,
+		medication_id   INTEGER NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+		scheduled_at    DATETIME NOT NULL,
+		status          TEXT NOT NULL CHECK(status IN ('pending','taken','skipped','missed','escalated')),
+		confirmed_at    DATETIME,
+		response_text   TEXT,
+		created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(medication_id, scheduled_at)
+	);
+	CREATE INDEX IF NOT EXISTS idx_intake_med_time
+		ON medication_intake_log(medication_id, scheduled_at);
+	CREATE INDEX IF NOT EXISTS idx_intake_status
+		ON medication_intake_log(status);
+
+	-- Fase 3 (idosos): historico de tentativas de escalacao. Uma row por
+	-- (pending_confirmation, attempt_number, recipient). UNIQUE garante que
+	-- um restart pos-disparo nao duplique a tentativa.
+	CREATE TABLE IF NOT EXISTS escalations (
+		id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+		pending_confirmation_id  INTEGER NOT NULL REFERENCES pending_confirmations(id) ON DELETE CASCADE,
+		policy_name              TEXT    NOT NULL,
+		attempt_number           INTEGER NOT NULL,
+		scheduled_for            DATETIME NOT NULL,
+		status                   TEXT    NOT NULL CHECK(status IN ('pending','sent','acknowledged','escalated_to_family','failed')),
+		notifier_used            TEXT    NOT NULL DEFAULT 'whatsapp',
+		recipient_user_id        INTEGER NOT NULL REFERENCES users(id),
+		sent_at                  DATETIME,
+		created_at               DATETIME DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(pending_confirmation_id, attempt_number, recipient_user_id)
+	);
+	CREATE INDEX IF NOT EXISTS idx_escalations_pc
+		ON escalations(pending_confirmation_id);
+	CREATE INDEX IF NOT EXISTS idx_escalations_status_sched
+		ON escalations(status, scheduled_for);
 	`
 	if _, err := db.conn.Exec(schema); err != nil {
 		return err
@@ -166,11 +307,157 @@ func (db *DB) migrate() error {
 		// reauth-link message. NULL means never notified or already reauthorized.
 		// Used to rate-limit the per-minute scheduler from spamming.
 		`ALTER TABLE users ADD COLUMN reauth_notified_at DATETIME`,
+		// Fase 1 (idosos): persona primaria do usuario.
+		// CHECK ('comum'|'idoso'|'responsavel') vive em Go (ValidateUserType)
+		// pra evitar divergencia entre banco recem-criado e banco migrado.
+		`ALTER TABLE users ADD COLUMN type TEXT NOT NULL DEFAULT 'comum'`,
+		// Fase 1 (idosos): timestamp da ultima mensagem RECEBIDA do usuario.
+		// NULL = nunca recebemos mensagem do usuario nesta versao.
+		`ALTER TABLE users ADD COLUMN last_user_message_at DATETIME`,
+
+		// Fase 3 (idosos): discriminador entre evento de calendario e lembrete
+		// de remedio. Default 'event' preserva semantica anterior — todas as
+		// rows pre-Fase-3 sao eventos. CHECK constraint vive em validatePendingKind
+		// (camada Go), porque SQLite nao suporta ADD CONSTRAINT.
+		`ALTER TABLE pending_confirmations ADD COLUMN kind TEXT NOT NULL DEFAULT 'event'`,
+
+		// Fase 3 (idosos): politica de escalacao aplicada a pending. NULL =
+		// sem escalacao (default pra eventos de calendario — eles auto-confirmam
+		// via timeout, nao escalam).
+		`ALTER TABLE pending_confirmations ADD COLUMN escalation_policy TEXT`,
+
+		// Fase 3 (idosos): lock de idempotencia do scheduler de escalacao. Sem
+		// isto, dois ticks do cron com diferenca de 1s podem escalar duas vezes.
+		`ALTER TABLE pending_confirmations ADD COLUMN last_attempt_at DATETIME`,
+
+		// Fase 3 (idosos): contador de tentativas. Incrementado pelo motor de
+		// escalacao. Default 0 = nenhuma tentativa ainda.
+		`ALTER TABLE pending_confirmations ADD COLUMN attempt_number INTEGER NOT NULL DEFAULT 0`,
+
+		// Fase 4 (idosos): companion + proatividade.
+		// inactivity_threshold_hours: horas sem mensagem do idoso antes de Lurch
+		// puxar conversa. Default 24, range util 4..168.
+		`ALTER TABLE users ADD COLUMN inactivity_threshold_hours INTEGER NOT NULL DEFAULT 24`,
+		// proactive_paused_until: timestamp UTC ate quando proatividade esta
+		// pausada por pedido do idoso. NULL = nao pausado.
+		`ALTER TABLE users ADD COLUMN proactive_paused_until DATETIME`,
+
+		// Fase 4: tabela de tentativas proativas (Lurch puxa conversa).
+		// status: 'sent' | 'failed' | 'replied' | 'ignored'.
+		// MarkUserMessageReceived flipa 'sent' -> 'replied' quando idoso responde.
+		`CREATE TABLE IF NOT EXISTS proactive_attempts (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id       INTEGER NOT NULL REFERENCES users(id),
+			attempted_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			message_sent  TEXT NOT NULL DEFAULT '',
+			status        TEXT NOT NULL DEFAULT 'sent',
+			replied_at    DATETIME
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_proactive_attempts_user_attempted
+			ON proactive_attempts(user_id, attempted_at DESC)`,
+
+		// Fase 4: colunas extras em escalations para suportar:
+		//   1. severe_signal (alertar_familia) — sem pending_confirmation.
+		//      Usa user_id, severity, details.
+		//   2. linkagem com proactive_attempts (Fase 5 vai consumir via
+		//      checkInactivityEscalation, mas a coluna nasce aqui porque
+		//      proactive_attempts nasce nesta fase).
+		`ALTER TABLE escalations ADD COLUMN user_id INTEGER REFERENCES users(id)`,
+		`ALTER TABLE escalations ADD COLUMN severity TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE escalations ADD COLUMN details TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE escalations ADD COLUMN proactive_attempt_id INTEGER REFERENCES proactive_attempts(id)`,
+		`CREATE INDEX IF NOT EXISTS idx_escalations_inactivity_lookup
+			ON escalations(user_id, policy_name, proactive_attempt_id, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_escalations_severe_signal
+			ON escalations(user_id, policy_name, severity, created_at DESC)`,
+
+		// Fase 5 (idosos): consentimento explicito do dependente sobre
+		// relatorio agregado pra responsavel. Default 'active' preserva
+		// comportamento atual (todos os vinculos pre-Fase-5 ficam consultaveis).
+		// Valores aceitos: 'active' | 'revoked' (validados em Go).
+		`ALTER TABLE family_links ADD COLUMN dependent_consent_status TEXT NOT NULL DEFAULT 'active'`,
+
+		// Fase 5 (idosos): snapshot longitudinal diario de estado psicologico.
+		// UMA linha por (user_id, snapshot_date). Multiplos triggers no mesmo
+		// dia fazem UPSERT (refinam a leitura). Confidence 1-5 indica robustez.
+		// Scores 0/NULL significam "sem dado pra inferir", NAO "muito baixo".
+		`CREATE TABLE IF NOT EXISTS psych_state_daily (
+			id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id             INTEGER NOT NULL REFERENCES users(id),
+			snapshot_date       DATE NOT NULL,
+			humor_score         INTEGER,
+			humor_nuance        TEXT NOT NULL DEFAULT '',
+			energia_score       INTEGER,
+			sociabilidade_score INTEGER,
+			autocuidado_score   INTEGER,
+			sinais_observados   TEXT NOT NULL DEFAULT '[]',
+			eventos_dia         TEXT NOT NULL DEFAULT '[]',
+			n_conversations     INTEGER NOT NULL DEFAULT 0,
+			n_messages          INTEGER NOT NULL DEFAULT 0,
+			duration_minutes    INTEGER NOT NULL DEFAULT 0,
+			confidence          INTEGER NOT NULL DEFAULT 1,
+			inferred_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(user_id, snapshot_date)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_psych_state_user_date
+			ON psych_state_daily(user_id, snapshot_date DESC)`,
+
+		// Fase 2 (web/UI): sessoes do painel web. Token plaintext nunca eh
+		// gravado — apenas sha256(token) em token_hash. status segue o ciclo
+		// pending -> active -> revoked|expired. expires_at carrega:
+		//   - pending: created_at + 15min (validade do magic link)
+		//   - active : sliding window 30d, atualizado a cada RequireAuth
+		// ip e user_agent vem do request original e ajudam auditoria. Nao
+		// sao usados para "amarrar" a sessao a um device — proxies/NAT
+		// trocam IP, e amarrar quebra UX legitima.
+		`CREATE TABLE IF NOT EXISTS web_sessions (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id       INTEGER NOT NULL REFERENCES users(id),
+			token_hash    TEXT NOT NULL UNIQUE,
+			status        TEXT NOT NULL DEFAULT 'pending'
+			               CHECK (status IN ('pending','active','revoked','expired')),
+			expires_at    DATETIME NOT NULL,
+			created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			activated_at  DATETIME,
+			last_used_at  DATETIME,
+			revoked_at    DATETIME,
+			ip            TEXT NOT NULL DEFAULT '',
+			user_agent    TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_web_sessions_user
+			ON web_sessions(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_web_sessions_token
+			ON web_sessions(token_hash)`,
+		`CREATE INDEX IF NOT EXISTS idx_web_sessions_status_expires
+			ON web_sessions(status, expires_at)`,
+
+		// Fase 2 (web/UI): tentativas de login (request-link). Usado pra
+		// rate limit por phone (3/h) e por IP (10/h). Hard-delete periodico
+		// nao implementado — tabela cresce devagar (1 row por tentativa,
+		// raro), volume alto justificaria sweep noturno.
+		`CREATE TABLE IF NOT EXISTS web_login_attempts (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			phone        TEXT NOT NULL,
+			ip           TEXT NOT NULL DEFAULT '',
+			created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_web_login_attempts_phone_time
+			ON web_login_attempts(phone, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_web_login_attempts_ip_time
+			ON web_login_attempts(ip, created_at)`,
 	}
 	for _, stmt := range additive {
 		if _, err := db.conn.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("additive migration %q: %w", stmt, err)
 		}
+	}
+
+	// CONVENCAO: indices em colunas adicionadas via additive migration vao
+	// AQUI, nao no schema base. Garante que a coluna existe antes do CREATE
+	// INDEX rodar em banco antigo (em primeiro deploy pos-migration).
+	postAdditive := `CREATE INDEX IF NOT EXISTS idx_users_type ON users(type);`
+	if _, err := db.conn.Exec(postAdditive); err != nil {
+		return fmt.Errorf("post-additive migration: %w", err)
 	}
 	return nil
 }
@@ -335,17 +622,28 @@ func (db *DB) CreateUser(u *User) error {
 
 func (db *DB) GetUserByPhone(phone string) (*User, error) {
 	u := &User{}
+	var ut sql.NullString
+	var lastMsg sql.NullTime
+	var thresh sql.NullInt64
+	var paused sql.NullTime
 	err := db.conn.QueryRow(
 		`SELECT id, phone_number, name, google_calendar_id, google_credentials,
 		 daily_summary_time, weekly_summary_day, weekly_summary_time,
-		 reminder_before, auto_confirm_timeout, is_active, created_at
+		 reminder_before, auto_confirm_timeout, is_active, created_at,
+		 type, last_user_message_at,
+		 inactivity_threshold_hours, proactive_paused_until
 		 FROM users WHERE phone_number = ?`, phone,
 	).Scan(&u.ID, &u.PhoneNumber, &u.Name, &u.GoogleCalendarID, &u.GoogleCredentials,
 		&u.DailySummaryTime, &u.WeeklySummaryDay, &u.WeeklySummaryTime,
-		&u.ReminderBefore, &u.AutoConfirmTimeout, &u.IsActive, &u.CreatedAt)
+		&u.ReminderBefore, &u.AutoConfirmTimeout, &u.IsActive, &u.CreatedAt,
+		&ut, &lastMsg, &thresh, &paused)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrUserNotFound
+	}
+	if err == nil {
+		scanUserExtras(u, ut, lastMsg)
+		scanUserPhase4(u, thresh, paused)
 	}
 	return u, err
 }
@@ -354,7 +652,9 @@ func (db *DB) ListActiveUsers() ([]User, error) {
 	rows, err := db.conn.Query(
 		`SELECT id, phone_number, name, google_calendar_id, google_credentials,
 		 daily_summary_time, weekly_summary_day, weekly_summary_time,
-		 reminder_before, auto_confirm_timeout, is_active, created_at
+		 reminder_before, auto_confirm_timeout, is_active, created_at,
+		 type, last_user_message_at,
+		 inactivity_threshold_hours, proactive_paused_until
 		 FROM users WHERE is_active = 1`)
 	if err != nil {
 		return nil, err
@@ -364,11 +664,18 @@ func (db *DB) ListActiveUsers() ([]User, error) {
 	var users []User
 	for rows.Next() {
 		var u User
+		var ut sql.NullString
+		var lastMsg sql.NullTime
+		var thresh sql.NullInt64
+		var paused sql.NullTime
 		if err := rows.Scan(&u.ID, &u.PhoneNumber, &u.Name, &u.GoogleCalendarID, &u.GoogleCredentials,
 			&u.DailySummaryTime, &u.WeeklySummaryDay, &u.WeeklySummaryTime,
-			&u.ReminderBefore, &u.AutoConfirmTimeout, &u.IsActive, &u.CreatedAt); err != nil {
+			&u.ReminderBefore, &u.AutoConfirmTimeout, &u.IsActive, &u.CreatedAt,
+			&ut, &lastMsg, &thresh, &paused); err != nil {
 			return nil, err
 		}
+		scanUserExtras(&u, ut, lastMsg)
+		scanUserPhase4(&u, thresh, paused)
 		users = append(users, u)
 	}
 	return users, rows.Err()
@@ -404,30 +711,78 @@ func (db *DB) SetReauthNotifiedAt(userID int64, t time.Time) error {
 }
 
 func (db *DB) CreatePendingConfirmation(pc *PendingConfirmation) error {
-	db.conn.Exec(`UPDATE pending_confirmations SET status = 'cancelled' WHERE user_id = ? AND status = 'pending'`, pc.UserID)
+	if err := validatePendingKind(pc.Kind); err != nil {
+		return err
+	}
+	// Fase 3: cancelamos apenas pendings do MESMO kind. Antes da Fase 3,
+	// um usuario tinha no maximo 1 pending (tudo era evento). Agora um idoso
+	// pode ter um pending de evento de calendario E um de remedio simultaneos
+	// — sao fluxos independentes. Cancelar tudo a cada novo pending quebraria
+	// a escalacao do remedio quando o user tenta marcar outro evento.
+	kindForFilter := pc.Kind
+	if kindForFilter == "" {
+		kindForFilter = "event"
+	}
+	db.conn.Exec(`UPDATE pending_confirmations SET status = 'cancelled'
+		WHERE user_id = ? AND status = 'pending' AND kind = ?`,
+		pc.UserID, kindForFilter)
 
 	result, err := db.conn.Exec(
-		`INSERT INTO pending_confirmations (user_id, event_data) VALUES (?, ?)`,
-		pc.UserID, pc.EventData)
+		`INSERT INTO pending_confirmations (user_id, event_data, kind, escalation_policy)
+		 VALUES (?, ?, COALESCE(NULLIF(?, ''), 'event'), ?)`,
+		pc.UserID, pc.EventData, pc.Kind, pc.EscalationPolicy)
 	if err != nil {
 		return err
 	}
 	pc.ID, _ = result.LastInsertId()
+	if pc.Kind == "" {
+		pc.Kind = "event"
+	}
 	return nil
 }
 
 func (db *DB) GetPendingConfirmation(userID int64) (*PendingConfirmation, error) {
 	pc := &PendingConfirmation{}
+	var kind sql.NullString
+	var policy sql.NullString
+	var lastAttempt sql.NullTime
+	var attempt sql.NullInt64
 	err := db.conn.QueryRow(
-		`SELECT id, user_id, event_data, status, created_at
+		`SELECT id, user_id, event_data, status, created_at,
+		        kind, escalation_policy, last_attempt_at, attempt_number
 		 FROM pending_confirmations WHERE user_id = ? AND status = 'pending'
 		 ORDER BY created_at DESC LIMIT 1`, userID,
-	).Scan(&pc.ID, &pc.UserID, &pc.EventData, &pc.Status, &pc.CreatedAt)
+	).Scan(&pc.ID, &pc.UserID, &pc.EventData, &pc.Status, &pc.CreatedAt,
+		&kind, &policy, &lastAttempt, &attempt)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoPendingConfirmation
 	}
+	if err == nil {
+		fillPendingExtras(pc, kind, policy, lastAttempt, attempt)
+	}
 	return pc, err
+}
+
+// fillPendingExtras hidrata os campos da Fase 3 que vivem em colunas adicionais.
+// Mantido em helper pra evitar duplicacao em getters multiplos.
+func fillPendingExtras(pc *PendingConfirmation, kind, policy sql.NullString, lastAttempt sql.NullTime, attempt sql.NullInt64) {
+	if kind.Valid && kind.String != "" {
+		pc.Kind = kind.String
+	} else {
+		pc.Kind = "event"
+	}
+	if policy.Valid && policy.String != "" {
+		s := policy.String
+		pc.EscalationPolicy = &s
+	}
+	if lastAttempt.Valid {
+		t := lastAttempt.Time
+		pc.LastAttemptAt = &t
+	}
+	if attempt.Valid {
+		pc.AttemptNumber = int(attempt.Int64)
+	}
 }
 
 func (db *DB) ResolvePendingConfirmation(id int64, status string) error {
@@ -438,12 +793,16 @@ func (db *DB) ResolvePendingConfirmation(id int64, status string) error {
 
 func (db *DB) GetExpiredPendingConfirmations(userID int64, timeout time.Duration) ([]PendingConfirmation, error) {
 	cutoff := time.Now().UTC().Add(-timeout)
+	// Filtra kind='event' explicitamente: pendings de medicacao usam motor
+	// de escalacao proprio (nao auto-confirm via timeout).
 	rows, err := db.conn.Query(
 		`SELECT pc.id, pc.user_id, pc.event_data, pc.status, pc.created_at,
-		 u.phone_number, u.name
+		        pc.kind, pc.escalation_policy, pc.last_attempt_at, pc.attempt_number,
+		        u.phone_number, u.name
 		 FROM pending_confirmations pc
 		 JOIN users u ON u.id = pc.user_id
-		 WHERE pc.status = 'pending' AND pc.user_id = ? AND pc.created_at <= ?`, userID, cutoff)
+		 WHERE pc.status = 'pending' AND pc.user_id = ? AND pc.created_at <= ?
+		   AND pc.kind = 'event'`, userID, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -452,10 +811,16 @@ func (db *DB) GetExpiredPendingConfirmations(userID int64, timeout time.Duration
 	var results []PendingConfirmation
 	for rows.Next() {
 		var pc PendingConfirmation
+		var kind sql.NullString
+		var policy sql.NullString
+		var lastAttempt sql.NullTime
+		var attempt sql.NullInt64
 		if err := rows.Scan(&pc.ID, &pc.UserID, &pc.EventData, &pc.Status, &pc.CreatedAt,
+			&kind, &policy, &lastAttempt, &attempt,
 			&pc.PhoneNumber, &pc.UserName); err != nil {
 			return nil, err
 		}
+		fillPendingExtras(&pc, kind, policy, lastAttempt, attempt)
 		results = append(results, pc)
 	}
 	return results, rows.Err()
@@ -478,34 +843,56 @@ func (db *DB) MarkReminderSent(userID int64, eventID string) error {
 
 func (db *DB) GetUserByName(name string) (*User, error) {
 	u := &User{}
+	var ut sql.NullString
+	var lastMsg sql.NullTime
+	var thresh sql.NullInt64
+	var paused sql.NullTime
 	err := db.conn.QueryRow(
 		`SELECT id, phone_number, name, google_calendar_id, google_credentials,
 		 daily_summary_time, weekly_summary_day, weekly_summary_time,
-		 reminder_before, auto_confirm_timeout, is_active, created_at
+		 reminder_before, auto_confirm_timeout, is_active, created_at,
+		 type, last_user_message_at,
+		 inactivity_threshold_hours, proactive_paused_until
 		 FROM users WHERE name = ? AND is_active = 1 LIMIT 1`, name,
 	).Scan(&u.ID, &u.PhoneNumber, &u.Name, &u.GoogleCalendarID, &u.GoogleCredentials,
 		&u.DailySummaryTime, &u.WeeklySummaryDay, &u.WeeklySummaryTime,
-		&u.ReminderBefore, &u.AutoConfirmTimeout, &u.IsActive, &u.CreatedAt)
+		&u.ReminderBefore, &u.AutoConfirmTimeout, &u.IsActive, &u.CreatedAt,
+		&ut, &lastMsg, &thresh, &paused)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrUserNotFound
+	}
+	if err == nil {
+		scanUserExtras(u, ut, lastMsg)
+		scanUserPhase4(u, thresh, paused)
 	}
 	return u, err
 }
 
 func (db *DB) GetUserByID(id int64) (*User, error) {
 	u := &User{}
+	var ut sql.NullString
+	var lastMsg sql.NullTime
+	var thresh sql.NullInt64
+	var paused sql.NullTime
 	err := db.conn.QueryRow(
 		`SELECT id, phone_number, name, google_calendar_id, google_credentials,
 		 daily_summary_time, weekly_summary_day, weekly_summary_time,
-		 reminder_before, auto_confirm_timeout, is_active, created_at
+		 reminder_before, auto_confirm_timeout, is_active, created_at,
+		 type, last_user_message_at,
+		 inactivity_threshold_hours, proactive_paused_until
 		 FROM users WHERE id = ?`, id,
 	).Scan(&u.ID, &u.PhoneNumber, &u.Name, &u.GoogleCalendarID, &u.GoogleCredentials,
 		&u.DailySummaryTime, &u.WeeklySummaryDay, &u.WeeklySummaryTime,
-		&u.ReminderBefore, &u.AutoConfirmTimeout, &u.IsActive, &u.CreatedAt)
+		&u.ReminderBefore, &u.AutoConfirmTimeout, &u.IsActive, &u.CreatedAt,
+		&ut, &lastMsg, &thresh, &paused)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrUserNotFound
+	}
+	if err == nil {
+		scanUserExtras(u, ut, lastMsg)
+		scanUserPhase4(u, thresh, paused)
 	}
 	return u, err
 }

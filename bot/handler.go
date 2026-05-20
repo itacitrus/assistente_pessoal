@@ -279,6 +279,14 @@ func (h *Handler) flushBuffer(phone string, gen uint64) {
 	}
 
 	log.Printf("[%s] Flushing buffer (%d msgs, %d imgs)", user.Name, len(pb.texts), len(pb.images))
+
+	// Fase 4 (idosos): atualiza last_user_message_at + flipa proactive
+	// 'sent' -> 'replied'. Idempotente; nao bloqueia o processing se
+	// falhar — caller ainda responde ao idoso.
+	if err := h.db.MarkUserMessageReceivedAndProactive(user.ID, time.Now()); err != nil {
+		log.Printf("[%s] MarkUserMessageReceivedAndProactive: %v", user.Name, err)
+	}
+
 	response, err := h.orchestrator.Process(ctx, user, text, pb.images)
 	if err != nil {
 		log.Printf("Error processing message from %s: %v", phone, err)
@@ -289,6 +297,56 @@ func (h *Handler) flushBuffer(phone string, gen uint64) {
 		h.db.AddConversationMessage(user.ID, "assistant", response)
 		h.sendText(pb.senderJID, response)
 	}
+
+	// Fase 4: trigger snapshot pos-conversa para idosos. Heuristica de
+	// "conversa significativa" decide se vale chamar Haiku. Roda em
+	// goroutine separada com timeout 30s — nunca bloqueia o idoso.
+	if user.Type == UserTypeIdoso && h.orchestrator != nil && h.orchestrator.agent != nil {
+		go h.maybeSnapshotIdoso(user.ID)
+	}
+}
+
+// maybeSnapshotIdoso decide se chama o snapshot writer. Heuristica simples
+// (sem precisar de DB extra): chama incondicional, e o snapshot writer
+// de Fase 5 vai checar internamente se a conversa foi significativa.
+// Caller ja garantiu user.Type==idoso e agent existente.
+//
+// Wrap com timeout 30s — Haiku tipicamente responde em 5-10s; 30s eh
+// folga. Erro logado, nunca propaga pro fluxo do idoso.
+func (h *Handler) maybeSnapshotIdoso(userID int64) {
+	if h.orchestrator == nil || h.orchestrator.agent == nil {
+		return
+	}
+	w := h.orchestrator.agent.snapshotWriter
+	if w == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := w.MaybeUpdateSnapshot(ctx, userID); err != nil {
+		log.Printf("[snapshot] user=%d: %v", userID, err)
+	}
+}
+
+// isSignificantConversation eh a heuristica de "vale chamar Haiku?". Live
+// no handler pra ficar perto de quem dispara. SnapshotWriter da Fase 5
+// vai re-aplicar antes de chamar Haiku — defesa em profundidade.
+//
+// Criterios (OR):
+//   - >=5 turnos do user no mesmo dia (timezone do user, ou BRT default).
+//   - >=2 turnos com duracao >= 3min entre primeiro e ultimo.
+//   - Pelo menos 1 chamada de alertar_familia hoje.
+func isSignificantConversation(userTurns int, firstAt, lastAt time.Time, alertsToday int) bool {
+	if userTurns >= 5 {
+		return true
+	}
+	if userTurns >= 2 && lastAt.Sub(firstAt) >= 3*time.Minute {
+		return true
+	}
+	if alertsToday > 0 {
+		return true
+	}
+	return false
 }
 
 func (h *Handler) sendText(to types.JID, text string) {

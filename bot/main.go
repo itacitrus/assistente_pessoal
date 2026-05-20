@@ -8,9 +8,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/giovannirambo/assistente_pessoal/bot/api"
+	"github.com/giovannirambo/assistente_pessoal/bot/llm"
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -161,11 +164,43 @@ func runBot() {
 	cal := NewCalendarClient(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRedirectURI)
 	transcription := NewTranscriptionClient(cfg.TranscriptionURL)
 	agent := NewAgent(cfg.AnthropicAPIKey, cal, db, cfg, nil)
+
+	// Fase 4 (idosos): provider abstraction. operacional sempre Anthropic;
+	// companion roteado para DeepSeek se DEEPSEEK_API_KEY setada — fallback
+	// pra Anthropic em todos os papeis se nao configurado.
+	opChat := llm.NewAnthropicChat(cfg.AnthropicAPIKey, "")
+	var companionChat llm.ChatProvider = opChat
+	switch cfg.LLMProviderCompanion {
+	case "deepseek":
+		if cfg.DeepSeekAPIKey == "" {
+			log.Printf("LLM_PROVIDER_COMPANION=deepseek mas DEEPSEEK_API_KEY vazia — fallback para Anthropic.")
+		} else {
+			companionChat = llm.NewDeepSeekChat(cfg.DeepSeekAPIKey, cfg.DeepSeekBaseURL, "")
+		}
+	case "anthropic", "":
+		// Mantem opChat como companion — nao troca.
+	default:
+		log.Printf("LLM_PROVIDER_COMPANION valor desconhecido %q — fallback para Anthropic.", cfg.LLMProviderCompanion)
+	}
+	analysis := llm.NewAnthropicAnalysis(cfg.AnthropicAPIKey, "")
+	report := llm.NewAnthropicReport(cfg.AnthropicAPIKey, "")
+	vision := llm.NewAnthropicVision(cfg.AnthropicAPIKey, "")
+	agent.WithProviders(opChat, companionChat, analysis, report, vision)
+
 	orchestrator := NewOrchestrator(agent, transcription, db)
 
 	handler := NewHandler(waClient, db, orchestrator)
 	agent.sendMsg = handler.SendTextToPhone
 	waClient.AddEventHandler(handler.HandleEvent)
+
+	// Fase 5 (idosos): substitui o noopSnapshotWriter pelo adapter concreto
+	// que chama Haiku via AnalysisProvider. handler.flushBuffer chama
+	// MaybeUpdateSnapshot pos-conversa significativa; scheduler de catchup
+	// reusa a mesma impl via SetSnapshotWriterForCatchup. Construido depois
+	// do handler porque precisa do sendMsg pra disparar safety_alert downstream.
+	snapshotWriter := NewSnapshotWriter(db, agent.audit, analysis, handler.SendTextToPhone)
+	agent.WithSnapshotWriter(snapshotWriter)
+	SetSnapshotWriterForCatchup(snapshotWriter)
 
 	if waClient.Store.ID == nil {
 		qrChan, _ := waClient.GetQRChannel(context.Background())
@@ -190,7 +225,13 @@ func runBot() {
 	}
 	log.Println("WhatsApp connected")
 
-	scheduler := NewScheduler(db, cal, cfg, handler.SendTextToPhone)
+	// Fase 3 (idosos): notifier abstrai canal de envio para escalacao;
+	// engine de escalacao decide quando insistir/avisar familia.
+	notifier := NewWhatsAppNotifier(handler.SendTextToPhone)
+	escEng := NewEscalationEngine(db, notifier)
+
+	scheduler := NewScheduler(db, cal, cfg, handler.SendTextToPhone, notifier, escEng)
+	scheduler.WithAgent(agent)
 	scheduler.Start()
 	defer scheduler.Stop()
 
@@ -199,7 +240,18 @@ func runBot() {
 	watchdog := NewWatchdog(waClient, handler.SendTextToPhone, adminPhone)
 	watchdog.Start()
 
-	go startOAuthServer(cal, db, cfg)
+	// Fase 2 (web/UI): API REST do painel sobe no mesmo http.Server. Adapter
+	// implementa api.Store delegando pra db/audit/report/sendMsg. Origens
+	// e base URL controlam CORS e o link do magic.
+	apiAdapter := newAPIAdapter(db, agent.audit, report, handler.SendTextToPhone)
+	apiServer := api.NewServer(api.Config{
+		Store:          apiAdapter,
+		WebBaseURL:     resolveWebBaseURL(),
+		AllowedOrigins: resolveWebOrigins(),
+		CookieSecure:   resolveCookieSecure(),
+	})
+
+	go startHTTPServer(cal, db, cfg, apiServer)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -209,13 +261,18 @@ func runBot() {
 	waClient.Disconnect()
 }
 
-func startOAuthServer(cal *CalendarClient, db *DB, cfg *Config) {
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+// startHTTPServer agora hospeda o callback OAuth + a API REST (Fase 2).
+// Mantemos o nome `startOAuthServer` deprecated abaixo via wrapper pra evitar
+// quebrar callers internos — apenas main.go chamava.
+func startHTTPServer(cal *CalendarClient, db *DB, cfg *Config, apiServer *api.Server) {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "ok")
 	})
 
-	http.HandleFunc("/assistente/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/assistente/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		state := r.URL.Query().Get("state")
 
@@ -252,8 +309,53 @@ func startOAuthServer(cal *CalendarClient, db *DB, cfg *Config) {
 		log.Printf("OAuth completed for %s (%s)", user.Name, state)
 	})
 
-	log.Println("OAuth callback server listening on :8080")
-	http.ListenAndServe(":8080", nil)
+	if apiServer != nil {
+		apiServer.Mount(mux)
+	}
+
+	log.Println("HTTP server listening on :8080 (oauth + api/v1)")
+	http.ListenAndServe(":8080", mux)
+}
+
+// resolveWebBaseURL retorna a URL publica do painel web (frontend Next.js).
+// Em prod, set WEB_BASE_URL=https://app.lurch.com.br. Em dev local, default
+// http://localhost:3000 (mesmo do Next.js dev server).
+func resolveWebBaseURL() string {
+	if v := strings.TrimSpace(os.Getenv("WEB_BASE_URL")); v != "" {
+		return v
+	}
+	return "http://localhost:3000"
+}
+
+// resolveWebOrigins retorna a lista de origins CORS permitidos. Aceita
+// CSV em WEB_ORIGIN, default usa WEB_BASE_URL como unico origin.
+func resolveWebOrigins() []string {
+	raw := strings.TrimSpace(os.Getenv("WEB_ORIGIN"))
+	if raw == "" {
+		return []string{resolveWebBaseURL()}
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return []string{resolveWebBaseURL()}
+	}
+	return out
+}
+
+// resolveCookieSecure decide o atributo Secure do cookie de sessao. Em prod
+// (https) o frontend manda Origin https — checamos pelo prefixo do WebBaseURL.
+// COOKIE_SECURE override permite forcar via env (ex: dev com tunnel https).
+func resolveCookieSecure() bool {
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("COOKIE_SECURE"))); v != "" {
+		return v == "true" || v == "1" || v == "yes"
+	}
+	return strings.HasPrefix(strings.ToLower(resolveWebBaseURL()), "https://")
 }
 
 func addUser() {

@@ -4,6 +4,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -16,11 +17,20 @@ type Config struct {
 	EncryptionKey      string
 	TranscriptionURL   string
 
-	DefaultDailySummaryTime  string
-	DefaultWeeklySummaryDay  string
-	DefaultWeeklySummaryTime string
-	DefaultReminderBefore    time.Duration
+	DefaultDailySummaryTime   string
+	DefaultWeeklySummaryDay   string
+	DefaultWeeklySummaryTime  string
+	DefaultReminderBefore     time.Duration
 	DefaultAutoConfirmTimeout time.Duration
+
+	// Fase 4 (idosos): provider abstraction.
+	// LLMProviderCompanion: "anthropic" | "deepseek". Default "anthropic"
+	// (sem mudanca de comportamento). Quando "deepseek", DEEPSEEK_API_KEY
+	// vira obrigatorio — caso ausente, main.go faz fallback graceful pra
+	// Anthropic com warning.
+	LLMProviderCompanion string
+	DeepSeekAPIKey       string
+	DeepSeekBaseURL      string // default https://api.deepseek.com/v1
 }
 
 func LoadConfig() (*Config, error) {
@@ -54,6 +64,13 @@ func LoadConfig() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid DEFAULT_AUTO_CONFIRM_TIMEOUT: %w", err)
 	}
+
+	// Fase 4 (idosos): provider abstraction. Default "anthropic" pra
+	// preservar comportamento — nenhuma mudanca de config = usa Sonnet
+	// pra companion tambem (mesmo que operacional).
+	cfg.LLMProviderCompanion = strings.ToLower(strings.TrimSpace(envOrDefault("LLM_PROVIDER_COMPANION", "anthropic")))
+	cfg.DeepSeekAPIKey = os.Getenv("DEEPSEEK_API_KEY")
+	cfg.DeepSeekBaseURL = strings.TrimSpace(os.Getenv("DEEPSEEK_BASE_URL"))
 
 	// Validate required fields
 	required := map[string]string{

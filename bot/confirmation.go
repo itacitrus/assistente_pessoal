@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -88,6 +89,11 @@ func (cm *ConfirmationManager) executeConfirmation(user *User, pc *PendingConfir
 		return "", fmt.Errorf("unmarshal event data: %w", err)
 	}
 
+	// Fase 3: pendings de medicacao tem caminho proprio.
+	if pc.Kind == "medication" && data.Medication != nil {
+		return cm.executeMedicationConfirmation(user, pc, &data)
+	}
+
 	var ev CalendarEvent
 	if data.IsBirthday {
 		bdayStart, err := time.ParseInLocation(dateLayout, data.Date, BRT())
@@ -168,4 +174,95 @@ func (cm *ConfirmationManager) executeConfirmation(user *User, pc *PendingConfir
 	}
 
 	return FormatEventCreated(*created), nil
+}
+
+// executeMedicationConfirmation lida com confirmacao de pendings kind=medication.
+// Dois sub-casos:
+//   1. Reminder=true → user esta confirmando que tomou o remedio.
+//      Equivalente a marcar_remedio_tomado, mas via fluxo confirma/auto-confirm.
+//   2. Reminder=false (cadastro pendente) → cria a medication+schedule.
+//
+// Auto-confirm de medicamento via timeout esta DESABILITADO (so eventos auto-confirmam).
+// O motor de escalacao trata pendings de medicacao com sua propria politica.
+// Se o ConfirmationManager for chamado com pc.Kind=medication, eh o fluxo "tomei" explicito.
+func (cm *ConfirmationManager) executeMedicationConfirmation(user *User, pc *PendingConfirmation, data *IntentData) (string, error) {
+	mi := data.Medication
+	if mi == nil {
+		return "", fmt.Errorf("medication intent missing")
+	}
+
+	// Caso 2: cadastro pendente.
+	if !mi.Reminder {
+		return cm.executeMedicationRegistration(user, pc, data)
+	}
+
+	// Caso 1: lembrete confirmado ("tomei").
+	if mi.MedicationID > 0 {
+		if err := cm.db.UpdateIntakeStatus(mi.MedicationID, mi.ScheduledAt, IntakeTaken, "confirmado"); err != nil {
+			return "", fmt.Errorf("update intake: %w", err)
+		}
+	}
+	if err := cm.db.ResolvePendingConfirmation(pc.ID, "confirmed"); err != nil {
+		return "", err
+	}
+	NewAuditLog(cm.db).Log(user.ID, "medication_taken", "",
+		fmt.Sprintf("med_id=%d|pc=%d|via=confirmation", mi.MedicationID, pc.ID))
+	return fmt.Sprintf("Anotado, %s.", firstName(user.Name)), nil
+}
+
+// executeMedicationRegistration persiste o medication + schedule a partir
+// do payload em pending. Resolve target_user pra criar no dono certo.
+func (cm *ConfirmationManager) executeMedicationRegistration(user *User, pc *PendingConfirmation, data *IntentData) (string, error) {
+	mi := data.Medication
+	owner := user
+	if data.TargetUser != "" {
+		t, err := cm.db.GetUserByName(data.TargetUser)
+		if err == nil {
+			owner = t
+		}
+	}
+	med := &Medication{
+		UserID:          owner.ID,
+		Name:            mi.Name,
+		Dose:            mi.Dose,
+		Instructions:    mi.Instructions,
+		CreatedByUserID: user.ID,
+	}
+	if err := cm.db.CreateMedication(med); err != nil {
+		return "", fmt.Errorf("create medication: %w", err)
+	}
+
+	startDate, err := time.ParseInLocation(dateLayout, mi.StartDate, BRT())
+	if err != nil {
+		// Se startDate vier vazio/invalido, usa hoje em BRT — evitamos
+		// abortar a criacao por falha de parse de data num campo opcional.
+		startDate = time.Now().In(BRT())
+	}
+	var endPtr *time.Time
+	if strings.TrimSpace(mi.EndDate) != "" {
+		if t, e := time.ParseInLocation(dateLayout, mi.EndDate, BRT()); e == nil {
+			endPtr = &t
+		}
+	}
+	sched := &MedicationSchedule{
+		MedicationID: med.ID,
+		RRULE:        mi.ScheduleRRULE,
+		StartDate:    startDate,
+		EndDate:      endPtr,
+		Critical:     mi.Critical,
+	}
+	if err := cm.db.CreateMedicationSchedule(sched); err != nil {
+		return "", fmt.Errorf("create schedule: %w", err)
+	}
+	if err := cm.db.ResolvePendingConfirmation(pc.ID, "confirmed"); err != nil {
+		return "", err
+	}
+	NewAuditLog(cm.db).Log(user.ID, "medication_created", med.Name,
+		fmt.Sprintf("med_id=%d|owner_id=%d|rrule=%s|critical=%t", med.ID, owner.ID, mi.ScheduleRRULE, mi.Critical))
+
+	desc := DescribeRRULE(mi.ScheduleRRULE)
+	if owner.ID != user.ID {
+		return fmt.Sprintf("Cadastrei %s pra %s, %s.", med.Name, firstName(owner.Name), desc), nil
+	}
+	return fmt.Sprintf("Cadastrei %s, %s.", med.Name, desc), nil
 }

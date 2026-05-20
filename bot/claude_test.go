@@ -8,7 +8,8 @@ import (
 )
 
 func TestBuildSystemPromptStable(t *testing.T) {
-	prompt := buildSystemPromptStable("Waldyr")
+	// Default (no Type) routes to operational persona.
+	prompt := buildSystemPromptStable(&User{Name: "Waldyr"})
 	if prompt == "" {
 		t.Fatal("expected non-empty prompt")
 	}
@@ -104,8 +105,11 @@ func TestMarkLastMessageForCache(t *testing.T) {
 
 func TestBuildToolDefinitions(t *testing.T) {
 	tools := buildToolDefinitions()
-	if len(tools) != 15 {
-		t.Fatalf("expected 15 tools, got %d", len(tools))
+	// 15 originais + 7 da Fase 3 (medicacao + receita) + 4 da Fase 4
+	// (alertar_familia, pausar_proatividade, comentar_imagem, comentar_link)
+	// + 1 da Fase 5 (status_dependente) = 27.
+	if len(tools) != 27 {
+		t.Fatalf("expected 27 tools, got %d", len(tools))
 	}
 
 	names := map[string]bool{}
@@ -113,7 +117,21 @@ func TestBuildToolDefinitions(t *testing.T) {
 		names[tool.Name] = true
 	}
 
-	expected := []string{"buscar_agenda", "criar_evento", "editar_evento", "cancelar_evento", "buscar_historico", "criar_evento_outro_usuario", "convidar_participante", "salvar_memoria", "buscar_memoria", "gerar_link_meet", "convidar_externo", "registrar_viagem", "listar_viagens", "cancelar_viagem", "responder_permissao"}
+	expected := []string{
+		// Originais
+		"buscar_agenda", "criar_evento", "editar_evento", "cancelar_evento",
+		"buscar_historico", "criar_evento_outro_usuario", "convidar_participante",
+		"salvar_memoria", "buscar_memoria", "gerar_link_meet", "convidar_externo",
+		"registrar_viagem", "listar_viagens", "cancelar_viagem", "responder_permissao",
+		// Fase 3 (idosos): medicacao
+		"cadastrar_medicamento", "listar_medicamentos", "editar_medicamento",
+		"cancelar_medicamento", "marcar_remedio_tomado", "pular_dose",
+		"extrair_receita_imagem",
+		// Fase 4 (idosos): companion + media
+		"alertar_familia", "pausar_proatividade", "comentar_imagem", "comentar_link",
+		// Fase 5 (idosos): relatorio longitudinal pra responsavel
+		"status_dependente",
+	}
 	for _, name := range expected {
 		if !names[name] {
 			t.Errorf("missing tool: %s", name)

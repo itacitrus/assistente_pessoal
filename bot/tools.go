@@ -39,22 +39,43 @@ func isBackgroundEvent(e CalendarEvent) bool {
 	return false
 }
 
-var toolHandlers = map[string]ToolHandler{
-	"buscar_agenda":              handleBuscarAgenda,
-	"criar_evento":               handleCriarEvento,
-	"editar_evento":              handleEditarEvento,
-	"cancelar_evento":            handleCancelarEvento,
-	"buscar_historico":           handleBuscarHistorico,
-	"criar_evento_outro_usuario": handleCriarEventoOutroUsuario,
-	"gerar_link_meet":            handleGerarLinkMeet,
-	"convidar_externo":           handleConvidarExterno,
-	"convidar_participante":      handleConvidarParticipante,
-	"salvar_memoria":             handleSalvarMemoria,
-	"buscar_memoria":             handleBuscarMemoria,
-	"registrar_viagem":           handleRegistrarViagem,
-	"listar_viagens":             handleListarViagens,
-	"cancelar_viagem":            handleCancelarViagem,
-	"responder_permissao":        handleResponderPermissao,
+var toolHandlers = buildToolHandlers()
+
+// buildToolHandlers retorna o registry completo de handlers. Construido em
+// funcao pra permitir merge com mapas extras (Fase 3 — medicacao) sem
+// duplicar declaracoes.
+func buildToolHandlers() map[string]ToolHandler {
+	m := map[string]ToolHandler{
+		"buscar_agenda":              handleBuscarAgenda,
+		"criar_evento":               handleCriarEvento,
+		"editar_evento":              handleEditarEvento,
+		"cancelar_evento":            handleCancelarEvento,
+		"buscar_historico":           handleBuscarHistorico,
+		"criar_evento_outro_usuario": handleCriarEventoOutroUsuario,
+		"gerar_link_meet":            handleGerarLinkMeet,
+		"convidar_externo":           handleConvidarExterno,
+		"convidar_participante":      handleConvidarParticipante,
+		"salvar_memoria":             handleSalvarMemoria,
+		"buscar_memoria":             handleBuscarMemoria,
+		"registrar_viagem":           handleRegistrarViagem,
+		"listar_viagens":             handleListarViagens,
+		"cancelar_viagem":            handleCancelarViagem,
+		"responder_permissao":        handleResponderPermissao,
+	}
+	// Fase 3 (idosos): medicacao. Mantido em mapa proprio em
+	// tools_medication.go pra preservar coesao por feature.
+	for name, h := range medicationToolHandlers {
+		m[name] = h
+	}
+	// Fase 4 (idosos): companion. Mesma estrategia — coesao por feature.
+	for name, h := range companionToolHandlers {
+		m[name] = h
+	}
+	// Fase 5 (idosos): tools de responsavel — status_dependente.
+	for name, h := range familyToolHandlers {
+		m[name] = h
+	}
+	return m
 }
 
 type buscarAgendaParams struct {

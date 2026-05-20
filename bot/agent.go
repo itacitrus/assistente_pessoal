@@ -10,11 +10,45 @@ import (
 	"strings"
 	"time"
 
+	"github.com/giovannirambo/assistente_pessoal/bot/llm"
 	"github.com/liushuangls/go-anthropic/v2"
 )
 
+// Agent eh o orquestrador de chat com Claude. A Fase 4 introduz a camada
+// de provider abstraction (bot/llm/): o agent passa a CONHECER varios
+// providers (chat operacional, companion, analysis, report, vision) e
+// roteia conforme user.Type via pickChat.
+//
+// O campo `client` (SDK Anthropic direto) eh mantido pra preservar
+// comportamento atual do Run() operacional — a tradução completa pra
+// llm.ChatProvider ficou como follow-up. Contracts publicos do Agent nao
+// mudaram; `client` segue como o caminho default quando companionChat
+// nao esta configurado.
+//
+// Roteamento de companion (idoso) usa companionChat se setado. Snapshot
+// writer (Fase 4 §10) usa snapshotWriter (interface) — Fase 5 vai injetar
+// implementacao concreta.
 type Agent struct {
-	client  *anthropic.Client
+	// SDK direto Anthropic — usado por Run() (caminho operacional). Mantido
+	// pra preservar comportamento dos 150 testes existentes.
+	client *anthropic.Client
+
+	// Provider abstraction (Fase 4). Operacional = Anthropic Sonnet;
+	// companion = DeepSeek (default) ou Anthropic se nao configurado.
+	chat          llm.ChatProvider // operacional (default Anthropic Sonnet)
+	companionChat llm.ChatProvider // idoso (default DeepSeek; fallback chat)
+	analysis      llm.AnalysisProvider // snapshot writer (Haiku)
+	report        llm.ReportProvider   // sintese pro responsavel (Sonnet)
+	vision        llm.VisionProvider   // descricao de imagem (Haiku)
+
+	// Snapshot writer hook — interface no proprio pacote (snapshotwriter.go).
+	// Fase 5 vai injetar implementacao concreta; Fase 4 deixa o gancho.
+	snapshotWriter SnapshotWriter
+
+	// MediaLoader pra comentar_imagem. Default nil = handler responde
+	// "cache nao configurado". PR-MEDIA-1 (Fase 4) injeta MediaCache real.
+	media MediaLoader
+
 	cal     *CalendarClient
 	db      *DB
 	cfg     *Config
@@ -25,16 +59,67 @@ type Agent struct {
 
 type ToolHandler func(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error)
 
+// NewAgent constroi o agent com SDK direto pra Anthropic (caminho
+// operacional). Compat retro: assinatura mantida da Fase 3.
+//
+// Pra construir com providers Fase 4, use NewAgent + a.WithProviders(...)
+// (preferido) ou NewAgentWithProviders (helper).
 func NewAgent(apiKey string, cal *CalendarClient, db *DB, cfg *Config, sendMsg func(phone, text string) error) *Agent {
 	return &Agent{
-		client:  anthropic.NewClient(apiKey),
-		cal:     cal,
-		db:      db,
-		cfg:     cfg,
-		perms:   NewPermissionManager(db),
-		audit:   NewAuditLog(db),
-		sendMsg: sendMsg,
+		client:         anthropic.NewClient(apiKey),
+		cal:            cal,
+		db:             db,
+		cfg:            cfg,
+		perms:          NewPermissionManager(db),
+		audit:          NewAuditLog(db),
+		sendMsg:        sendMsg,
+		snapshotWriter: noopSnapshotWriter{},
 	}
+}
+
+// WithProviders configura os providers do bot/llm/ para a Fase 4. Fluent
+// pra encadear configuracao em main.go. Aceita nil — se chat=nil, mantem
+// o caminho atual via SDK Anthropic direto. Se companionChat=nil, idoso
+// cai no chat (que pode ser Anthropic).
+func (a *Agent) WithProviders(chat, companion llm.ChatProvider, analysis llm.AnalysisProvider, report llm.ReportProvider, vision llm.VisionProvider) *Agent {
+	a.chat = chat
+	a.companionChat = companion
+	a.analysis = analysis
+	a.report = report
+	a.vision = vision
+	return a
+}
+
+// WithSnapshotWriter injeta uma implementacao de SnapshotWriter. Fase 5
+// chama isso com a impl concreta de snapshotter. Default = noop.
+func (a *Agent) WithSnapshotWriter(s SnapshotWriter) *Agent {
+	if s == nil {
+		s = noopSnapshotWriter{}
+	}
+	a.snapshotWriter = s
+	return a
+}
+
+// WithMediaLoader injeta um MediaLoader pra comentar_imagem (Fase 4).
+// PR-MEDIA-1 vai injetar a impl concreta (MediaCache em disco). Default
+// nil = handler retorna "cache nao configurado".
+func (a *Agent) WithMediaLoader(m MediaLoader) *Agent {
+	a.media = m
+	return a
+}
+
+// pickChat retorna o ChatProvider apropriado pra user.Type. Roteamento:
+//   - user.Type == idoso E companionChat != nil → companion (DeepSeek default).
+//   - resto OU companion nil → chat operacional (Anthropic Sonnet).
+//   - chat nil → fallback nil (caller deve usar caminho legacy via client).
+//
+// Quando ambos chat/companion sao nil (testes que nao injetam), retorna
+// nil. Caller (Run) entao vai pelo caminho com SDK direto.
+func (a *Agent) pickChat(user *User) llm.ChatProvider {
+	if user != nil && user.Type == UserTypeIdoso && a.companionChat != nil {
+		return a.companionChat
+	}
+	return a.chat
 }
 
 // RunForUnknown handles messages from non-registered users.
@@ -107,7 +192,7 @@ func (a *Agent) Run(ctx context.Context, user *User, message string, images []Im
 	systemParts := []anthropic.MessageSystemPart{
 		{
 			Type: "text",
-			Text: buildSystemPromptStable(user.Name),
+			Text: buildSystemPromptStable(user),
 			CacheControl: &anthropic.MessageCacheControl{
 				Type: anthropic.CacheControlTypeEphemeral,
 			},
@@ -328,16 +413,31 @@ func buildMessages(history []ConversationMessage, userMsg string) []anthropic.Me
 	return msgs
 }
 
-// buildSystemPromptStable returns the large, stable portion of the system
-// prompt. Contains identity, rules, and tool descriptions — everything that
-// does not change across calls. Marked with cache_control so Anthropic caches
-// the prefix (system + tools + this block) for 5 min and subsequent calls in
-// the same conversation only pay full tokens for new messages.
+// buildSystemPromptStable retorna o system prompt apropriado para o
+// user.Type. Roteador da Fase 4: idoso recebe persona companion;
+// outros tipos (comum, responsavel, vazio legacy) recebem o operacional.
+// O texto retornado e estavel por persona — Anthropic faz longest-prefix
+// matching, entao cada persona tem seu cache distinto sem cache thrashing.
 //
-// userName is included here because it's stable per-user: caching per user
-// still works well, and including it here lets the agent address the user by
-// name in every response without needing a dynamic suffix for just that.
-func buildSystemPromptStable(userName string) string {
+// CRITICO: user.Type eh estavel por conversa (so muda via admin). Cache
+// hit rate em conversa multi-turno fica acima de 70% facilmente.
+func buildSystemPromptStable(user *User) string {
+	if user != nil && user.Type == UserTypeIdoso {
+		return buildCompanionPrompt(user.Name)
+	}
+	name := ""
+	if user != nil {
+		name = user.Name
+	}
+	return buildSystemPromptStableOperational(name)
+}
+
+// buildSystemPromptStableOperational eh o prompt original (Charles Lurch).
+// Usado pra user.Type == comum, responsavel, ou vazio (legacy pre-Fase 1).
+//
+// Renomeado da funcao buildSystemPromptStable original como parte do
+// switch da Fase 4 (§4.2 do plano).
+func buildSystemPromptStableOperational(userName string) string {
 	return fmt.Sprintf(`Voce e Charles Lurch, assistente pessoal de %s via WhatsApp. Seu nome e uma homenagem ao Lurch (Tropeço), o mordomo da Familia Adams. Ocasionalmente, com moderacao e bom timing, insira referencias sutis a isso — um "You rang?" quando chamado, um humor seco, uma formalidade exagerada por um instante. Nao force.
 
 REGRA DE OURO: NUNCA pergunte algo que voce pode descobrir sozinho. Sempre tente resolver ANTES de perguntar.
@@ -580,25 +680,25 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 		},
 		{
 			Name:        "salvar_memoria",
-			Description: "Salva uma informacao sobre o usuario para lembrar no futuro. Use para contatos, preferencias, enderecos, relacoes pessoais, etc. Salve PROATIVAMENTE quando o usuario mencionar informacoes pessoais relevantes.",
+			Description: "Salva uma informacao sobre o usuario para lembrar no futuro. Use para contatos, preferencias, enderecos, relacoes pessoais, etc. Salve PROATIVAMENTE quando o usuario mencionar informacoes pessoais relevantes. Para idosos no modo companion, use category=social_context para pessoas/eventos/rotinas/interesses/relatos do dia-a-dia (chave com prefixo: pessoa:nome, evento:descr, rotina:descr, interesse:tema, relato:descr). Use prefixo de chave 'risco:' SOMENTE quando ha componente real de saude/seguranca (queda, dor toracica, isolamento prolongado) — essas memorias atravessam a fronteira de privacidade e chegam ao relatorio do responsavel.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"category": {"type": "string", "description": "Categoria: contato, endereco, preferencia, relacao, trabalho, outro"},
-					"key": {"type": "string", "description": "Identificador curto (ex: pai, escritorio, preferencia_horario)"},
-					"value": {"type": "string", "description": "Informacao completa (ex: Fabio de Freitas - 61982279928)"}
+					"category": {"type": "string", "description": "Categoria: contato, endereco, preferencia, relacao, trabalho, social_context, outro. Use social_context para fofoca social do idoso (pessoas, eventos, rotinas, interesses)."},
+					"key": {"type": "string", "description": "Identificador curto. Em social_context, use prefixo de tipo: pessoa:nome_snake, evento:descr_snake, rotina:nome, interesse:tema, relato:descr. Use prefixo 'risco:' (ex: risco:queda_recente) SOMENTE para sinais reais de saude/seguranca — risco: atravessa fronteira de privacidade e chega ao relatorio do responsavel."},
+					"value": {"type": "string", "description": "Informacao completa (ex: Fabio de Freitas - 61982279928, ou 'vizinha do 302, tem gato Bigode')"}
 				},
 				"required": ["category", "key", "value"]
 			}`),
 		},
 		{
 			Name:        "buscar_memoria",
-			Description: "Busca informacoes salvas sobre o usuario (contatos, preferencias, enderecos, etc). Use ANTES de pedir informacoes que o usuario ja pode ter fornecido antes.",
+			Description: "Busca informacoes salvas sobre o usuario (contatos, preferencias, enderecos, etc). Use ANTES de pedir informacoes que o usuario ja pode ter fornecido antes. Para idosos no modo companion, busque com category=social_context no inicio de cada conversa pra puxar 2-3 contextos recentes — evita perguntar de novo o que ele ja contou.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"query": {"type": "string", "description": "Termo de busca (ex: pai, escritorio, endereco)"},
-					"category": {"type": "string", "description": "Filtrar por categoria (opcional): contato, endereco, preferencia, relacao, trabalho"}
+					"query": {"type": "string", "description": "Termo de busca (ex: pai, escritorio, endereco, pessoa, evento)"},
+					"category": {"type": "string", "description": "Filtrar por categoria (opcional): contato, endereco, preferencia, relacao, trabalho, social_context"}
 				}
 			}`),
 		},
@@ -656,6 +756,224 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					}
 				},
 				"required": ["decision"]
+			}`),
+		},
+		// Fase 3 (idosos): medicacao + escalacao.
+		{
+			Name:        "cadastrar_medicamento",
+			Description: "Cadastra um medicamento com horarios. Cria pending_confirmation; o usuario confirma na proxima mensagem antes da persistencia. Use schedule_rrule no formato iCal sem prefixo 'RRULE:' (ex: 'FREQ=DAILY;BYHOUR=8,14,20;BYMINUTE=0' para 'todo dia 8h, 14h e 20h'; 'FREQ=WEEKLY;BYDAY=MO,WE;BYHOUR=9;BYMINUTE=0' para 'seg e qua as 9h'). Sempre inclua BYHOUR. Frequencia deve ser DAILY, WEEKLY ou MONTHLY.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"target_user": {"type": "string", "description": "Nome do usuario alvo (omitir = self). Se diferente, exige vinculo em family_links."},
+					"name": {"type": "string", "description": "Nome do medicamento (ex: Losartana, AAS, Metformina)"},
+					"dose": {"type": "string", "description": "Dose (ex: '50mg', '1 comprimido', '10 gotas')"},
+					"instructions": {"type": "string", "description": "Instrucoes (ex: 'em jejum', 'com agua', 'apos almoco')"},
+					"schedule_rrule": {"type": "string", "description": "RRULE iCal. Ex: 'FREQ=DAILY;BYHOUR=8;BYMINUTE=0' (1x/dia 8h)."},
+					"start_date": {"type": "string", "description": "Data de inicio YYYY-MM-DD. Default: hoje."},
+					"end_date": {"type": "string", "description": "Data de fim YYYY-MM-DD (inclusiva). Omitir = continuo."},
+					"critical": {"type": "boolean", "description": "Se true, usa politica medication_critical (5 tentativas, 3min). Default false."}
+				},
+				"required": ["name", "schedule_rrule"]
+			}`),
+		},
+		{
+			Name:        "listar_medicamentos",
+			Description: "Lista medicamentos ativos do usuario (ou de outro via target_user, com vinculo familiar).",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"target_user": {"type": "string", "description": "Nome do usuario (omitir = self)."}
+				}
+			}`),
+		},
+		{
+			Name:        "editar_medicamento",
+			Description: "Edita campos de um medicamento existente. Para mudar horario, passe new_schedule_rrule (substitui todos os schedules atuais). Pode passar id direto ou nome aproximado em name_query.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"medication_id": {"type": "integer", "description": "ID do medicamento (preferivel)."},
+					"name_query": {"type": "string", "description": "Nome aproximado (fallback)."},
+					"new_name": {"type": "string"},
+					"new_dose": {"type": "string"},
+					"new_instructions": {"type": "string"},
+					"new_schedule_rrule": {"type": "string", "description": "RRULE substituindo todos os schedules."},
+					"new_end_date": {"type": "string", "description": "Nova data de fim YYYY-MM-DD."},
+					"new_critical": {"type": "boolean"}
+				}
+			}`),
+		},
+		{
+			Name:        "cancelar_medicamento",
+			Description: "Cancela um medicamento (soft-delete: active=0). Lembretes futuros param. Historico de tomadas eh preservado. Sempre peca razao ao usuario antes de chamar.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"medication_id": {"type": "integer"},
+					"name_query": {"type": "string"},
+					"reason": {"type": "string", "description": "Motivo (ex: 'medico tirou', 'nao preciso mais')."}
+				}
+			}`),
+		},
+		{
+			Name:        "marcar_remedio_tomado",
+			Description: "Registra que o usuario tomou um remedio. Use SEMPRE que o usuario disser 'tomei', 'ja bebi', 'pronto, foi', em resposta a um lembrete. NUNCA chame quando o usuario disser 'vou tomar', 'daqui a pouco', 'ja ja' (eh futuro, nao confirma — apenas faca um ack textual). Se medication_id for omitido, pega o lembrete pendente atual (kind='medication').",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"medication_id": {"type": "integer", "description": "Opcional. Omitir = pegar pending atual."}
+				}
+			}`),
+		},
+		{
+			Name:        "pular_dose",
+			Description: "Registra que o usuario decidiu pular a dose atual. Salva razao e marca intake_log status='skipped'. NAO cancela o medicamento (proximas doses continuam). SEMPRE pergunte a razao em texto natural ao usuario antes de chamar.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"medication_id": {"type": "integer"},
+					"reason": {"type": "string", "description": "Razao do skip (ex: 'estou enjoado', 'esqueci de comprar')."}
+				},
+				"required": ["reason"]
+			}`),
+		},
+		{
+			Name:        "extrair_receita_imagem",
+			Description: "Use SOMENTE quando o usuario enviou uma imagem que parece ser receita medica (lista de remedios manuscrita ou impressa). Extrai cada item da receita olhando a imagem. APOS extrair, voce DEVE apresentar item-a-item ao usuario em linguagem natural (sem menu numerado), perguntar o horario de cada um, e chamar cadastrar_medicamento para cada item confirmado. Se a dose nao estiver clara na imagem, pergunte ao usuario; NAO invente.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"items": {
+						"type": "array",
+						"description": "Lista de medicamentos identificados na imagem.",
+						"items": {
+							"type": "object",
+							"properties": {
+								"name": {"type": "string", "description": "Nome do remedio"},
+								"dose": {"type": "string", "description": "Dose escrita na receita"},
+								"frequency_text": {"type": "string", "description": "Frequencia em texto livre, exatamente como escrito (ex: '1x ao dia', '8/8h', 'em jejum')"},
+								"duration_text": {"type": "string", "description": "Duracao do tratamento se mencionada (ex: '7 dias', 'continuo', 'ate acabar')"}
+							},
+							"required": ["name"]
+						}
+					}
+				},
+				"required": ["items"]
+			}`),
+		},
+		// Fase 4 (idosos): tools do companion. So fazem sentido quando
+		// user.Type=idoso — handlers tem guard explicito.
+		{
+			Name: "alertar_familia",
+			Description: "Envia um alerta para os familiares do idoso quando voce detecta " +
+				"um sinal serio (ideacao suicida, sintoma agudo, queda, recusa de comer/beber, " +
+				"violencia/negligencia, ou padrao persistente preocupante). Esta e a UNICA " +
+				"tool para acionar a familia em sinal de risco. Use com calibracao: critical " +
+				"para risco agudo, warn para padrao preocupante mas nao agudo, info para " +
+				"observacao a registrar. Quando em duvida entre warn e critical, escolha " +
+				"critical. Esta tool so faz sentido quando user.Type=idoso. " +
+				"O retorno desta tool inclui um JSON com `disclose_to_elder` e `suggested_tone` — " +
+				"voce DEVE seguir essas orientacoes na resposta ao idoso. Em particular, em " +
+				"category=psicologico/violencia/negligencia, NAO mencione ao idoso que voce " +
+				"alertou a familia (preserva a confianca dele).",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"severity": {
+						"type": "string",
+						"enum": ["info", "warn", "critical"],
+						"description": "info=observar, warn=preocupante mas nao agudo, critical=acionar agora."
+					},
+					"category": {
+						"type": "string",
+						"enum": ["medico_fisico", "psicologico", "violencia", "negligencia", "outros"],
+						"description": "Categoria do sinal. Define se voce mencionara ao idoso que avisou a familia. medico_fisico (sintoma agudo, queda, dor) -> pode mencionar; psicologico (ideacao, ruminacao) -> NAO mencione; violencia/negligencia -> NAO mencione (pode escalar risco fisico); outros -> handler te diz no retorno."
+					},
+					"reason": {
+						"type": "string",
+						"description": "Descricao breve e factual em PT-BR do que voce observou. 1-2 frases. Sem interpretacao clinica."
+					},
+					"recommended_action": {
+						"type": "string",
+						"description": "Sugestao opcional do que a familia pode fazer agora (ex: 'ligar pra ele agora', 'passar la hoje')."
+					}
+				},
+				"required": ["severity", "category", "reason"]
+			}`),
+		},
+		{
+			Name: "pausar_proatividade",
+			Description: "Pausa as mensagens proativas do Lurch por N dias. Use quando o " +
+				"idoso pedir tregua ('nao me chame por uma semana', 'me deixa quieto uns dias'). " +
+				"Confirme em linguagem natural antes de chamar.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"dias": {"type": "integer", "minimum": 1, "maximum": 30, "description": "Quantos dias pausar (1 a 30)."}
+				},
+				"required": ["dias"]
+			}`),
+		},
+		{
+			Name: "comentar_imagem",
+			Description: "Quando o idoso enviou uma imagem (foto, sticker, GIF) e voce " +
+				"quer comentar sobre ela, use esta tool. Recebe um image_id (referencia " +
+				"ao blob recebido). Retorna uma descricao curta em PT-BR (2-3 frases) e " +
+				"uma classificacao de tom sugerido (familia, meme, paisagem, comida, " +
+				"religioso, humoristico, outros). Voce DEVE incorporar a descricao numa " +
+				"resposta natural ao idoso — nao cite a tool, nao seja robotico, comente " +
+				"como amigo: 'que linda essa foto!', 'eita, esse meme e bom mesmo'.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"image_id": {
+						"type": "string",
+						"description": "ID da imagem recebida pelo handler de WhatsApp (sha1 do blob no media_cache)."
+					},
+					"context_hint": {
+						"type": "string",
+						"description": "Opcional. Pista de contexto — ex: 'veio em grupo da familia', 'enviou logo apos falar do neto'."
+					}
+				},
+				"required": ["image_id"]
+			}`),
+		},
+		{
+			Name: "comentar_link",
+			Description: "Quando o idoso enviou uma URL (link de noticia, video, post de " +
+				"rede social), use esta tool pra extrair contexto leve. Retorna titulo, " +
+				"descricao breve, host e (se houver) URL da imagem de previa. NAO faz " +
+				"fact-check, NAO resume reportagem inteira — voce e amigo, nao jornalista. " +
+				"Comente leve. Se o dominio nao estiver na lista permitida, a tool retorna " +
+				"string explicativa — nesse caso, peca pro idoso te contar do que se trata.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"url": {"type": "string", "description": "URL completa, com http:// ou https://."}
+				},
+				"required": ["url"]
+			}`),
+		},
+		// Fase 5 (idosos): tool do responsavel. Authz: db.IsGuardianOf.
+		// Sem vinculo familiar = mensagem natural negando.
+		{
+			Name: "status_dependente",
+			Description: "Retorna estado longitudinal de um dependente (idoso) sob responsabilidade do usuario. " +
+				"Disponivel APENAS quando family_links autoriza (db.IsGuardianOf). Inclui aderencia de " +
+				"medicacao 7d, ultima conversa, alertas em aberto, tendencia das ultimas 2 semanas, e " +
+				"sintese acolhedora gerada por sub-agente longitudinal. NUNCA retorna citacoes literais " +
+				"do que o idoso disse — apenas observacoes agregadas. Use quando o usuario perguntar " +
+				"'como esta minha mae/pai/avo'. Pelo menos um identificador (id, telefone ou nome) tem " +
+				"que ser passado.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"dependent_id":    {"type": "integer", "description": "ID do dependente (preferencial)."},
+					"dependent_phone": {"type": "string",  "description": "Telefone do dependente (fallback) — apenas digitos com DDD."},
+					"dependent_name":  {"type": "string",  "description": "Nome do dependente (fallback fuzzy entre dependentes do guardian)."},
+					"days":            {"type": "integer", "description": "Janela de analise em dias (default 14, max 90)."}
+				}
 			}`),
 		},
 	}
