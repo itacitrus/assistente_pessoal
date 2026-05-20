@@ -696,3 +696,40 @@ func TestFakeStoreTimeNowProgresses(t *testing.T) {
 		t.Fatal("time nao avanca — teste flako")
 	}
 }
+
+// TestPathPrefix_RoutesMountUnderPrefix garante que com PathPrefix setado
+// (cenario de prod atras do ALB /assistente/*), as rotas respondem sob o
+// prefixo E nao respondem mais sob /api/v1 puro. Cobre o re-prefix da Fase 2
+// pra coexistir com o ALB compartilhado.
+func TestPathPrefix_RoutesMountUnderPrefix(t *testing.T) {
+	store := newFakeStore()
+	srv := NewServer(Config{
+		Store:          store,
+		WebBaseURL:     testOrigin,
+		PathPrefix:     "/assistente",
+		AllowedOrigins: []string{testOrigin},
+		CookieSecure:   false,
+	})
+	mux := http.NewServeMux()
+	srv.Mount(mux)
+
+	// Rota prefixada existe (espera 401 sem cookie, nao 404).
+	rec := doRequest(t, mux, http.MethodGet, "/assistente/api/v1/me", nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("prefixed /me: want 401, got %d", rec.Code)
+	}
+
+	// Rota sem prefixo nao existe mais (404 do ServeMux).
+	rec = doRequest(t, mux, http.MethodGet, "/api/v1/me", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unprefixed /me: want 404, got %d", rec.Code)
+	}
+
+	// Path param funciona sob prefixo: dependente id invalido → 400 (nao 404).
+	rec = doRequest(t, mux, http.MethodGet, "/assistente/api/v1/family/dependents/abc/status", nil,
+		func(r *http.Request) { r.Header.Set("Cookie", "") })
+	// Sem auth → 401 antes de chegar no parse do id (RequireAuth roda).
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("prefixed dependent status: want 401 (auth first), got %d", rec.Code)
+	}
+}

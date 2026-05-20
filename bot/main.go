@@ -247,6 +247,7 @@ func runBot() {
 	apiServer := api.NewServer(api.Config{
 		Store:          apiAdapter,
 		WebBaseURL:     resolveWebBaseURL(),
+		PathPrefix:     resolveAPIPathPrefix(),
 		AllowedOrigins: resolveWebOrigins(),
 		CookieSecure:   resolveCookieSecure(),
 	})
@@ -325,6 +326,14 @@ func resolveWebBaseURL() string {
 		return v
 	}
 	return "http://localhost:3000"
+}
+
+// resolveAPIPathPrefix retorna o prefixo de path sob o qual a API REST eh
+// montada. Em prod, atras do ALB compartilhado que so roteia /assistente/*
+// pra esta instancia, set API_PATH_PREFIX=/assistente — as rotas viram
+// /assistente/api/v1/*. Em dev local, vazio (rotas /api/v1/*).
+func resolveAPIPathPrefix() string {
+	return strings.TrimRight(strings.TrimSpace(os.Getenv("API_PATH_PREFIX")), "/")
 }
 
 // resolveWebOrigins retorna a lista de origins CORS permitidos. Aceita
