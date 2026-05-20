@@ -1,0 +1,16 @@
+# Binarios compilados localmente (nao precisam ir pro build context).
+bot
+assistente_pessoal
+
+# Bancos SQLite e artefatos de runtime.
+*.db
+*.db-wal
+*.db-shm
+data/
+
+# Cache de midia (opt-in, runtime).
+media_cache/
+
+# Misc
+.DS_Store
+*.log
