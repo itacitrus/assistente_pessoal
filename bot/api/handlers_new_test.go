@@ -101,6 +101,89 @@ func TestResendWelcome_RejectsNonGuardian(t *testing.T) {
 	}
 }
 
+func TestUpdateDependent_ChangePhone(t *testing.T) {
+	_, store, mux := newTestServer(t)
+	_, cookie := loggedInUser(store, "Guardian", "5511900000001")
+
+	rec := doRequest(t, mux, http.MethodPost, "/api/v1/family/dependents",
+		map[string]string{"name": "Joaquim", "phone": "5511900000002", "relationship": "Pai"}, withCookie(cookie))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		User struct {
+			ID int64 `json:"id"`
+		} `json:"user"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+
+	path := "/api/v1/family/dependents/" + strconv.FormatInt(created.User.ID, 10)
+	// Telefone com mascara — o backend deve normalizar pra digitos.
+	rec = doRequest(t, mux, http.MethodPatch, path,
+		map[string]string{"phone": "(11) 90000-0003"}, withCookie(cookie))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var updated struct {
+		PhoneNumber string `json:"phone_number"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("unmarshal patch resp: %v", err)
+	}
+	if updated.PhoneNumber != "5511900000003" {
+		t.Fatalf("phone = %q, want 5511900000003 (normalizado)", updated.PhoneNumber)
+	}
+}
+
+func TestUpdateDependent_PhoneConflict(t *testing.T) {
+	_, store, mux := newTestServer(t)
+	_, cookie := loggedInUser(store, "Guardian", "5511900000001")
+
+	mk := func(name, phone string) int64 {
+		rec := doRequest(t, mux, http.MethodPost, "/api/v1/family/dependents",
+			map[string]string{"name": name, "phone": phone, "relationship": "Pai"}, withCookie(cookie))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create %s status = %d; body=%s", name, rec.Code, rec.Body.String())
+		}
+		var c struct {
+			User struct {
+				ID int64 `json:"id"`
+			} `json:"user"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &c)
+		return c.User.ID
+	}
+	id1 := mk("Joaquim", "5511900000002")
+	mk("Maria", "5511900000003")
+
+	// Tenta colocar no dep1 o telefone do dep2 -> 409.
+	path := "/api/v1/family/dependents/" + strconv.FormatInt(id1, 10)
+	rec := doRequest(t, mux, http.MethodPatch, path,
+		map[string]string{"phone": "5511900000003"}, withCookie(cookie))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpdateDependent_InvalidPhone(t *testing.T) {
+	_, store, mux := newTestServer(t)
+	_, cookie := loggedInUser(store, "Guardian", "5511900000001")
+	rec := doRequest(t, mux, http.MethodPost, "/api/v1/family/dependents",
+		map[string]string{"name": "Joaquim", "phone": "5511900000002", "relationship": "Pai"}, withCookie(cookie))
+	var created struct {
+		User struct {
+			ID int64 `json:"id"`
+		} `json:"user"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	path := "/api/v1/family/dependents/" + strconv.FormatInt(created.User.ID, 10)
+	rec = doRequest(t, mux, http.MethodPatch, path,
+		map[string]string{"phone": "123"}, withCookie(cookie))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestBuildDependentWelcomeMessage_Fallbacks(t *testing.T) {
 	// Nomes vazios nao quebram a mensagem.
 	msg := buildDependentWelcomeMessage("", "")

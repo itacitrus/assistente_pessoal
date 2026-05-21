@@ -258,6 +258,56 @@ func TestAdapter_UpdateDependent_RequiresGuardian(t *testing.T) {
 	}
 }
 
+func TestAdapter_UpdateDependent_ChangePhone(t *testing.T) {
+	a, db, _ := mkAdapter(t)
+	users := mkUsers(t, db, "Joao")
+	dep, _, _ := a.CreateDependent(context.Background(), users[0].ID, api.CreateDependentRequest{
+		Name: "Vovo", Phone: "5511777777777", Relationship: "mae",
+	})
+	newPhone := "5511888888888"
+	updated, err := a.UpdateDependent(context.Background(), users[0].ID, dep.ID, api.DependentPatch{
+		Phone: &newPhone,
+	})
+	if err != nil {
+		t.Fatalf("UpdateDependent phone: %v", err)
+	}
+	if updated.PhoneNumber != newPhone {
+		t.Fatalf("phone = %q, want %q", updated.PhoneNumber, newPhone)
+	}
+	// O lookup por telefone novo resolve pro dependente; o antigo some.
+	if u, gerr := db.GetUserByPhone(newPhone); gerr != nil || u.ID != dep.ID {
+		t.Fatalf("GetUserByPhone(novo) = %v, %v", u, gerr)
+	}
+	if _, gerr := db.GetUserByPhone("5511777777777"); !errors.Is(gerr, ErrUserNotFound) {
+		t.Fatalf("telefone antigo ainda resolve: %v", gerr)
+	}
+}
+
+func TestAdapter_UpdateDependent_PhoneConflict(t *testing.T) {
+	a, db, _ := mkAdapter(t)
+	users := mkUsers(t, db, "Joao")
+	dep1, _, _ := a.CreateDependent(context.Background(), users[0].ID, api.CreateDependentRequest{
+		Name: "Vovo", Phone: "5511777777777", Relationship: "mae",
+	})
+	_, _, _ = a.CreateDependent(context.Background(), users[0].ID, api.CreateDependentRequest{
+		Name: "Vovô2", Phone: "5511888888888", Relationship: "pai",
+	})
+	taken := "5511888888888"
+	_, err := a.UpdateDependent(context.Background(), users[0].ID, dep1.ID, api.DependentPatch{
+		Phone: &taken,
+	})
+	if !errors.Is(err, api.ErrConflict) {
+		t.Fatalf("err = %v, want api.ErrConflict", err)
+	}
+	// Idempotente: trocar pro proprio numero atual nao deve dar conflito.
+	same := "5511777777777"
+	if _, err := a.UpdateDependent(context.Background(), users[0].ID, dep1.ID, api.DependentPatch{
+		Phone: &same,
+	}); err != nil {
+		t.Fatalf("mesmo numero deveria ser no-op, got %v", err)
+	}
+}
+
 func TestAdapter_UpdateNotify_HappyPath(t *testing.T) {
 	a, db, _ := mkAdapter(t)
 	users := mkUsers(t, db, "Joao")

@@ -408,6 +408,21 @@ func (s *fakeStore) UpdateDependent(ctx context.Context, guardianID, dependentID
 	if !ok {
 		return nil, ErrNotFound
 	}
+	// Telefone: espelha a politica de unicidade do adapter real — conflito se
+	// outro usuario ja tem o numero; senao atualiza o mapa de lookup.
+	if p.Phone != nil {
+		s.mu.Lock()
+		if owner, exists := s.usersByPh[*p.Phone]; exists && owner != dependentID {
+			s.mu.Unlock()
+			return nil, ErrConflict
+		}
+		if u, exists := s.users[dependentID]; exists {
+			delete(s.usersByPh, u.PhoneNumber)
+			u.PhoneNumber = *p.Phone
+			s.usersByPh[*p.Phone] = dependentID
+		}
+		s.mu.Unlock()
+	}
 	patch := PreferencesPatch{
 		Name:                     p.Name,
 		DailySummaryTime:         p.DailySummaryTime,

@@ -440,6 +440,8 @@ export interface CreateDependentBody {
 /** Body de PATCH /api/v1/family/dependents/{id} — espelha api.DependentPatch. */
 export interface UpdateDependentBody {
   name?: string;
+  /** E.164 BR ("55" + DDD + número), só dígitos. */
+  phone?: string;
   daily_summary_time?: string;
   weekly_summary_day?: WeekDay;
   weekly_summary_time?: string;

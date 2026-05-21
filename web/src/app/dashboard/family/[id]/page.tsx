@@ -2,8 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { AlertList } from "@/components/family/AlertList";
+import { DependentDataForm } from "@/components/family/DependentDataForm";
 import { MetricCard } from "@/components/family/MetricCard";
-import { ResendWelcomeButton } from "@/components/family/ResendWelcomeButton";
 import { StatusHeader } from "@/components/family/StatusHeader";
 import { SynthesisCard } from "@/components/family/SynthesisCard";
 import { Pill } from "lucide-react";
@@ -37,6 +37,7 @@ export default async function DependentDetailPage({ params }: PageProps) {
   let status;
   let relationship: string | undefined;
   let dependentName = "";
+  let dependentPhone = "";
   let medications: MedicationItem[] = [];
   try {
     const [s, deps, meds] = await Promise.all([
@@ -49,6 +50,7 @@ export default async function DependentDetailPage({ params }: PageProps) {
     const entry = deps.dependents.find((d) => d.user.id === id);
     relationship = entry?.link.relationship;
     dependentName = entry?.user.name ?? "";
+    dependentPhone = entry?.user.phone_number ?? "";
     medications = meds;
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) {
@@ -113,16 +115,11 @@ export default async function DependentDetailPage({ params }: PageProps) {
         </Button>
       </div>
 
-      <div className="rounded-lg border border-dashed bg-muted/30 p-4">
-        <p className="text-sm text-muted-foreground">
-          Quer apresentar o Zello de novo? Reenvia a mensagem de boas-vindas
-          para {dependentName ? dependentName.split(" ")[0] : "a pessoa"} no
-          WhatsApp — útil se não chegou no cadastro.
-        </p>
-        <div className="mt-3">
-          <ResendWelcomeButton dependentId={id} dependentName={dependentName} />
-        </div>
-      </div>
+      <DependentDataForm
+        dependentId={id}
+        initialName={dependentName}
+        initialPhoneE164={dependentPhone}
+      />
     </div>
   );
 }

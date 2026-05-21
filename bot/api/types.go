@@ -78,6 +78,7 @@ type PreferencesPatch struct {
 // editavel pelo guardian.
 type DependentPatch struct {
 	Name                     *string `json:"name,omitempty"`
+	Phone                    *string `json:"phone,omitempty"`
 	DailySummaryTime         *string `json:"daily_summary_time,omitempty"`
 	WeeklySummaryDay         *string `json:"weekly_summary_day,omitempty"`
 	WeeklySummaryTime        *string `json:"weekly_summary_time,omitempty"`

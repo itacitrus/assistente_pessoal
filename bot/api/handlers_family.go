@@ -181,6 +181,17 @@ func (s *Server) handleUpdateDependent(w http.ResponseWriter, r *http.Request, d
 		writeError(w, http.StatusBadRequest, CodeValidation, "JSON inválido.")
 		return
 	}
+	// Telefone: normaliza (so digitos, prefixo 55) e valida antes de tudo. O
+	// numero eh a identidade do dependente no WhatsApp — typo aqui faz lembrete
+	// nao chegar, entao validamos cedo.
+	if p.Phone != nil {
+		*p.Phone = normalizePhone(*p.Phone)
+		if !validBRPhone(*p.Phone) {
+			writeError(w, http.StatusBadRequest, CodeInvalidPhone,
+				"Telefone inválido. Use 55 + DDD + número.")
+			return
+		}
+	}
 	if msg := validateDependentPatch(&p); msg != "" {
 		writeError(w, http.StatusBadRequest, CodeValidation, msg)
 		return
@@ -190,6 +201,9 @@ func (s *Server) handleUpdateDependent(w http.ResponseWriter, r *http.Request, d
 		switch {
 		case errors.Is(err, ErrNotFound):
 			writeError(w, http.StatusNotFound, CodeNotFound, "Dependente não encontrado.")
+		case errors.Is(err, ErrConflict):
+			writeError(w, http.StatusConflict, CodePhoneInUse,
+				"Esse telefone já está cadastrado para outra pessoa.")
 		case errors.Is(err, ErrValidation):
 			writeError(w, http.StatusBadRequest, CodeValidation, err.Error())
 		default:

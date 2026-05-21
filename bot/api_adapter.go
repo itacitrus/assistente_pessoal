@@ -320,6 +320,25 @@ func (a *apiAdapter) UpdateDependent(ctx context.Context, guardianID, dependentI
 	if !ok {
 		return nil, api.ErrNotFound
 	}
+	// Telefone: mesma politica de unicidade do cadastro — nao deixamos dois
+	// usuarios com o mesmo numero. Pre-checa antes do UPDATE (a constraint
+	// UNIQUE no schema eh o backstop). So escreve se mudou de fato.
+	if p.Phone != nil {
+		newPhone := *p.Phone
+		existing, perr := a.db.GetUserByPhone(newPhone)
+		switch {
+		case perr == nil && existing.ID != dependentID:
+			return nil, fmt.Errorf("%w: %s", api.ErrConflict, newPhone)
+		case perr == nil && existing.ID == dependentID:
+			// Mesmo numero — no-op, segue pro resto do patch.
+		case errors.Is(perr, ErrUserNotFound):
+			if err := a.db.UpdateUserPhone(dependentID, newPhone); err != nil {
+				return nil, fmt.Errorf("update dependent phone: %w", err)
+			}
+		default:
+			return nil, perr
+		}
+	}
 	patch := api.PreferencesPatch{
 		Name:                     p.Name,
 		DailySummaryTime:         p.DailySummaryTime,

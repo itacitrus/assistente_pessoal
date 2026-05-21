@@ -688,6 +688,18 @@ func (db *DB) UpdateUserCredentials(userID int64, encryptedCredentials string) e
 	return err
 }
 
+// UpdateUserPhone troca o telefone do usuario. A unicidade eh pre-checada pelo
+// caller (apiAdapter.UpdateDependent); a constraint UNIQUE em users.phone_number
+// eh o backstop — se violada, o erro borbulha encapsulado.
+func (db *DB) UpdateUserPhone(userID int64, phone string) error {
+	_, err := db.conn.Exec(
+		`UPDATE users SET phone_number = ? WHERE id = ?`, phone, userID)
+	if err != nil {
+		return fmt.Errorf("update user phone: %w", err)
+	}
+	return nil
+}
+
 func (db *DB) GetReauthNotifiedAt(userID int64) (*time.Time, error) {
 	var notifiedAt sql.NullTime
 	err := db.conn.QueryRow(
