@@ -78,7 +78,7 @@ func (s *Server) handleRequestLink(w http.ResponseWriter, r *http.Request) {
 
 	url := s.webBaseURL + "/auth/verify?token=" + plaintext
 	msg := fmt.Sprintf(
-		"Oi %s! Aqui esta seu link de acesso ao painel do Lurch — vale por 15 minutos:\n\n%s\n\nSe nao foi voce que pediu, pode ignorar.",
+		"Oi %s! Aqui esta seu link de acesso ao painel do Zello — vale por 15 minutos:\n\n%s\n\nSe nao foi voce que pediu, pode ignorar.",
 		user.Name, url,
 	)
 	if err := s.store.SendMagicLink(ctx, user.PhoneNumber, msg); err != nil {
