@@ -250,6 +250,7 @@ func runBot() {
 		PathPrefix:     resolveAPIPathPrefix(),
 		AllowedOrigins: resolveWebOrigins(),
 		CookieSecure:   resolveCookieSecure(),
+		CookieDomain:   resolveCookieDomain(),
 		ReportClient:   report,
 	})
 
@@ -366,6 +367,15 @@ func resolveCookieSecure() bool {
 		return v == "true" || v == "1" || v == "yes"
 	}
 	return strings.HasPrefix(strings.ToLower(resolveWebBaseURL()), "https://")
+}
+
+// resolveCookieDomain define o atributo Domain do cookie de sessao. Vazio
+// (default) = host-only, bom pra dev local. Em prod set COOKIE_DOMAIN=zello.chat
+// pra o cookie ser compartilhado entre o app (zello.chat) e a API
+// (api.zello.chat) — necessario porque o dashboard e Server Component e le o
+// cookie em zello.chat enquanto a API que o emite responde de api.zello.chat.
+func resolveCookieDomain() string {
+	return strings.TrimSpace(os.Getenv("COOKIE_DOMAIN"))
 }
 
 func addUser() {

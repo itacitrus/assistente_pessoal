@@ -61,7 +61,7 @@ func (s *Server) RequireAuth(next http.Handler) http.Handler {
 		sessID, userID, err := s.store.GetActiveSessionByToken(ctx, cookie.Value)
 		if err != nil {
 			// Cookie ruim ou sessao expirada — limpa cookie pra evitar loop.
-			clearSessionCookie(w, s.cookieSecure)
+			clearSessionCookie(w, s.cookieSecure, s.cookieDomain)
 			switch {
 			case errors.Is(err, ErrSessionExpired):
 				writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Sua sessao expirou. Faca login de novo.")
@@ -78,7 +78,7 @@ func (s *Server) RequireAuth(next http.Handler) http.Handler {
 
 		user, err := s.store.GetUserByID(ctx, userID)
 		if err != nil {
-			clearSessionCookie(w, s.cookieSecure)
+			clearSessionCookie(w, s.cookieSecure, s.cookieDomain)
 			writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Usuario da sessao nao existe mais.")
 			return
 		}
@@ -154,11 +154,12 @@ func (s *Server) originAllowed(origin string) bool {
 
 // clearSessionCookie expira o cookie no cliente. Usado em logout e em
 // auth failures pra evitar loop de "tenta validar -> falha -> tenta de novo".
-func clearSessionCookie(w http.ResponseWriter, secure bool) {
+func clearSessionCookie(w http.ResponseWriter, secure bool, domain string) {
 	c := &http.Cookie{
 		Name:     CookieName,
 		Value:    "",
 		Path:     "/",
+		Domain:   domain, // "" = host-only (dev); "zello.chat" compartilha app+api
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   secure,
@@ -170,12 +171,13 @@ func clearSessionCookie(w http.ResponseWriter, secure bool) {
 // setSessionCookie grava o cookie HttpOnly com o plaintext.
 // Max-Age = 30d = SessionTTL no main package; aqui ficamos com numero
 // literal pra api ficar 100% standalone.
-func setSessionCookie(w http.ResponseWriter, plaintext string, secure bool) {
+func setSessionCookie(w http.ResponseWriter, plaintext string, secure bool, domain string) {
 	const maxAgeSeconds = 60 * 60 * 24 * 30 // 30 dias
 	c := &http.Cookie{
 		Name:     CookieName,
 		Value:    plaintext,
 		Path:     "/",
+		Domain:   domain, // "" = host-only (dev); "zello.chat" compartilha app+api (SSR le em zello.chat, fetch vai pra api.zello.chat)
 		MaxAge:   maxAgeSeconds,
 		HttpOnly: true,
 		Secure:   secure,

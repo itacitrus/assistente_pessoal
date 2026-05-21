@@ -21,6 +21,7 @@ type Server struct {
 	pathPrefix     string
 	allowedOrigins []string
 	cookieSecure   bool
+	cookieDomain   string
 	statusCache    *statusCache
 	insightsCache  *insightsCache
 	reportClient   synthesis.ReportClient
@@ -40,6 +41,7 @@ type Config struct {
 	PathPrefix     string        // ex: "/assistente" em prod (ALB). "" em dev local.
 	AllowedOrigins []string      // CORS allowlist. Ex: ["https://app.lurch.com.br"]
 	CookieSecure   bool          // true em prod (https). false em dev local (http://localhost:3000)
+	CookieDomain   string        // "" = host-only (dev). "zello.chat" em prod: cookie compartilhado entre app (zello.chat) e api (api.zello.chat) — SSR le em zello.chat.
 	StatusCacheTTL time.Duration // default 60s; aceita 0 = usa default
 	// InsightsCacheTTL eh o TTL do cache de GET /me/insights. Default 6h;
 	// aceita 0 = usa default. Insights via Sonnet sao caros e mudam devagar.
@@ -72,6 +74,7 @@ func NewServer(cfg Config) *Server {
 		pathPrefix:     cfg.PathPrefix,
 		allowedOrigins: cfg.AllowedOrigins,
 		cookieSecure:   cfg.CookieSecure,
+		cookieDomain:   strings.TrimSpace(cfg.CookieDomain),
 		statusCache:    newStatusCache(cfg.StatusCacheTTL),
 		insightsCache:  newInsightsCache(cfg.InsightsCacheTTL),
 		reportClient:   cfg.ReportClient,
