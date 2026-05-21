@@ -2,13 +2,13 @@
  * Helper para encaminhar o cookie httpOnly da request original em fetches
  * feitos a partir de server components / route handlers do Next.
  *
- * Observacao: o backend Go le o cookie `assistente_session` via header
- * `Cookie: name=value`.
+ * Observacao: o backend Go le o cookie `zello_session` via header
+ * `Cookie: name=value` (const CookieName em bot/api/middleware.go).
  */
 
 import { cookies } from "next/headers";
 
-export const SESSION_COOKIE_NAME = "assistente_session";
+export const SESSION_COOKIE_NAME = "zello_session";
 
 /**
  * Devolve o cookie atual do usuario formatado como header `Cookie`.

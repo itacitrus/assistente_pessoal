@@ -10,7 +10,7 @@ import (
 // CookieName eh o nome do cookie httpOnly que carrega o token plaintext
 // da sessao. SameSite=Strict — defesa primaria contra CSRF; o middleware
 // RequireOrigin eh defesa em profundidade pra POST/PATCH/DELETE.
-const CookieName = "lurch_session"
+const CookieName = "zello_session"
 
 // userContextKey eh o tipo privado da chave de context — evita colisao
 // com chaves de outros packages (linter avisa se usar string crua).
