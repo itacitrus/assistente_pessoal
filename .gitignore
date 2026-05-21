@@ -23,3 +23,7 @@ terraform/*.tfvars
 
 # OS
 .DS_Store
+
+# Screenshots/artefatos de validacao (Playwright, mockups)
+/*.png
+.playwright-mcp/
