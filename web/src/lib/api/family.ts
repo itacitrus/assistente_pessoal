@@ -2,12 +2,15 @@ import { fetchApi } from "@/lib/api";
 import { normalizePhoneE164BR } from "@/lib/masks";
 import type {
   CreateDependentBody,
+  CreateMedicationBody,
   DependentEntry,
   DependentStatus,
   DependentStatusRaw,
   DependentTimeline,
   DependentTimelineRaw,
   FamilyLink,
+  MedicationItem,
+  MedicationsResponse,
   SnapshotPoint,
   SnapshotPointRaw,
   UpdateDependentBody,
@@ -122,6 +125,56 @@ export async function getDependentTimeline(
     ...raw,
     snapshots: (raw.snapshots ?? []).map(normalizeSnapshot),
   };
+}
+
+/**
+ * GET /api/v1/family/dependents/{id}/medications
+ * Lista os remedios cadastrados para o dependente. `schedule` ja vem como
+ * texto humano pronto para exibicao.
+ *
+ * Normaliza array nil vindo do backend para [] (defensivo contra crash no
+ * .map do frontend).
+ */
+export async function getDependentMedications(
+  id: number,
+  cookieHeader?: string,
+): Promise<MedicationsResponse> {
+  const res = await fetchApi<MedicationsResponse>(
+    `/api/v1/family/dependents/${id}/medications`,
+    { method: "GET", cookie: cookieHeader },
+  );
+  return { medications: res.medications ?? [] };
+}
+
+/**
+ * POST /api/v1/family/dependents/{id}/medications
+ * Cadastra um novo remedio. Devolve 201 com o MedicationItem criado.
+ *
+ * O caller (form client) e responsavel por validar 1-6 horarios "HH:MM" e por
+ * exigir `days` quando frequency="weekly".
+ */
+export async function createDependentMedication(
+  id: number,
+  body: CreateMedicationBody,
+): Promise<MedicationItem> {
+  return fetchApi<MedicationItem>(
+    `/api/v1/family/dependents/${id}/medications`,
+    { method: "POST", json: body },
+  );
+}
+
+/**
+ * DELETE /api/v1/family/dependents/{id}/medications/{medId}
+ * Remove um remedio cadastrado. Devolve `{ ok: true }`.
+ */
+export async function deleteDependentMedication(
+  id: number,
+  medId: number,
+): Promise<{ ok: boolean }> {
+  return fetchApi<{ ok: boolean }>(
+    `/api/v1/family/dependents/${id}/medications/${medId}`,
+    { method: "DELETE" },
+  );
 }
 
 /**

@@ -1,5 +1,10 @@
 import { ApiError, fetchApi } from "@/lib/api";
-import type { AgendaResponse, InsightsResponse } from "@/types/api";
+import type {
+  ActivityResponse,
+  AgendaResponse,
+  InsightsResponse,
+  ProfileFacts,
+} from "@/types/api";
 
 /**
  * GET /api/v1/me/agenda
@@ -54,6 +59,66 @@ export async function getMyInsights(
         summary: "",
         insights: [],
       };
+    }
+    throw err;
+  }
+}
+
+/**
+ * GET /api/v1/me/activity?limit=100
+ *
+ * Devolve o historico completo de atividade relevante do usuario (o backend
+ * ja filtra os eventos que valem a pena mostrar). `limit` limita a quantidade.
+ *
+ * Falha graciosamente em 401/403: devolve lista vazia, para que uma falha aqui
+ * nao derrube a pagina de historico. Outros erros borbulham.
+ */
+export async function getMyActivity(
+  cookieHeader?: string,
+  limit = 100,
+): Promise<ActivityResponse> {
+  try {
+    const res = await fetchApi<ActivityResponse>(
+      `/api/v1/me/activity?limit=${limit}`,
+      { method: "GET", cookie: cookieHeader },
+    );
+    // Backend Go pode serializar slice nil como `null` — normaliza.
+    return { items: res.items ?? [] };
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+      return { items: [] };
+    }
+    throw err;
+  }
+}
+
+/**
+ * GET /api/v1/me/profile-facts
+ *
+ * Devolve os fatos que o Zello aprendeu sobre o usuario: pessoas na vida dele
+ * (relacoes + pessoas citadas) e viagens conhecidas.
+ *
+ * Falha graciosamente em 401/403: devolve `available: false` com listas
+ * vazias, fazendo a UI cair no estado calmo de "ainda aprendendo". Tambem
+ * normaliza qualquer array nil vindo do backend para [].
+ */
+export async function getProfileFacts(
+  cookieHeader?: string,
+): Promise<ProfileFacts> {
+  try {
+    const res = await fetchApi<ProfileFacts>("/api/v1/me/profile-facts", {
+      method: "GET",
+      cookie: cookieHeader,
+    });
+    return {
+      available: res.available ?? false,
+      relations: res.relations ?? [],
+      people: res.people ?? [],
+      trips: res.trips ?? [],
+    };
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+      return { available: false, relations: [], people: [], trips: [] };
     }
     throw err;
   }

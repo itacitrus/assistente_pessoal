@@ -57,7 +57,7 @@ export const PhoneInput = React.forwardRef<HTMLInputElement, PhoneInputProps>(
         />
         {showError && (
           <span id={errorId} className="text-sm text-red-600">
-            {invalidMessage ?? "Telefone invalido. Use DDD + numero."}
+            {invalidMessage ?? "Telefone inválido. Use DDD + número."}
           </span>
         )}
       </div>

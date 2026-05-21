@@ -23,7 +23,7 @@ export function AlertList({ alerts }: AlertListProps) {
         <CardHeader>
           <CardTitle className="text-base">Alertas em aberto</CardTitle>
           <CardDescription>
-            Nenhum alerta aberto nas ultimas semanas.
+            Nenhum alerta aberto nas últimas semanas.
           </CardDescription>
         </CardHeader>
       </Card>
@@ -34,7 +34,7 @@ export function AlertList({ alerts }: AlertListProps) {
       <CardHeader>
         <CardTitle className="text-base">Alertas em aberto</CardTitle>
         <CardDescription>
-          Sinalizacoes que o Zello identificou.
+          Sinalizações que o Zello identificou.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -99,7 +99,7 @@ function humanizePolicy(policy: string): string {
     medication_miss: "Dose perdida",
     inactivity: "Sem responder",
     severe_signal: "Sinal preocupante",
-    severe_signal_safety_net: "Sinal preocupante (revisao)",
+    severe_signal_safety_net: "Sinal preocupante (revisão)",
   };
   return map[policy] ?? "Alerta";
 }
@@ -113,11 +113,11 @@ function humanizeAge(iso: string): string {
   const now = new Date();
   const diffMs = now.getTime() - then.getTime();
   const diffMin = Math.round(diffMs / 60000);
-  if (diffMin < 1) return "agora ha pouco";
-  if (diffMin < 60) return `ha ${diffMin} min`;
+  if (diffMin < 1) return "agora há pouco";
+  if (diffMin < 60) return `há ${diffMin} min`;
   const diffH = Math.round(diffMin / 60);
-  if (diffH < 24) return `ha ${diffH}h`;
+  if (diffH < 24) return `há ${diffH}h`;
   const diffD = Math.round(diffH / 24);
-  if (diffD < 7) return `ha ${diffD} dia${diffD > 1 ? "s" : ""}`;
+  if (diffD < 7) return `há ${diffD} dia${diffD > 1 ? "s" : ""}`;
   return then.toLocaleDateString("pt-BR");
 }

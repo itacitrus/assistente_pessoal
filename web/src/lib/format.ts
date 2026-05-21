@@ -79,6 +79,35 @@ export function formatRelativeTime(iso: string, now: Date = new Date()): string 
     .replace(/\.$/, "");
 }
 
+/** Formata uma data curta como "22 mai 2026" (pt-BR), sem hora. */
+export function formatShortDate(iso: string): string {
+  const d = parse(iso);
+  if (!d) return "";
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  })
+    .format(d)
+    .replace(/\sde\s/g, " ")
+    .replace(/\./g, "");
+}
+
+/**
+ * Formata um periodo de viagem em pt-BR a partir de duas datas ISO:
+ * "22 mai 2026 — 30 mai 2026". Quando uma das pontas e invalida, devolve so a
+ * valida; quando ambas sao invalidas, devolve string vazia.
+ */
+export function formatTripPeriod(
+  start: string,
+  end: string,
+): string {
+  const from = formatShortDate(start);
+  const to = formatShortDate(end);
+  if (from && to) return `${from} — ${to}`;
+  return from || to;
+}
+
 /** Saudacao por periodo do dia (pt-BR), baseada na hora local. */
 export function greetingForHour(date: Date = new Date()): string {
   const h = date.getHours();

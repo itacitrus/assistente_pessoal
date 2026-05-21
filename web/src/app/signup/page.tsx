@@ -9,7 +9,7 @@ export default function SignupPage() {
   return (
     <AuthShell
       title="Crie sua conta"
-      subtitle="Em poucos minutos o Zello comeca a cuidar de quem voce ama."
+      subtitle="Em poucos minutos o Zello começa a cuidar de quem você ama."
     >
       <SignupForm />
     </AuthShell>

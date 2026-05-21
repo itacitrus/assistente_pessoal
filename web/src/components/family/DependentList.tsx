@@ -23,7 +23,7 @@ export function DependentList({ dependents }: DependentListProps) {
       <Card className="flex flex-col items-center justify-center border-dashed bg-muted/30 p-6 text-center">
         <CardTitle className="text-lg">Adicionar pessoa</CardTitle>
         <CardDescription className="mt-2 text-sm">
-          Cadastre alguem que voce cuida.
+          Cadastre alguém que você cuida.
         </CardDescription>
         <Button asChild className="mt-4" variant="outline">
           <Link href="/dashboard/family/new">Adicionar</Link>
@@ -52,12 +52,12 @@ function DependentCard({ entry }: { entry: DependentEntry }) {
         </Button>
         <Button asChild variant="outline">
           <Link href={`/dashboard/family/${entry.user.id}/evolucao`}>
-            Ver evolucao
+            Ver evolução
           </Link>
         </Button>
         <Button asChild variant="ghost">
           <Link href={`/dashboard/family/${entry.user.id}/preferences`}>
-            Notificacoes
+            Notificações
           </Link>
         </Button>
       </CardContent>

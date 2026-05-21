@@ -57,7 +57,7 @@ export const CepInput = React.forwardRef<HTMLInputElement, CepInputProps>(
       parseCepLookup(value, ctrl.signal)
         .then((res) => {
           if (!res) {
-            setLookupError("CEP nao encontrado.");
+            setLookupError("CEP não encontrado.");
             return;
           }
           onLookupRef.current?.(res);
@@ -88,7 +88,7 @@ export const CepInput = React.forwardRef<HTMLInputElement, CepInputProps>(
         />
         {loading && (
           <span className="text-sm text-muted-foreground">
-            Buscando endereco...
+            Buscando endereço...
           </span>
         )}
         {lookupError && (
@@ -96,7 +96,7 @@ export const CepInput = React.forwardRef<HTMLInputElement, CepInputProps>(
         )}
         {showInvalid && !loading && !lookupError && (
           <span className="text-sm text-muted-foreground">
-            {invalidMessage ?? "Continue digitando — 8 numeros."}
+            {invalidMessage ?? "Continue digitando — 8 números."}
           </span>
         )}
       </div>

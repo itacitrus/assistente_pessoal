@@ -50,7 +50,7 @@ export function DependentForm() {
         setErrorMsg(err.message);
       } else {
         setErrorMsg(
-          "Nao consegui cadastrar agora. Tente novamente em alguns segundos.",
+          "Não consegui cadastrar agora. Tente novamente em alguns segundos.",
         );
       }
     }
@@ -64,7 +64,7 @@ export function DependentForm() {
           id="dep-name"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Vovo Joana"
+          placeholder="Vovó Joana"
           autoComplete="name"
           required
         />
@@ -81,18 +81,18 @@ export function DependentForm() {
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="dep-relationship">Relacao</Label>
+        <Label htmlFor="dep-relationship">Relação</Label>
         <Input
           id="dep-relationship"
           value={relationship}
           onChange={(e) => setRelationship(e.target.value)}
-          placeholder="filha, filho, esposa, mae..."
+          placeholder="filha, filho, esposa, mãe..."
           required
         />
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="dep-tz">Fuso horario</Label>
+        <Label htmlFor="dep-tz">Fuso horário</Label>
         <TimezoneSelect id="dep-tz" value={timezone} onChange={setTimezone} />
       </div>
 

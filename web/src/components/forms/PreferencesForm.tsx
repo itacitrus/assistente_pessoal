@@ -49,11 +49,11 @@ const AUTO_CONFIRM_OPTIONS: { id: AutoConfirmTimeout; label: string }[] = [
 const WEEKDAY_OPTIONS: { id: WeekDay; label: string }[] = [
   { id: "sunday", label: "Domingo" },
   { id: "monday", label: "Segunda" },
-  { id: "tuesday", label: "Terca" },
+  { id: "tuesday", label: "Terça" },
   { id: "wednesday", label: "Quarta" },
   { id: "thursday", label: "Quinta" },
   { id: "friday", label: "Sexta" },
-  { id: "saturday", label: "Sabado" },
+  { id: "saturday", label: "Sábado" },
 ];
 
 function isValidHHMM(input: string): boolean {
@@ -112,7 +112,7 @@ export function PreferencesForm({ user }: PreferencesFormProps) {
       if (err instanceof ApiError) {
         setErrorMsg(err.message);
       } else {
-        setErrorMsg("Nao consegui salvar agora. Tente novamente.");
+        setErrorMsg("Não consegui salvar agora. Tente novamente.");
       }
     }
   }
@@ -130,7 +130,7 @@ export function PreferencesForm({ user }: PreferencesFormProps) {
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="pref-daily">Hora do resumo diario</Label>
+        <Label htmlFor="pref-daily">Hora do resumo diário</Label>
         <Input
           id="pref-daily"
           type="time"
@@ -213,7 +213,7 @@ export function PreferencesForm({ user }: PreferencesFormProps) {
 
       <div className="space-y-2">
         <Label htmlFor="pref-inactivity">
-          Considerar inativo apos quantas horas sem resposta?
+          Considerar inativo após quantas horas sem resposta?
         </Label>
         <Input
           id="pref-inactivity"
@@ -239,7 +239,7 @@ export function PreferencesForm({ user }: PreferencesFormProps) {
       )}
       {status === "saved" && (
         <Alert variant="success">
-          <AlertDescription>Preferencias salvas.</AlertDescription>
+          <AlertDescription>Preferências salvas.</AlertDescription>
         </Alert>
       )}
 

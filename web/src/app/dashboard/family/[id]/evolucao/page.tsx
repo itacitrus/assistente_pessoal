@@ -57,10 +57,10 @@ export default async function EvolucaoPage({
       <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">
-            Evolucao — {dependentName}
+            Evolução — {dependentName}
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Sinais agregados a partir das conversas. Pontos com confianca
+            Sinais agregados a partir das conversas. Pontos com confiança
             baixa aparecem mais transparentes.
           </p>
         </div>

@@ -43,13 +43,13 @@ export default async function DashboardLayout({
               href="/dashboard"
               className="text-muted-foreground hover:text-foreground"
             >
-              Inicio
+              Início
             </Link>
             <Link
               href="/dashboard/preferences"
               className="text-muted-foreground hover:text-foreground"
             >
-              Preferencias
+              Preferências
             </Link>
             <span className="hidden text-muted-foreground sm:inline">
               {userName}

@@ -31,7 +31,7 @@ export function StatusHeader({ status, relationship }: StatusHeaderProps) {
           {status.dependent.name}
         </h1>
         <p className="text-sm text-muted-foreground">
-          Ultima conversa: {lastMessage}
+          Última conversa: {lastMessage}
         </p>
         {relationship && (
           <p className="text-sm capitalize text-muted-foreground">
@@ -70,7 +70,7 @@ const TREND_CONFIG: Record<
     className: "bg-emerald-100 text-emerald-900",
   },
   estavel: {
-    label: "Estavel",
+    label: "Estável",
     icon: ArrowRight,
     className: "bg-sky-100 text-sky-900",
   },
@@ -96,18 +96,18 @@ function formatRelative(iso: string): string {
   const now = new Date();
   const diffMs = now.getTime() - then.getTime();
   const diffMin = Math.round(diffMs / 60000);
-  if (diffMin < 1) return "agora ha pouco";
-  if (diffMin < 60) return `ha ${diffMin} min`;
+  if (diffMin < 1) return "agora há pouco";
+  if (diffMin < 60) return `há ${diffMin} min`;
   const diffH = Math.round(diffMin / 60);
-  if (diffH < 24) return `ha ${diffH}h`;
+  if (diffH < 24) return `há ${diffH}h`;
   const diffD = Math.round(diffH / 24);
-  if (diffD < 7) return `ha ${diffD} dia${diffD > 1 ? "s" : ""}`;
+  if (diffD < 7) return `há ${diffD} dia${diffD > 1 ? "s" : ""}`;
   return then.toLocaleDateString("pt-BR");
 }
 
 function daysSince(days: number): string {
   if (days <= 0) return "hoje";
-  if (days === 1) return "ha 1 dia";
+  if (days === 1) return "há 1 dia";
   if (days >= 999) return "sem registro recente";
-  return `ha ${days} dias`;
+  return `há ${days} dias`;
 }

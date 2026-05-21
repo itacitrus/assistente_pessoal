@@ -45,7 +45,7 @@ export function NotifyPreferencesForm({ link }: NotifyPreferencesFormProps) {
       if (err instanceof ApiError) {
         setErrorMsg(err.message);
       } else {
-        setErrorMsg("Nao consegui salvar agora. Tente novamente.");
+        setErrorMsg("Não consegui salvar agora. Tente novamente.");
       }
     }
   }
@@ -54,7 +54,7 @@ export function NotifyPreferencesForm({ link }: NotifyPreferencesFormProps) {
     <form onSubmit={handleSubmit} className="space-y-4">
       <ToggleRow
         id="notify-medication"
-        label="Avisar quando uma dose nao for tomada"
+        label="Avisar quando uma dose não for tomada"
         checked={medication}
         onChange={setMedication}
       />
@@ -79,7 +79,7 @@ export function NotifyPreferencesForm({ link }: NotifyPreferencesFormProps) {
 
       {status === "saved" && (
         <Alert variant="success">
-          <AlertDescription>Preferencias salvas.</AlertDescription>
+          <AlertDescription>Preferências salvas.</AlertDescription>
         </Alert>
       )}
 

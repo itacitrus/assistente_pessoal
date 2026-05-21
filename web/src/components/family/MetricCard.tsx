@@ -16,7 +16,7 @@ export interface MetricCardProps {
 }
 
 export function MetricCard({ data, days = 14 }: MetricCardProps) {
-  const title = `Aderencia (${days} dias)`;
+  const title = `Aderência (${days} dias)`;
   if (data.scheduled === 0) {
     return (
       <Card>

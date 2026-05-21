@@ -1,5 +1,6 @@
 import Link from "next/link";
 import {
+  BookHeart,
   CalendarClock,
   CalendarPlus,
   CheckCircle2,
@@ -9,6 +10,7 @@ import {
   MapPin,
   MessageCircle,
   Pill,
+  Plane,
   Sparkles,
   TrendingUp,
   UserPlus,
@@ -27,10 +29,15 @@ import { Button } from "@/components/ui/button";
 import { DependentList } from "@/components/family/DependentList";
 import { ApiError } from "@/lib/api";
 import { getMe } from "@/lib/api/auth";
-import { getMyAgenda, getMyInsights } from "@/lib/api/me";
+import { getMyAgenda, getMyInsights, getProfileFacts } from "@/lib/api/me";
 import { listDependents } from "@/lib/api/family";
 import { getSessionCookieHeader } from "@/lib/server-cookie";
-import { formatEventWhen, formatRelativeTime, greetingForHour } from "@/lib/format";
+import {
+  formatEventWhen,
+  formatRelativeTime,
+  formatTripPeriod,
+  greetingForHour,
+} from "@/lib/format";
 import type {
   ActivityItem,
   AgendaEvent,
@@ -39,6 +46,10 @@ import type {
   Insight,
   InsightKind,
   InsightsResponse,
+  PersonFact,
+  ProfileFacts,
+  RelationFact,
+  TripFact,
   User,
 } from "@/types/api";
 
@@ -50,6 +61,13 @@ const EMPTY_AGENDA: AgendaResponse = {
   recent_activity: [],
 };
 
+const EMPTY_FACTS: ProfileFacts = {
+  available: false,
+  relations: [],
+  people: [],
+  trips: [],
+};
+
 export default async function DashboardHome() {
   const cookieHeader = getSessionCookieHeader();
 
@@ -57,14 +75,20 @@ export default async function DashboardHome() {
   const me = await getMe(cookieHeader);
 
   // Cada chamada e independente — falha de uma nao derruba a pagina.
-  const [agenda, insights, dependents] = await Promise.all([
+  const [agenda, insights, facts, dependents] = await Promise.all([
     safe(() => getMyAgenda(cookieHeader), EMPTY_AGENDA),
     safe(
       () => getMyInsights(cookieHeader, 30),
       emptyInsights(),
     ),
+    safe(() => getProfileFacts(cookieHeader), EMPTY_FACTS),
     safeDependents(() => listDependents(cookieHeader)),
   ]);
+
+  // Normaliza arrays nil (vide nota acima sobre slice nil do Go).
+  facts.relations = facts.relations ?? [];
+  facts.people = facts.people ?? [];
+  facts.trips = facts.trips ?? [];
 
   // Backend Go pode serializar slice nil como `null` no JSON (resposta de
   // sucesso, fora do alcance do safe()). Normaliza pra [] antes de renderizar.
@@ -91,6 +115,8 @@ export default async function DashboardHome() {
       <AgendaSection agenda={agenda} />
 
       <InsightsSection insights={insights} />
+
+      <ProfileFactsSection facts={facts} />
 
       <FamilySection dependents={dependents} />
 
@@ -195,11 +221,24 @@ function ActivityCard({ items }: { items: ActivityItem[] }) {
             body="Quando você conversar com o Zello no WhatsApp, o histórico aparece aqui."
           />
         ) : (
-          <ul className="divide-y divide-border/70">
-            {items.map((item, i) => (
-              <ActivityRow key={`${item.action}-${item.at}-${i}`} item={item} />
-            ))}
-          </ul>
+          <>
+            <ul className="divide-y divide-border/70">
+              {items.map((item, i) => (
+                <ActivityRow
+                  key={`${item.action}-${item.at}-${i}`}
+                  item={item}
+                />
+              ))}
+            </ul>
+            <div className="mt-4 border-t border-border/70 pt-3">
+              <Link
+                href="/dashboard/atividade"
+                className="text-sm font-medium text-[--zello-emerald] underline-offset-4 hover:underline"
+              >
+                Ver histórico completo →
+              </Link>
+            </div>
+          </>
         )}
       </CardContent>
     </Card>
@@ -331,6 +370,148 @@ function insightIcon(kind: InsightKind) {
     default:
       return <Sparkles className={cls} aria-hidden />;
   }
+}
+
+/* ------------------------------------------------- o que o Zello sabe */
+
+function ProfileFactsSection({ facts }: { facts: ProfileFacts }) {
+  const relations = facts.relations ?? [];
+  const people = facts.people ?? [];
+  const trips = facts.trips ?? [];
+  const hasPeople = relations.length > 0 || people.length > 0;
+  const hasTrips = trips.length > 0;
+  const hasAnything = facts.available && (hasPeople || hasTrips);
+
+  return (
+    <section
+      className="space-y-4 animate-rise"
+      style={{ animationDelay: "150ms" }}
+      aria-labelledby="facts-title"
+    >
+      <header className="flex items-center gap-2">
+        <BookHeart className="h-5 w-5 text-[--zello-emerald]" aria-hidden />
+        <h2
+          id="facts-title"
+          className="font-display text-2xl font-semibold tracking-tight"
+        >
+          O que o Zello sabe sobre você
+        </h2>
+      </header>
+
+      {!hasAnything ? (
+        <Card className="border-dashed bg-muted/30 shadow-warm">
+          <CardContent className="flex flex-col items-center gap-3 p-8 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[--zello-emerald]/10 text-[--zello-emerald]">
+              <BookHeart className="h-6 w-6" aria-hidden />
+            </div>
+            <p className="max-w-md text-base text-muted-foreground">
+              O Zello vai aprendendo sobre você conforme conversam — pessoas,
+              viagens e rotinas aparecem aqui.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {hasPeople ? (
+            <PeopleCard relations={relations} people={people} />
+          ) : null}
+          {hasTrips ? <TripsCard trips={trips} /> : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PeopleCard({
+  relations,
+  people,
+}: {
+  relations: RelationFact[];
+  people: PersonFact[];
+}) {
+  return (
+    <Card className="shadow-warm">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <Users className="h-5 w-5 text-[--zello-emerald]" aria-hidden />
+          Pessoas na sua vida
+        </CardTitle>
+        <CardDescription>
+          Quem o Zello conhece a partir das suas conversas.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ul className="divide-y divide-border/70">
+          {relations.map((r, i) => (
+            <PersonRow
+              key={`rel-${r.name}-${i}`}
+              name={r.name}
+              detail={r.relation}
+            />
+          ))}
+          {people.map((p, i) => (
+            <PersonRow
+              key={`per-${p.name}-${i}`}
+              name={p.name}
+              detail={p.detail}
+            />
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PersonRow({ name, detail }: { name: string; detail: string }) {
+  return (
+    <li className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
+      <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[--zello-emerald]/10 text-[--zello-emerald]">
+        <HeartHandshake className="h-4 w-4" aria-hidden />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-medium text-foreground">{name}</p>
+        {detail ? (
+          <p className="text-sm capitalize text-muted-foreground">{detail}</p>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+function TripsCard({ trips }: { trips: TripFact[] }) {
+  return (
+    <Card className="shadow-warm">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <Plane className="h-5 w-5 text-[--zello-amber]" aria-hidden />
+          Viagens
+        </CardTitle>
+        <CardDescription>Destinos e períodos que o Zello sabe.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ul className="divide-y divide-border/70">
+          {trips.map((t, i) => (
+            <li
+              key={`${t.destination}-${i}`}
+              className="flex items-start gap-3 py-3 first:pt-0 last:pb-0"
+            >
+              <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[--zello-amber]/15 text-[--zello-amber]">
+                <MapPin className="h-4 w-4" aria-hidden />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium text-foreground">
+                  {t.destination || t.label}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {formatTripPeriod(t.start, t.end) || t.label}
+                </p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
 }
 
 /* ---------------------------------------------------------------- family */

@@ -34,7 +34,7 @@ export function LoginForm() {
         setErrorMsg(err.message);
       } else {
         setErrorMsg(
-          "Nao consegui enviar o link agora. Tente novamente em alguns segundos.",
+          "Não consegui enviar o link agora. Tente novamente em alguns segundos.",
         );
       }
     }
@@ -44,7 +44,7 @@ export function LoginForm() {
     return (
       <Alert variant="success">
         <AlertDescription>
-          Pronto. Se este numero esta cadastrado, voce vai receber um link no
+          Pronto. Se este número está cadastrado, você vai receber um link no
           WhatsApp em alguns segundos. Vale por 15 minutos.
         </AlertDescription>
       </Alert>
@@ -72,7 +72,7 @@ export function LoginForm() {
       </Button>
 
       <p className="text-center text-sm text-muted-foreground">
-        Ainda nao tem conta?{" "}
+        Ainda não tem conta?{" "}
         <Link href="/signup" className="font-medium text-foreground underline">
           Criar conta
         </Link>

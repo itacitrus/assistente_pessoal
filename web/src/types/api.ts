@@ -302,6 +302,110 @@ export interface InsightsResponse {
   insights: Insight[];
 }
 
+// ---- Atividade (historico completo) ----
+
+/**
+ * Espelha api.ActivityResponse — GET /api/v1/me/activity?limit=100.
+ * Mesmo shape de item do feed do dashboard (`ActivityItem`), porem com a
+ * lista completa (ate `limit` eventos relevantes ja filtrados pelo backend).
+ */
+export interface ActivityResponse {
+  items: ActivityItem[];
+}
+
+// ---- Fatos de perfil ("o que o Zello sabe sobre voce") ----
+
+/**
+ * Tipo de relacao aprendida sobre o usuario. Espelha o campo `kind` de
+ * api.RelationFact: dependentes que ele cuida, guardioes que cuidam dele, ou
+ * pessoas memorizadas em conversas.
+ */
+export type RelationKind = "dependent" | "guardian" | "memory";
+
+/** Espelha api.RelationFact — uma pessoa ligada ao usuario por relacao. */
+export interface RelationFact {
+  name: string;
+  relation: string;
+  kind: RelationKind;
+}
+
+/** Espelha api.PersonFact — pessoa citada nas conversas com um detalhe livre. */
+export interface PersonFact {
+  name: string;
+  detail: string;
+}
+
+/** Espelha api.TripFact — uma viagem conhecida do usuario. */
+export interface TripFact {
+  label: string;
+  destination: string;
+  start: string; // ISO8601 ou data livre
+  end: string; // ISO8601 ou data livre
+}
+
+/**
+ * Espelha api.ProfileFacts — GET /api/v1/me/profile-facts.
+ * Quando `available` e false (ou tudo vazio), a UI mostra um estado calmo de
+ * "o Zello vai aprendendo conforme conversam". Todos os arrays podem vir [].
+ */
+export interface ProfileFacts {
+  available: boolean;
+  relations: RelationFact[];
+  people: PersonFact[];
+  trips: TripFact[];
+}
+
+// ---- Medicamentos do dependente ----
+
+/**
+ * Espelha api.MedicationItem — GET /api/v1/family/dependents/{id}/medications.
+ * `schedule` ja vem como texto humano pronto para exibicao (ex: "Todo dia as
+ * 08:00 e 20:00"). `active` indica se o lembrete esta ativo.
+ */
+export interface MedicationItem {
+  id: number;
+  name: string;
+  dose: string;
+  instructions: string;
+  schedule: string;
+  active: boolean;
+}
+
+/** Espelha o envelope de GET .../medications. */
+export interface MedicationsResponse {
+  medications: MedicationItem[];
+}
+
+/** Frequencia de um lembrete de remedio. */
+export type MedicationFrequency = "daily" | "weekly";
+
+/**
+ * Dia da semana abreviado em ingles minusculo, como o backend espera no body
+ * de criacao de medicamento (`days`). Distinto de `WeekDay` (que e por extenso,
+ * usado nas preferencias de resumo).
+ */
+export type MedicationWeekDay =
+  | "mon"
+  | "tue"
+  | "wed"
+  | "thu"
+  | "fri"
+  | "sat"
+  | "sun";
+
+/**
+ * Body de POST /api/v1/family/dependents/{id}/medications.
+ * `times`: 1-6 horarios "HH:MM". `days` obrigatorio quando frequency="weekly".
+ */
+export interface CreateMedicationBody {
+  name: string;
+  dose: string;
+  instructions: string;
+  times: string[]; // "HH:MM", 1-6 itens
+  frequency: MedicationFrequency;
+  days?: MedicationWeekDay[]; // obrigatorio se weekly
+}
+
 // ---- Bodies dos requests ----
 
 /** Body de POST /api/v1/auth/request-link. */

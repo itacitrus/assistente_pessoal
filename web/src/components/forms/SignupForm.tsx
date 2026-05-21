@@ -44,7 +44,7 @@ export function SignupForm() {
         setErrorMsg(err.message);
       } else {
         setErrorMsg(
-          "Nao consegui enviar o link agora. Tente novamente em alguns segundos.",
+          "Não consegui enviar o link agora. Tente novamente em alguns segundos.",
         );
       }
     }
@@ -54,7 +54,7 @@ export function SignupForm() {
     return (
       <Alert variant="success">
         <AlertDescription>
-          Pronto! Se este numero ja esta cadastrado, voce vai receber um link
+          Pronto! Se este número já está cadastrado, você vai receber um link
           no WhatsApp em alguns segundos. Vale por 15 minutos. Se nada chegar,
           envie qualquer mensagem para o Zello no WhatsApp para criar a
           conta.
@@ -67,7 +67,7 @@ export function SignupForm() {
     <form onSubmit={handleSubmit} className="space-y-6" noValidate>
       <p className="text-sm text-muted-foreground">
         Para criar a conta, mande qualquer mensagem para o Zello no WhatsApp.
-        Depois volte aqui para fazer login com seu numero.
+        Depois volte aqui para fazer login com seu número.
       </p>
 
       <div className="space-y-2">
@@ -86,7 +86,7 @@ export function SignupForm() {
       </Button>
 
       <p className="text-center text-sm text-muted-foreground">
-        Ja tem conta?{" "}
+        Já tem conta?{" "}
         <Link href="/login" className="font-medium text-foreground underline">
           Fazer login
         </Link>

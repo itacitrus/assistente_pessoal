@@ -9,7 +9,7 @@ export default function LoginPage() {
   return (
     <AuthShell
       title="Bem-vindo de volta"
-      subtitle="Entre para acompanhar o cuidado de quem voce ama."
+      subtitle="Entre para acompanhar o cuidado de quem você ama."
     >
       <LoginForm />
     </AuthShell>

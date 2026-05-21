@@ -19,7 +19,7 @@ const fraunces = Fraunces({
 export const metadata: Metadata = {
   title: "Zello — cuidar de quem você ama, sem complicação",
   description:
-    "Zello e o assistente no WhatsApp que cuida da agenda, lembra dos remedios, faz companhia ao idoso e mantem a familia tranquila.",
+    "Zello é o assistente no WhatsApp que cuida da agenda, lembra dos remédios, faz companhia ao idoso e mantém a família tranquila.",
 };
 
 export default function RootLayout({

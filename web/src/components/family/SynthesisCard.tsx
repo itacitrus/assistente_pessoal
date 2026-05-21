@@ -21,9 +21,9 @@ export function SynthesisCard({ synthesis }: SynthesisCardProps) {
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Sintese recente</CardTitle>
+          <CardTitle className="text-base">Síntese recente</CardTitle>
           <CardDescription>
-            Ainda nao ha conversas suficientes para gerar uma sintese.
+            Ainda não há conversas suficientes para gerar uma síntese.
           </CardDescription>
         </CardHeader>
       </Card>
@@ -33,7 +33,7 @@ export function SynthesisCard({ synthesis }: SynthesisCardProps) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Sintese recente</CardTitle>
+        <CardTitle className="text-base">Síntese recente</CardTitle>
         <CardDescription>{nivelLabel(synthesis.nivel_preocupacao)}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -48,7 +48,7 @@ export function SynthesisCard({ synthesis }: SynthesisCardProps) {
         {synthesis.ponto_de_atencao && (
           <section>
             <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              Ponto de atencao
+              Ponto de atenção
             </h3>
             <p className="mt-2 text-base">{synthesis.ponto_de_atencao}</p>
           </section>
@@ -58,7 +58,7 @@ export function SynthesisCard({ synthesis }: SynthesisCardProps) {
           synthesis.recomendacoes_carinhosas.length > 0 && (
             <section>
               <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                Recomendacoes
+                Recomendações
               </h3>
               <ul className="mt-2 list-disc space-y-1 pl-5 text-base">
                 {synthesis.recomendacoes_carinhosas.map((r, i) => (
@@ -75,11 +75,11 @@ export function SynthesisCard({ synthesis }: SynthesisCardProps) {
 function nivelLabel(nivel: NivelPreocupacao): string {
   switch (nivel) {
     case "tranquilo":
-      return "Situacao tranquila.";
+      return "Situação tranquila.";
     case "atencao":
       return "Vale ficar atento.";
     case "atencao_alta":
-      return "Atencao redobrada.";
+      return "Atenção redobrada.";
     case "indeterminado":
       return "Sem dados suficientes para classificar.";
   }

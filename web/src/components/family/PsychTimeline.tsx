@@ -54,7 +54,7 @@ export function PsychTimeline({ snapshots }: PsychTimelineProps) {
         <CardHeader>
           <CardTitle className="text-base">Linha do tempo</CardTitle>
           <CardDescription>
-            Ainda nao ha dados de evolucao. Aguarde algumas conversas para
+            Ainda não há dados de evolução. Aguarde algumas conversas para
             ver a linha do tempo.
           </CardDescription>
         </CardHeader>
@@ -202,7 +202,7 @@ function CustomTooltip({
 
   const confLabel =
     point.confidence === null
-      ? "sem confianca registrada"
+      ? "sem confiança registrada"
       : confidenceLabel(point.confidence);
 
   return (
@@ -218,9 +218,9 @@ function CustomTooltip({
 }
 
 function confidenceLabel(c: number): string {
-  if (c <= 1) return "confianca muito baixa";
-  if (c <= 2) return "confianca baixa";
-  if (c <= 3) return "confianca media";
-  if (c <= 4) return "confianca alta";
-  return "confianca muito alta";
+  if (c <= 1) return "confiança muito baixa";
+  if (c <= 2) return "confiança baixa";
+  if (c <= 3) return "confiança média";
+  if (c <= 4) return "confiança alta";
+  return "confiança muito alta";
 }

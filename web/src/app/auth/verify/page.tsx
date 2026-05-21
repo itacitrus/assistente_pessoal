@@ -95,7 +95,7 @@ function VerifyInner() {
       {status === "missing" && (
         <Alert variant="destructive">
           <AlertDescription>
-            O link parece incompleto. Volte para o login e peca um novo.
+            O link parece incompleto. Volte para o login e peça um novo.
           </AlertDescription>
         </Alert>
       )}
@@ -103,7 +103,7 @@ function VerifyInner() {
       {status === "expired" && (
         <Alert variant="destructive">
           <AlertDescription>
-            Esse link expirou. Peca um novo no login — eles valem 15 minutos.
+            Esse link expirou. Peça um novo no login — eles valem 15 minutos.
           </AlertDescription>
         </Alert>
       )}
@@ -111,7 +111,7 @@ function VerifyInner() {
       {status === "used" && (
         <Alert variant="destructive">
           <AlertDescription>
-            Esse link ja foi usado. Por seguranca, peca um novo no login.
+            Esse link já foi usado. Por segurança, peça um novo no login.
           </AlertDescription>
         </Alert>
       )}
@@ -119,7 +119,7 @@ function VerifyInner() {
       {status === "error" && (
         <Alert variant="destructive">
           <AlertDescription>
-            {message ?? "Nao consegui validar agora. Tente novamente."}
+            {message ?? "Não consegui validar agora. Tente novamente."}
           </AlertDescription>
         </Alert>
       )}
@@ -127,7 +127,7 @@ function VerifyInner() {
       {status === "success" && (
         <Alert variant="success">
           <AlertDescription>
-            Tudo certo. Levando voce ao painel...
+            Tudo certo. Levando você ao painel...
           </AlertDescription>
         </Alert>
       )}

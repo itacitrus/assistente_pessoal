@@ -19,7 +19,7 @@ export default async function UserPreferencesPage() {
         ← Voltar ao painel
       </Link>
       <header>
-        <h1 className="text-3xl font-semibold tracking-tight">Preferencias</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Preferências</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Como o Zello deve te tratar e te avisar.
         </p>

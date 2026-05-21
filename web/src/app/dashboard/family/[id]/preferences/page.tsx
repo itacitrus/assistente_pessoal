@@ -39,10 +39,10 @@ export default async function NotifyPreferencesPage({ params }: PageProps) {
       </Link>
       <header>
         <h1 className="text-3xl font-semibold tracking-tight">
-          Notificacoes — {dependent.user.name}
+          Notificações — {dependent.user.name}
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Escolha quais avisos voce quer receber. Voce pode mudar a qualquer
+          Escolha quais avisos você quer receber. Você pode mudar a qualquer
           momento.
         </p>
       </header>
