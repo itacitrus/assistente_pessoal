@@ -57,6 +57,8 @@ var actionLabelsPT = map[string]string{
 	"criar_evento":                "Criou evento",
 	"editar_evento":               "Editou evento",
 	"cancelar_evento":             "Cancelou evento",
+	"gerar_meet":                  "Gerou link do Meet",
+	"convidar_participante":       "Convidou participante",
 	"consultar_agenda":            "Consultou agenda",
 	"confirmar":                   "Confirmou",
 	"negar":                       "Negou",

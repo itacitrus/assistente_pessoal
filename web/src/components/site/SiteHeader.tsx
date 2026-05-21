@@ -11,7 +11,19 @@ export function SiteHeader() {
           <Wordmark />
         </Link>
         <nav className="flex items-center gap-1.5 sm:gap-2">
-          <Button asChild variant="ghost">
+          <a
+            href="/#como-funciona"
+            className="hidden rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground md:inline-flex"
+          >
+            Como funciona
+          </a>
+          <a
+            href="/#privacidade"
+            className="hidden rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground md:inline-flex"
+          >
+            Privacidade
+          </a>
+          <Button asChild variant="ghost" className="hidden sm:inline-flex">
             <Link href="/login">Entrar</Link>
           </Button>
           <Button asChild>

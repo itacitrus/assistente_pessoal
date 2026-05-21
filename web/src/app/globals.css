@@ -76,9 +76,32 @@
     text-wrap: balance;
   }
 
-  /* Grao/noise sutil quente para profundidade */
+  /* Textura "paper": grao quente, suave, tingido para ler como papel antigo */
   .bg-noise {
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 700 700' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n' x='0%25' y='0%25' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='4' stitchTiles='stitch' seed='3'/%3E%3CfeGaussianBlur stdDeviation='0.35'/%3E%3CfeColorMatrix values='0 0 0 0 0.18 0 0 0 0 0.13 0 0 0 0 0.08 0 0 0 0.55 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* Scrollbar fino esmeralda da area de chat do ChatCarousel */
+  .chat-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(31, 107, 76, 0.35) transparent;
+  }
+  .chat-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+  .chat-scroll::-webkit-scrollbar-thumb {
+    background: rgba(31, 107, 76, 0.28);
+    border-radius: 9999px;
+  }
+  .chat-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(31, 107, 76, 0.5);
+  }
+
+  /* Entrada escalonada das bolhas do chat (delay via --bubble-delay) */
+  .animate-bubble {
+    opacity: 0;
+    animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    animation-delay: var(--bubble-delay, 0ms);
   }
 
   /* Sombra quente (nao cinza-azulada) */
@@ -126,7 +149,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .animate-rise,
-  .animate-float-slow {
+  .animate-float-slow,
+  .animate-bubble {
     animation: none !important;
     opacity: 1 !important;
   }

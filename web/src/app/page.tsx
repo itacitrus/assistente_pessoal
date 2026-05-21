@@ -1,16 +1,23 @@
 import Link from "next/link";
 import {
-  Pill,
-  MessageCircleHeart,
-  ShieldCheck,
-  CheckCheck,
-  EyeOff,
+  Bell,
+  Briefcase,
+  Calendar,
+  Check,
+  Eye,
+  Feather,
+  Heart,
   Lock,
+  MessageCircleHeart,
+  Pill,
+  ShieldCheck,
+  type LucideIcon,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { SiteHeader } from "@/components/site/SiteHeader";
 import { SiteFooter } from "@/components/site/SiteFooter";
+import { ChatCarousel } from "@/components/landing/ChatCarousel";
 
 export default function LandingPage() {
   return (
@@ -19,10 +26,10 @@ export default function LandingPage() {
 
       <main className="flex-1">
         <Hero />
-        <Pillars />
+        <TwoWorlds />
         <HowItWorks />
         <Privacy />
-        <FinalCta />
+        <QuietCta />
       </main>
 
       <SiteFooter />
@@ -35,196 +42,191 @@ export default function LandingPage() {
 function Hero() {
   return (
     <section className="relative overflow-hidden">
-      {/* Formas orgânicas de fundo */}
       <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
-        <div className="absolute -left-24 -top-24 h-[28rem] w-[28rem] rounded-full bg-[--zello-emerald]/15 blur-3xl animate-float-slow" />
-        <div className="absolute -right-20 top-24 h-80 w-80 rounded-full bg-[--zello-amber]/25 blur-3xl animate-float-slow [animation-delay:1.5s]" />
-        <div className="absolute bottom-0 left-1/3 h-72 w-72 rounded-full bg-[--zello-emerald]/10 blur-3xl" />
-        <div className="absolute inset-0 bg-noise opacity-[0.5] mix-blend-multiply" />
+        <div className="absolute -left-28 -top-28 h-[30rem] w-[30rem] rounded-full bg-[--zello-emerald]/15 blur-3xl animate-float-slow" />
+        <div className="absolute -right-24 top-16 h-[21rem] w-[21rem] rounded-full bg-[--zello-amber]/25 blur-3xl animate-float-slow [animation-delay:1.5s]" />
+        <div className="absolute -bottom-28 left-1/3 h-72 w-72 rounded-full bg-[--zello-emerald]/10 blur-3xl" />
+        <div className="absolute inset-0 bg-noise opacity-[0.55] mix-blend-multiply" />
       </div>
 
-      <div className="container grid grid-cols-1 items-center gap-12 py-16 md:py-24 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:gap-8">
-        <div className="max-w-xl">
-          <span className="animate-rise inline-flex items-center gap-2 rounded-full border border-border bg-card/70 px-3 py-1 text-sm font-medium text-secondary-foreground shadow-sm [animation-delay:0ms]">
-            <span className="h-2 w-2 rounded-full bg-[--zello-emerald]" />
-            Cuidado pelo WhatsApp, sem app pra instalar
-          </span>
-
-          <h1 className="animate-rise mt-6 text-balance text-4xl font-semibold leading-[1.05] tracking-tight text-foreground sm:text-5xl lg:text-6xl [animation-delay:80ms]">
-            Alguém de olho em quem você ama.
+      <div className="container grid grid-cols-1 items-center gap-10 py-12 md:gap-16 md:py-24 lg:grid-cols-2">
+        <div className="max-w-[520px]">
+          <h1 className="animate-rise text-balance font-display text-[40px] font-semibold leading-[1.02] tracking-[-0.025em] text-foreground md:text-6xl">
+            Pra você.{" "}
+            <span className="italic text-[--zello-emerald]">
+              Pra quem você ama.
+            </span>
           </h1>
 
-          <p className="animate-rise mt-6 text-balance text-lg leading-relaxed text-muted-foreground [animation-delay:160ms]">
-            O Zello é um assistente carinhoso no WhatsApp do seu familiar idoso.
-            Cuida da agenda, lembra dos remédios na hora certa, faz companhia
-            todos os dias — e avisa a família quando algo precisa de atenção.
+          <p className="animate-rise mt-5 text-balance text-base leading-relaxed text-muted-foreground md:mt-6 md:text-[19px] [animation-delay:160ms]">
+            O Zello é um assistente intencional no WhatsApp. Organiza sua semana,
+            lembra dos remédios da sua mãe, garante que ninguém esqueça o judô da
+            Lúcia. Tudo na mesma conversa que você já tem todo dia.
           </p>
 
-          <div className="animate-rise mt-8 flex flex-col gap-3 sm:flex-row [animation-delay:240ms]">
+          <div className="animate-rise mt-7 flex flex-wrap gap-3 md:mt-9 [animation-delay:240ms]">
             <Button asChild size="lg" className="text-base">
               <Link href="/signup">Criar conta</Link>
             </Button>
-            <Button asChild size="lg" variant="outline" className="text-base">
+            <Button
+              asChild
+              size="lg"
+              variant="outline"
+              className="bg-card text-base"
+            >
               <Link href="/login">Já tenho conta</Link>
             </Button>
           </div>
 
-          <p className="animate-rise mt-5 text-sm text-muted-foreground [animation-delay:320ms]">
-            Você configura em minutos. A pessoa cuidada só precisa saber usar o
-            WhatsApp.
-          </p>
+          <div className="animate-rise mt-7 flex flex-wrap gap-x-[18px] gap-y-2 text-[13px] text-muted-foreground [animation-delay:320ms]">
+            <span className="inline-flex items-center gap-1.5">
+              <Check className="h-3.5 w-3.5 text-[--zello-emerald]" /> Sem app
+              pra instalar
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <Check className="h-3.5 w-3.5 text-[--zello-emerald]" /> Configurou
+              em minutos
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <Check className="h-3.5 w-3.5 text-[--zello-emerald]" /> Funciona em
+              português, normal
+            </span>
+          </div>
         </div>
 
-        <div className="animate-rise relative [animation-delay:200ms]">
-          <ChatMock />
+        <div className="animate-rise mx-auto w-full max-w-[420px] lg:mx-0 lg:max-w-none [animation-delay:200ms]">
+          <ChatCarousel />
         </div>
       </div>
     </section>
   );
 }
 
-function ChatMock() {
-  return (
-    <div className="relative mx-auto max-w-sm">
-      {/* leve rotação/profundidade */}
-      <div
-        aria-hidden
-        className="absolute -inset-3 -z-10 rounded-[2rem] bg-[--zello-emerald]/10 blur-xl"
-      />
-      <div className="overflow-hidden rounded-[1.75rem] border border-border bg-card shadow-warm-lg">
-        {/* topo estilo WhatsApp */}
-        <div className="flex items-center gap-3 bg-[--zello-emerald-deep] px-4 py-3 text-[--zello-cream]">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[--zello-cream]/15 font-display text-sm font-semibold">
-            Z
-          </div>
-          <div className="leading-tight">
-            <p className="font-medium">Zello</p>
-            <p className="text-xs text-[--zello-cream]/70">online agora</p>
-          </div>
-        </div>
+/* ------------------------------------------------- Dois mundos, uma conversa */
 
-        {/* mensagens */}
-        <div className="space-y-3 bg-secondary/40 px-4 py-5">
-          <BotBubble time="08:00">
-            Bom dia, Dona Cida! Hora do <strong>Losartana</strong>. Já tomou com
-            um copo d&apos;água? 💊
-          </BotBubble>
-          <UserBubble time="08:03">Tomei sim, querido. Obrigada!</UserBubble>
-          <BotBubble time="08:03">
-            Que ótimo! Anotei aqui. Hoje tem a consulta da tarde, lembra? Te
-            aviso 1h antes. 😊
-          </BotBubble>
-          <UserBubble time="08:04">Ah, ainda bem que você lembra ❤️</UserBubble>
-          <SystemNote>
-            <ShieldCheck className="h-3.5 w-3.5 text-[--zello-emerald]" />
-            Família recebeu: &ldquo;Tudo bem hoje — remédio tomado, bom
-            humor.&rdquo;
-          </SystemNote>
-        </div>
-      </div>
-    </div>
-  );
-}
+type WorldItem = { icon: LucideIcon; title: string; body: string };
+type World = {
+  label: string;
+  icon: LucideIcon;
+  title: string;
+  body: string;
+  items: WorldItem[];
+};
 
-function BotBubble({
-  children,
-  time,
-}: {
-  children: React.ReactNode;
-  time: string;
-}) {
-  return (
-    <div className="flex justify-start">
-      <div className="max-w-[85%] rounded-2xl rounded-tl-md bg-card px-3.5 py-2.5 text-sm leading-relaxed text-card-foreground shadow-sm">
-        <p>{children}</p>
-        <span className="mt-1 block text-right text-[10px] text-muted-foreground">
-          {time}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function UserBubble({
-  children,
-  time,
-}: {
-  children: React.ReactNode;
-  time: string;
-}) {
-  return (
-    <div className="flex justify-end">
-      <div className="max-w-[85%] rounded-2xl rounded-tr-md bg-[--zello-emerald] px-3.5 py-2.5 text-sm leading-relaxed text-[--zello-cream] shadow-sm">
-        <p>{children}</p>
-        <span className="mt-1 flex items-center justify-end gap-1 text-[10px] text-[--zello-cream]/70">
-          {time}
-          <CheckCheck className="h-3 w-3" />
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function SystemNote({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex justify-center pt-1">
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-[--zello-cream] px-3 py-1.5 text-center text-xs text-muted-foreground">
-        {children}
-      </span>
-    </div>
-  );
-}
-
-/* --------------------------------------------------------------- Pilares */
-
-function Pillars() {
-  const pillars = [
+function TwoWorlds() {
+  const worlds: World[] = [
     {
-      icon: Pill,
-      title: "Remédios na hora certa",
-      body: "Lembra com carinho e insiste com gentileza até confirmar. Se o horário passar sem resposta, avisa a família — ninguém fica sem cobertura.",
+      label: "Pra você",
+      icon: Briefcase,
+      title: "Uma semana que respira.",
+      body: "Conflitos antecipados, hora de buscar a filha protegida, foco no que importa. O Zello segura os detalhes pra você focar no que importa.",
+      items: [
+        {
+          icon: Calendar,
+          title: "Marca e organiza",
+          body: "Encaminhe um convite e ele vira evento. Detecta conflitos antes deles existirem.",
+        },
+        {
+          icon: Bell,
+          title: "Avisa antes",
+          body: "Alertas no momento que faz sentido pra você. Quantos quiser, do jeito que precisar.",
+        },
+        {
+          icon: Feather,
+          title: "Protege o que importa",
+          body: "Saída pra buscar a filha, almoço com alguém, bloco de foco — fica no calendário, e ninguém pisa em cima.",
+        },
+      ],
     },
     {
-      icon: MessageCircleHeart,
-      title: "Companhia de verdade",
-      body: "Uma conversa acolhedora todo dia. O Zello lembra do que importa pra pessoa — o neto, a novela, a horta — e puxa assunto de verdade.",
-    },
-    {
-      icon: ShieldCheck,
-      title: "A família tranquila",
-      body: "Você recebe um retrato do bem-estar: humor, energia, autocuidado. Sinais agregados, nunca as mensagens literais. Privacidade respeitada.",
+      label: "Pra quem você ama",
+      icon: Heart,
+      title: "Presença, todos os dias.",
+      body: "O cuidado diário, sem o desgaste diário. O Zello fica com o checklist. Você fica com o vínculo.",
+      items: [
+        {
+          icon: Pill,
+          title: "Remédios na hora certa",
+          body: "Lembra com carinho e insiste com gentileza até confirmar. Se o horário passa sem resposta, a família é avisada — ninguém fica sem cobertura.",
+        },
+        {
+          icon: MessageCircleHeart,
+          title: "Companhia de verdade",
+          body: "Lembra do que importa pra pessoa — o neto, a novela, a horta — e puxa assunto de verdade. Não é chat genérico, é conversa de quem presta atenção.",
+        },
+        {
+          icon: ShieldCheck,
+          title: "Família tranquila",
+          body: "Você recebe um retrato do bem-estar: humor, energia, autocuidado. Sinais agregados, nunca as mensagens literais. Privacidade respeitada.",
+        },
+      ],
     },
   ];
 
   return (
-    <section className="container py-16 md:py-24">
-      <div className="mx-auto max-w-2xl text-center">
-        <h2 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-          Três formas de cuidar, todos os dias
-        </h2>
-        <p className="mt-4 text-balance text-muted-foreground">
-          O Zello acompanha de perto sem ser invasivo — pra pessoa cuidada e pra
-          quem cuida.
-        </p>
-      </div>
+    <section className="border-y border-border/70 bg-secondary/[0.45]">
+      <div className="container py-16 md:py-[88px]">
+        <div className="mx-auto max-w-[620px] text-center">
+          <p className="text-[13px] font-semibold uppercase tracking-[0.12em] text-[--zello-emerald]">
+            Dois mundos, uma conversa
+          </p>
+          <h2 className="mt-3 text-balance font-display text-[28px] font-semibold leading-[1.1] tracking-[-0.02em] md:text-[38px]">
+            O Zello atende a vida toda, sem misturar as caixas.
+          </h2>
+          <p className="mt-4 text-balance text-[15px] leading-relaxed text-muted-foreground md:text-[17px]">
+            Você fala com o Zello no seu WhatsApp. A sua mãe fala com o Zello no
+            WhatsApp dela. Cada um na própria conversa, no próprio ritmo — e tudo
+            conectado por detrás.
+          </p>
+        </div>
 
-      <div className="mt-12 grid grid-cols-1 gap-6 md:grid-cols-3">
-        {pillars.map((p) => (
-          <article
-            key={p.title}
-            className="group rounded-[1.25rem] border border-border bg-card p-7 shadow-warm transition-transform duration-300 hover:-translate-y-1"
-          >
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[--zello-emerald]/10 text-[--zello-emerald]">
-              <p.icon className="h-6 w-6" />
-            </div>
-            <h3 className="mt-5 text-xl font-semibold tracking-tight">
-              {p.title}
-            </h3>
-            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-              {p.body}
-            </p>
-          </article>
-        ))}
+        <div className="mt-10 grid grid-cols-1 gap-5 md:mt-14 md:grid-cols-2 md:gap-7">
+          {worlds.map((w) => (
+            <article
+              key={w.label}
+              className="flex flex-col gap-[18px] rounded-3xl border border-border bg-card p-6 shadow-warm md:p-9"
+            >
+              <div className="flex items-center gap-3">
+                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[--zello-emerald]/10 text-[--zello-emerald]">
+                  <w.icon className="h-5 w-5" />
+                </span>
+                <p className="text-[13px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                  {w.label}
+                </p>
+              </div>
+
+              <h3 className="text-balance font-display text-[22px] font-semibold leading-[1.1] tracking-[-0.02em] md:text-[28px]">
+                {w.title}
+              </h3>
+              <p className="text-[15.5px] leading-[1.65] text-muted-foreground">
+                {w.body}
+              </p>
+
+              <div className="mt-2 flex flex-col border-t border-border/70 pt-2">
+                {w.items.map((it, i) => (
+                  <div
+                    key={it.title}
+                    className={`grid grid-cols-[auto_1fr] items-start gap-4 py-4 ${
+                      i === 0 ? "" : "border-t border-border/70"
+                    }`}
+                  >
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[--zello-emerald]/[0.08] text-[--zello-emerald]">
+                      <it.icon className="h-[18px] w-[18px]" />
+                    </span>
+                    <div>
+                      <p className="font-display text-[17px] font-semibold leading-tight tracking-[-0.01em] text-foreground">
+                        {it.title}
+                      </p>
+                      <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                        {it.body}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
       </div>
     </section>
   );
@@ -235,47 +237,53 @@ function Pillars() {
 function HowItWorks() {
   const steps = [
     {
-      title: "Você cria a conta",
-      body: "Cadastra seu WhatsApp e o da pessoa que vai receber o cuidado.",
+      n: "01",
+      title: "Cria a conta",
+      body: "Cadastra seu WhatsApp em segundos. Se quiser, adiciona quem você cuida — seu pai, sua mãe, seu filho — com o número deles.",
     },
     {
-      title: "Chega o link no WhatsApp",
-      body: "A pessoa cuidada recebe a primeira mensagem do Zello. Nada pra baixar, nada pra configurar.",
+      n: "02",
+      title: "Conecta o Google Calendar",
+      body: "Num toque, o Zello passa a ver sua agenda e marcar pra você. Sem isso ele também funciona pros lembretes — mas com isso ele resolve conflitos.",
     },
     {
-      title: "Conversa em português normal",
-      body: "&ldquo;Marca a consulta de sexta&rdquo;, &ldquo;lembra do remédio das 8&rdquo;, &ldquo;como foi seu dia?&rdquo;. Só conversar.",
+      n: "03",
+      title: "Daí em diante, só conversa.",
+      body: "Você fala como falaria com alguém que entende sua vida. Sem app pra abrir, sem dashboard pra checar. Só o WhatsApp.",
     },
   ];
 
   return (
-    <section className="border-y border-border/70 bg-secondary/30">
-      <div className="container py-16 md:py-24">
-        <div className="mx-auto max-w-2xl text-center">
-          <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+    <section id="como-funciona" className="container py-16 md:py-24">
+      <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-[minmax(220px,280px)_1fr] md:gap-16">
+        <div className="md:sticky md:top-24">
+          <p className="text-[13px] font-semibold uppercase tracking-[0.12em] text-[--zello-emerald]">
             Como funciona
-          </h2>
-          <p className="mt-4 text-muted-foreground">
-            Simples de começar, natural de usar.
           </p>
+          <h2 className="mt-3 text-balance font-display text-[30px] font-semibold leading-[1.05] tracking-[-0.02em] md:text-[38px]">
+            Três passos. Nenhum app.
+          </h2>
         </div>
 
-        <ol className="mx-auto mt-12 grid max-w-4xl grid-cols-1 gap-6 md:grid-cols-3">
+        <ol className="flex flex-col">
           {steps.map((s, i) => (
             <li
-              key={s.title}
-              className="relative rounded-[1.25rem] border border-border bg-card p-7 shadow-warm"
+              key={s.n}
+              className={`grid grid-cols-[auto_1fr] items-start gap-[18px] py-5 md:gap-7 md:py-[26px] ${
+                i === 0 ? "" : "border-t border-border/70"
+              }`}
             >
-              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[--zello-emerald] font-display text-base font-semibold text-[--zello-cream]">
-                {i + 1}
+              <span className="font-display text-[28px] font-medium italic leading-none tracking-[-0.02em] text-[--zello-amber] md:text-[38px]">
+                {s.n}
               </span>
-              <h3 className="mt-5 text-lg font-semibold tracking-tight">
-                {s.title}
-              </h3>
-              <p
-                className="mt-2 text-sm leading-relaxed text-muted-foreground"
-                dangerouslySetInnerHTML={{ __html: s.body }}
-              />
+              <div>
+                <h3 className="font-display text-xl font-semibold tracking-[-0.01em] md:text-2xl">
+                  {s.title}
+                </h3>
+                <p className="mt-1.5 max-w-[520px] text-[15.5px] leading-[1.65] text-muted-foreground">
+                  {s.body}
+                </p>
+              </div>
             </li>
           ))}
         </ol>
@@ -287,105 +295,95 @@ function HowItWorks() {
 /* ------------------------------------------------------------ Privacidade */
 
 function Privacy() {
-  const pillars = [
+  const points: WorldItem[] = [
     {
-      icon: EyeOff,
-      title: "Sinais, nunca conversas",
-      body: "A família acompanha o bem-estar — humor, remédios, atividade. Mas nunca lê o que foi dito. Nem uma linha.",
+      icon: Eye,
+      title: "Você vê sinais, não conversas.",
+      body: "A família recebe um retrato de bem-estar — humor, energia, autocuidado. Nunca o que foi dito.",
     },
     {
       icon: Lock,
-      title: "O que é do idoso, fica com ele",
-      body: "As conversas pertencem a quem as teve. O Zello só compartilha o que ajuda a cuidar — o resto permanece privado.",
+      title: "Nada sai daqui sem propósito.",
+      body: "Conformidade com a LGPD, criptografia em repouso, e cada notificação tem um motivo claro.",
     },
     {
-      icon: ShieldCheck,
-      title: "Em conformidade com a LGPD",
-      body: "Dados criptografados e tratados conforme a lei. E o direito de apagar tudo, a qualquer momento.",
+      icon: Feather,
+      title: "Cuidar não é vigiar.",
+      body: "O Zello insiste com gentileza, não com pressão. Se a pessoa quiser silêncio, ela tem silêncio.",
     },
   ];
 
   return (
-    <section className="container py-16 md:py-24">
-      <div className="relative overflow-hidden rounded-[2rem] border border-[--zello-emerald]/15 bg-[--zello-emerald]/[0.06] px-6 py-12 shadow-warm md:px-12 md:py-16">
-        <div aria-hidden className="pointer-events-none absolute inset-0">
-          <div className="absolute -right-20 -top-24 h-72 w-72 rounded-full bg-[--zello-emerald]/10 blur-3xl" />
-          <div className="absolute inset-0 bg-noise opacity-30 mix-blend-multiply" />
-        </div>
-
-        <div className="relative mx-auto max-w-2xl text-center">
-          <span className="inline-flex items-center gap-2 rounded-full border border-[--zello-emerald]/20 bg-[--zello-cream] px-3 py-1 text-xs font-semibold uppercase tracking-wide text-[--zello-emerald]">
-            <ShieldCheck className="h-3.5 w-3.5" />
+    <section id="privacidade" className="container py-16 md:py-24">
+      <div className="grid grid-cols-1 items-start gap-8 md:grid-cols-[minmax(280px,360px)_1fr] md:gap-16">
+        <div className="md:sticky md:top-24">
+          <p className="text-[13px] font-semibold uppercase tracking-[0.12em] text-[--zello-emerald]">
             Privacidade
-          </span>
-          <h2 className="mt-4 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-            Cuidado não é vigilância
+          </p>
+          <h2 className="mt-3 text-balance font-display text-[32px] font-semibold leading-[1.05] tracking-[-0.02em] md:text-[42px]">
+            Atenção é um tipo de{" "}
+            <span className="italic text-[--zello-emerald]">cuidado</span>.<br />
+            Vigilância é outro.
           </h2>
-          <p className="mt-3 text-balance text-lg leading-relaxed text-muted-foreground">
-            Acompanhar quem amamos exige confiança. Por isso o Zello mostra a
-            você o que importa — sem nunca expor o que foi dito.
+          <p className="mt-5 max-w-[320px] text-balance text-base leading-[1.65] text-muted-foreground">
+            O Zello foi desenhado pra notar o que importa — sem nunca expor o que
+            foi dito. A confiança da pessoa cuidada é o ativo mais frágil do
+            produto, e o tratamos como tal.
           </p>
         </div>
 
-        <div className="relative mx-auto mt-10 grid max-w-5xl grid-cols-1 gap-5 md:grid-cols-3">
-          {pillars.map(({ icon: Icon, title, body }) => (
-            <div
+        <ul className="flex flex-col gap-[22px]">
+          {points.map(({ icon: Icon, title, body }) => (
+            <li
               key={title}
-              className="rounded-[1.5rem] border border-border bg-card p-6 shadow-warm transition-transform duration-200 hover:-translate-y-1"
+              className="grid grid-cols-[40px_1fr] items-start gap-[18px]"
             >
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[--zello-emerald]/10 text-[--zello-emerald]">
-                <Icon className="h-6 w-6" />
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[--zello-emerald]/[0.08] text-[--zello-emerald]">
+                <Icon className="h-5 w-5" />
+              </span>
+              <div>
+                <p className="font-display text-lg font-semibold tracking-[-0.01em] text-foreground md:text-xl">
+                  {title}
+                </p>
+                <p className="mt-1.5 max-w-[520px] text-[15px] leading-relaxed text-muted-foreground">
+                  {body}
+                </p>
               </div>
-              <h3 className="mt-4 text-lg font-semibold tracking-tight">
-                {title}
-              </h3>
-              <p className="mt-2 leading-relaxed text-muted-foreground">
-                {body}
-              </p>
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
       </div>
     </section>
   );
 }
 
-/* --------------------------------------------------------------- CTA final */
+/* ----------------------------------------------------------- Fechamento */
 
-function FinalCta() {
+function QuietCta() {
   return (
-    <section className="container pb-20">
-      <div className="relative overflow-hidden rounded-[2rem] bg-[--zello-emerald-deep] px-8 py-14 text-center md:px-12 md:py-20">
-        <div aria-hidden className="pointer-events-none absolute inset-0">
-          <div className="absolute -right-16 -top-16 h-64 w-64 rounded-full bg-[--zello-amber]/20 blur-3xl" />
-          <div className="absolute -bottom-20 -left-10 h-72 w-72 rounded-full bg-[--zello-emerald]/40 blur-3xl" />
-          <div className="absolute inset-0 bg-noise opacity-30 mix-blend-soft-light" />
-        </div>
-        <div className="relative mx-auto max-w-2xl">
-          <h2 className="text-balance text-3xl font-semibold tracking-tight text-[--zello-cream] sm:text-4xl">
-            Comece a cuidar melhor hoje.
-          </h2>
-          <p className="mt-4 text-balance text-lg text-white">
-            Crie sua conta gratuitamente e deixe o Zello acompanhar quem você
-            ama, com carinho e tranquilidade.
+    <section className="container pb-16 md:pb-24">
+      <div className="mx-auto grid max-w-[980px] grid-cols-1 items-center gap-6 border-t border-border/70 pt-10 md:grid-cols-[1fr_auto] md:gap-10 md:pt-16">
+        <div>
+          <h3 className="text-balance font-display text-[26px] font-semibold leading-[1.1] tracking-[-0.02em] md:text-[30px]">
+            Comece com uma conversa.
+          </h3>
+          <p className="mt-2 max-w-[520px] text-balance text-base text-muted-foreground">
+            Você cadastra seu número, escolhe quem mais o Zello vai acompanhar, e
+            o resto continua no WhatsApp — como sempre foi.
           </p>
-          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <Button
-              asChild
-              size="lg"
-              className="bg-[--zello-amber] text-[--zello-ink] text-base hover:bg-[--zello-amber]/90"
-            >
-              <Link href="/signup">Criar conta grátis</Link>
-            </Button>
-            <Button
-              asChild
-              size="lg"
-              variant="outline"
-              className="border-[--zello-cream]/30 bg-transparent text-base text-[--zello-cream] hover:bg-[--zello-cream]/10 hover:text-[--zello-cream]"
-            >
-              <Link href="/login">Já tenho conta</Link>
-            </Button>
-          </div>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <Button asChild size="lg" className="text-base">
+            <Link href="/signup">Criar conta</Link>
+          </Button>
+          <Button
+            asChild
+            size="lg"
+            variant="outline"
+            className="bg-card text-base"
+          >
+            <Link href="/login">Já tenho conta</Link>
+          </Button>
         </div>
       </div>
     </section>

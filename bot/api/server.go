@@ -182,6 +182,12 @@ func (s *Server) handleDependentResource(w http.ResponseWriter, r *http.Request)
 		s.handleDependentTimeline(w, r, depID)
 	case "medications":
 		s.routeDependentMedications(w, r, depID, subParts)
+	case "welcome":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
+			return
+		}
+		s.handleResendWelcome(w, r, depID)
 	default:
 		writeError(w, http.StatusNotFound, CodeNotFound, "Rota não encontrada.")
 	}

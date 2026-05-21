@@ -12,6 +12,8 @@ var relevantActivityActions = map[string]struct{}{
 	"criar_evento":                {},
 	"editar_evento":               {},
 	"cancelar_evento":             {},
+	"gerar_meet":                  {},
+	"convidar_participante":       {},
 	"family_link_created":         {},
 	"family_link_removed":         {},
 	"family_notify_prefs_updated": {},

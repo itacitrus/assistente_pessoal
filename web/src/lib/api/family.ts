@@ -178,6 +178,21 @@ export async function deleteDependentMedication(
 }
 
 /**
+ * POST /api/v1/family/dependents/{id}/welcome
+ * Reenvia a mensagem de boas-vindas do Zello ao dependente via WhatsApp.
+ * Util quando o envio na criacao falhou ou o dependente foi cadastrado antes
+ * de a feature existir. Devolve `{ ok: true }` so apos o envio confirmar.
+ */
+export async function resendDependentWelcome(
+  id: number,
+): Promise<{ ok: boolean }> {
+  return fetchApi<{ ok: boolean }>(
+    `/api/v1/family/dependents/${id}/welcome`,
+    { method: "POST" },
+  );
+}
+
+/**
  * Converte 0 -> null nos scores psicologicos. Backend serializa 0 quando o
  * sinal nao existe naquele dia (vide Fase 5 §3); manter 0 no frontend
  * confunde com a escala 1..5.

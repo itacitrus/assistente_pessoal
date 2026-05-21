@@ -59,6 +59,48 @@ func (s *Server) handleCreateDependent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, CreateDependentResponse{User: *dep, Link: *link})
 }
 
+// handleResendWelcome — POST /family/dependents/{id}/welcome. Reenvia a
+// mensagem de boas-vindas do Zello ao dependente. Util quando o envio na
+// criacao falhou (WhatsApp fora do ar, numero recem-validado) ou quando o
+// dependente foi cadastrado antes de a feature de boas-vindas existir. Apenas
+// o guardian do dependente pode disparar. Diferente da criacao, aqui o envio
+// NAO eh best-effort: se falhar, devolvemos erro pro usuario saber que nao
+// chegou (o call site eh um clique explicito "Reenviar", nao um efeito colateral).
+func (s *Server) handleResendWelcome(w http.ResponseWriter, r *http.Request, depID int64) {
+	user := userFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Não autenticado.")
+		return
+	}
+	ok, err := s.store.IsGuardianOf(r.Context(), user.ID, depID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao verificar autorizacao.")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusForbidden, CodeForbidden, "Você não é responsável por este dependente.")
+		return
+	}
+	dep, err := s.store.GetUserByID(r.Context(), depID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeError(w, http.StatusNotFound, CodeNotFound, "Dependente não encontrado.")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao buscar dependente.")
+		return
+	}
+	msg := buildDependentWelcomeMessage(dep.Name, user.Name)
+	if err := s.store.SendWhatsApp(r.Context(), dep.PhoneNumber, msg); err != nil {
+		writeError(w, http.StatusBadGateway, CodeInternal,
+			"Não foi possível enviar a mensagem agora. Tente de novo em instantes.")
+		return
+	}
+	s.store.Audit(r.Context(), user.ID, "dependent_welcomed", dep.PhoneNumber,
+		fmt.Sprintf("dependent_id=%d|resend=true", dep.ID))
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 // buildDependentWelcomeMessage compoe a mensagem calorosa de apresentacao do
 // Zello ao idoso recem-cadastrado. Tom companion (caloroso/acolhedor), pt-BR,
 // assinada Zello. `dependentName` e `guardianName` sao nomes completos — usamos

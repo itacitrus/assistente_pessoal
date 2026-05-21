@@ -607,7 +607,7 @@ func (a *apiAdapter) ActivityHistory(ctx context.Context, userID int64, limit in
 	args = append([]any{userID}, args...)
 	args = append(args, limit)
 	query := `
-		SELECT action, created_at
+		SELECT action, details, created_at
 		  FROM action_log
 		 WHERE user_id = ?
 		   AND action IN (` + placeholders + `)
@@ -621,18 +621,83 @@ func (a *apiAdapter) ActivityHistory(ctx context.Context, userID int64, limit in
 
 	out := make([]api.ActivityItem, 0, limit)
 	for rows.Next() {
-		var action string
+		var action, details string
 		var at time.Time
-		if err := rows.Scan(&action, &at); err != nil {
+		if err := rows.Scan(&action, &details, &at); err != nil {
 			return nil, fmt.Errorf("scan activity history: %w", err)
 		}
 		out = append(out, api.ActivityItem{
 			Action: action,
-			Label:  activityLabelPT(action),
+			Label:  enrichActivityLabel(action, details),
 			At:     at.UTC(),
 		})
 	}
 	return out, rows.Err()
+}
+
+// enrichActivityLabel monta o label PT-BR e, para acoes de evento, anexa o
+// titulo do evento (ex: "Criou evento: Dentista") usando o que ja esta gravado
+// em action_log.details. Sem isso, varias linhas viram "Criou evento" generico
+// e indistinguivel. O details tem dois formatos historicos:
+//   - estruturado (criar_evento): "title=Dentista|user_msg=...|date_source=..."
+//   - texto cru (editar/cancelar/gerar_meet/etc): "Reunião com André"
+func enrichActivityLabel(action, details string) string {
+	base := activityLabelPT(action)
+	if !isEventActivity(action) {
+		return base
+	}
+	title := eventTitleFromDetails(details)
+	if title == "" {
+		return base
+	}
+	return base + ": " + title
+}
+
+// eventActivityActions sao as acoes cujo details carrega um titulo de evento
+// que vale a pena exibir junto do label.
+var eventActivityActions = map[string]struct{}{
+	"criar_evento":          {},
+	"editar_evento":         {},
+	"cancelar_evento":       {},
+	"gerar_meet":            {},
+	"convidar_participante": {},
+}
+
+func isEventActivity(action string) bool {
+	_, ok := eventActivityActions[action]
+	return ok
+}
+
+// eventTitleFromDetails extrai o titulo do evento do blob de details. Trata o
+// formato estruturado ("title=X|...") e o texto cru. Retorna "" quando nao da
+// pra inferir um titulo curto e legivel.
+func eventTitleFromDetails(details string) string {
+	details = strings.TrimSpace(details)
+	if details == "" {
+		return ""
+	}
+	if idx := strings.Index(details, "title="); idx >= 0 {
+		rest := details[idx+len("title="):]
+		if pipe := strings.IndexByte(rest, '|'); pipe >= 0 {
+			rest = rest[:pipe]
+		}
+		return truncateTitle(strings.TrimSpace(rest))
+	}
+	// Texto cru: so aceitamos se nao parecer um blob estruturado (sem pipes).
+	if strings.ContainsRune(details, '|') {
+		return ""
+	}
+	return truncateTitle(details)
+}
+
+// truncateTitle limita o titulo exibido a um tamanho razoavel pra nao estourar
+// o layout (o front tambem trunca via CSS, isto eh defesa em profundidade).
+func truncateTitle(s string) string {
+	const max = 80
+	if runes := []rune(s); len(runes) > max {
+		return strings.TrimSpace(string(runes[:max])) + "…"
+	}
+	return s
 }
 
 // relevantActivitySQLArgs devolve a lista de placeholders "?,?,..." e os args

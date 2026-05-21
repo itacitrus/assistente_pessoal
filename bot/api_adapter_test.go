@@ -369,3 +369,62 @@ func TestAdapter_AuditNilSafe(t *testing.T) {
 	a := newAPIAdapter(db, nil, nil, nil, "", nil)
 	a.Audit(context.Background(), 1, "noop", "", "")
 }
+
+// TestEventTitleFromDetails cobre os dois formatos historicos de
+// action_log.details (estruturado "title=...|" e texto cru) alem dos casos em
+// que nao da pra inferir titulo.
+func TestEventTitleFromDetails(t *testing.T) {
+	cases := []struct {
+		name    string
+		details string
+		want    string
+	}{
+		{"estruturado", "title=Dentista|user_msg=6 de junho|date_source=explicit", "Dentista"},
+		{"estruturado_so_title", "title=Reunião BMJ", "Reunião BMJ"},
+		{"texto_cru", "Reunião com André", "Reunião com André"},
+		{"texto_cru_aniversario", "🎂 Aniversário da Tia Monica (aniversario)", "🎂 Aniversário da Tia Monica (aniversario)"},
+		{"vazio", "", ""},
+		{"blob_sem_title", "severity=high|category=mood", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := eventTitleFromDetails(c.details); got != c.want {
+				t.Fatalf("eventTitleFromDetails(%q) = %q, want %q", c.details, got, c.want)
+			}
+		})
+	}
+}
+
+// TestEnrichActivityLabel garante que acoes de evento ganham o titulo e acoes
+// nao-evento ficam com o label base intacto.
+func TestEnrichActivityLabel(t *testing.T) {
+	if got := enrichActivityLabel("criar_evento", "title=Dentista|date_source=explicit"); got != "Criou evento: Dentista" {
+		t.Fatalf("criar_evento enrich = %q", got)
+	}
+	if got := enrichActivityLabel("cancelar_evento", "Jantar com Waldyr"); got != "Cancelou evento: Jantar com Waldyr" {
+		t.Fatalf("cancelar_evento enrich = %q", got)
+	}
+	// Acao de evento sem titulo inferivel cai no label base.
+	if got := enrichActivityLabel("criar_evento", ""); got != "Criou evento" {
+		t.Fatalf("criar_evento sem titulo = %q", got)
+	}
+	// Acao nao-evento nunca recebe sufixo, mesmo com details preenchido.
+	if got := enrichActivityLabel("family_link_created", "Fábio de Freitas"); got != "Cadastrou familiar" {
+		t.Fatalf("family_link_created enrich = %q", got)
+	}
+}
+
+// TestTruncateTitle valida o corte defensivo de titulos longos.
+func TestTruncateTitle(t *testing.T) {
+	long := strings.Repeat("a", 100)
+	got := truncateTitle(long)
+	if r := []rune(got); len(r) > 81 { // 80 + reticencia
+		t.Fatalf("truncateTitle nao limitou: len=%d", len([]rune(got)))
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("truncateTitle deveria terminar com reticencia: %q", got)
+	}
+	if got := truncateTitle("curto"); got != "curto" {
+		t.Fatalf("truncateTitle alterou titulo curto: %q", got)
+	}
+}

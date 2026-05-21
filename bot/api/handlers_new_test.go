@@ -51,6 +51,56 @@ func TestCreateDependent_SendsWelcomeOnce(t *testing.T) {
 	}
 }
 
+func TestResendWelcome_SendsAgain(t *testing.T) {
+	_, store, mux := newTestServer(t)
+	_, cookie := loggedInUser(store, "Fabio", "5511900000001")
+
+	// Cria o dependente (1o envio de boas-vindas acontece aqui).
+	body := map[string]string{
+		"name":         "Joaquim Silva",
+		"phone":        "5511900000002",
+		"relationship": "Pai",
+	}
+	rec := doRequest(t, mux, http.MethodPost, "/api/v1/family/dependents", body, withCookie(cookie))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		User struct {
+			ID int64 `json:"id"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("unmarshal create resp: %v", err)
+	}
+	store.whatsappSent = nil // zera pra isolar o reenvio
+
+	path := "/api/v1/family/dependents/" + strconv.FormatInt(created.User.ID, 10) + "/welcome"
+	rec = doRequest(t, mux, http.MethodPost, path, nil, withCookie(cookie))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("resend status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(store.whatsappSent) != 1 {
+		t.Fatalf("expected 1 resent welcome, got %d", len(store.whatsappSent))
+	}
+	if store.whatsappSent[0].Phone != "5511900000002" {
+		t.Fatalf("resend sent to wrong phone: %q", store.whatsappSent[0].Phone)
+	}
+	if !contains(store.whatsappSent[0].Message, "Joaquim") {
+		t.Fatalf("resend message missing dependent name: %q", store.whatsappSent[0].Message)
+	}
+}
+
+func TestResendWelcome_RejectsNonGuardian(t *testing.T) {
+	_, store, mux := newTestServer(t)
+	_, cookie := loggedInUser(store, "Estranho", "5511900000009")
+	// depID 999 nao tem vinculo com este usuario.
+	rec := doRequest(t, mux, http.MethodPost, "/api/v1/family/dependents/999/welcome", nil, withCookie(cookie))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestBuildDependentWelcomeMessage_Fallbacks(t *testing.T) {
 	// Nomes vazios nao quebram a mensagem.
 	msg := buildDependentWelcomeMessage("", "")
