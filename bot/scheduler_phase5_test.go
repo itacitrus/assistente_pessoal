@@ -282,11 +282,11 @@ func TestShouldRunPhase5_Cooldown(t *testing.T) {
 
 func TestRelationshipPT(t *testing.T) {
 	cases := map[string]string{
-		"filho_de":  "mae",
-		"filha_de":  "mae",
+		"filho_de":  "mãe",
+		"filha_de":  "mãe",
 		"marido_de": "esposa",
 		"esposa_de": "marido",
-		"neto_de":   "avo",
+		"neto_de":   "avó",
 		"weird":     "familiar",
 	}
 	for in, want := range cases {

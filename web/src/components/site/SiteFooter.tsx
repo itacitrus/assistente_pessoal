@@ -8,7 +8,7 @@ export function SiteFooter() {
         <div className="max-w-xs space-y-3">
           <Wordmark />
           <p className="text-sm leading-relaxed text-muted-foreground">
-            Cuidar de quem voce ama, sem complicacao.
+            Cuidar de quem você ama, sem complicação.
           </p>
         </div>
         <nav className="flex flex-col gap-2 text-sm">

@@ -232,11 +232,11 @@ func TestDescribeRRULE(t *testing.T) {
 		in   string
 		want string // substring esperada
 	}{
-		{"FREQ=DAILY;BYHOUR=8;BYMINUTE=0", "todos os dias as 8h"},
+		{"FREQ=DAILY;BYHOUR=8;BYMINUTE=0", "todos os dias às 8h"},
 		{"FREQ=DAILY;BYHOUR=8,20;BYMINUTE=0", "8h e 20h"},
 		{"FREQ=DAILY;BYHOUR=8,14,20;BYMINUTE=0", "8h, 14h e 20h"},
 		{"FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0", "segunda"},
-		{"FREQ=MONTHLY;BYHOUR=10;BYMINUTE=0", "todo mes"},
+		{"FREQ=MONTHLY;BYHOUR=10;BYMINUTE=0", "todo mês"},
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {

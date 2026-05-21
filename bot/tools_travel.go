@@ -41,7 +41,7 @@ func handleRegistrarViagem(ctx context.Context, agent *Agent, user *User, params
 	}
 	if err := agent.db.CreateTravelPeriod(period); err != nil {
 		if errors.Is(err, ErrTravelPeriodOverlap) {
-			return "Ja existe um periodo de viagem sobreposto a essas datas. Liste as viagens existentes antes de registrar uma nova.", nil
+			return "Já existe um período de viagem sobreposto a essas datas. Liste as viagens existentes antes de registrar uma nova.", nil
 		}
 		return "", fmt.Errorf("create travel period: %w", err)
 	}
@@ -73,7 +73,7 @@ func handleRegistrarViagem(ctx context.Context, agent *Agent, user *User, params
 	if err != nil {
 		// Period was created; we just can't preview events. Surface a softer message.
 		agent.audit.Log(user.ID, "registrar_viagem", "", fmt.Sprintf("%s %s-%s", p.LocationName, p.StartDate, p.EndDate))
-		return fmt.Sprintf("Viagem registrada: %s de %s a %s (%s). Nao consegui listar compromissos existentes na janela.",
+		return fmt.Sprintf("Viagem registrada: %s de %s a %s (%s). Não consegui listar compromissos existentes na janela.",
 			p.LocationName, p.StartDate, p.EndDate, p.Timezone), nil
 	}
 
@@ -107,14 +107,14 @@ func handleRegistrarViagem(ctx context.Context, agent *Agent, user *User, params
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Viagem registrada: %s de %s a %s (%s). Marcador '✈️ Viagem: %s' criado na agenda.\n\n",
 		p.LocationName, p.StartDate, p.EndDate, p.Timezone, p.LocationName)
-	fmt.Fprintf(&sb, "Compromissos ja marcados nessa janela (%d):\n", len(events))
+	fmt.Fprintf(&sb, "Compromissos já marcados nessa janela (%d):\n", len(events))
 	for _, ev := range events {
 		origTime := ev.Start.In(BRT()).Format("02/01 15:04")
 		destTime := ev.Start.In(destLoc).Format("15:04")
 		fmt.Fprintf(&sb, "- [id:%s] %s — %s BRT (= %s em %s)\n",
 			ev.ID, ev.Title, origTime, destTime, p.LocationName)
 	}
-	sb.WriteString("\nIMPORTANTE: pergunte ao usuario, em linguagem natural, quais compromissos ele quer MANTER no horario atual (BRT) e quais quer CONVERTER para o horario local de destino. Para cada um que ele pedir para converter, chame editar_evento com new_time no horario de destino e timezone adequado.")
+	sb.WriteString("\nIMPORTANTE: pergunte ao usuário, em linguagem natural, quais compromissos ele quer MANTER no horário atual (BRT) e quais quer CONVERTER para o horário local de destino. Para cada um que ele pedir para converter, chame editar_evento com new_time no horário de destino e timezone adequado.")
 	return sb.String(), nil
 }
 
@@ -167,11 +167,11 @@ func handleCancelarViagem(ctx context.Context, agent *Agent, user *User, params 
 			}
 		}
 		if len(matches) == 0 {
-			return fmt.Sprintf("Nao encontrei viagem com o nome %q.", p.LocationName), nil
+			return fmt.Sprintf("Não encontrei viagem com o nome %q.", p.LocationName), nil
 		}
 		if len(matches) > 1 {
 			var sb strings.Builder
-			sb.WriteString("Varias viagens com esse nome. Peca pro usuario especificar ou use period_id:\n")
+			sb.WriteString("Várias viagens com esse nome. Peça pro usuário especificar ou use period_id:\n")
 			for _, m := range matches {
 				fmt.Fprintf(&sb, "- [id:%d] %s %s a %s\n", m.ID, m.LocationName,
 					m.StartDate.Format(dateLayout), m.EndDate.Format(dateLayout))

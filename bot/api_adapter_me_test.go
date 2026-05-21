@@ -43,12 +43,13 @@ func TestRecentActivity_OrderLimitLabels(t *testing.T) {
 	}
 
 	base := time.Now().UTC()
-	// Insere 10 entradas com timestamps crescentes; esperamos as 8 mais recentes.
+	// Insere 10 entradas RELEVANTES com timestamps crescentes; esperamos as 8
+	// mais recentes.
 	for i := 0; i < 10; i++ {
 		insertActionLog(t, db, u.ID, "criar_evento", base.Add(time.Duration(i)*time.Minute))
 	}
-	// Uma acao sem label mapeado pra checar fallback.
-	insertActionLog(t, db, u.ID, "acao_desconhecida", base.Add(20*time.Minute))
+	// Uma acao de RUIDO (consulta) mais recente — deve ser filtrada pelo allowlist.
+	insertActionLog(t, db, u.ID, "consultar_agenda", base.Add(20*time.Minute))
 
 	items, err := a.RecentActivity(context.Background(), u.ID, 8)
 	if err != nil {
@@ -57,12 +58,9 @@ func TestRecentActivity_OrderLimitLabels(t *testing.T) {
 	if len(items) != 8 {
 		t.Fatalf("len = %d, want 8", len(items))
 	}
-	// Mais recente primeiro: a acao_desconhecida (base+20min).
-	if items[0].Action != "acao_desconhecida" {
-		t.Fatalf("primeiro action = %q, want acao_desconhecida", items[0].Action)
-	}
-	if items[0].Label != "acao_desconhecida" {
-		t.Fatalf("fallback label = %q, want a propria action", items[0].Label)
+	// O ruido (consultar_agenda) foi filtrado: o mais recente eh criar_evento.
+	if items[0].Action != "criar_evento" {
+		t.Fatalf("primeiro action = %q, want criar_evento (ruido filtrado)", items[0].Action)
 	}
 	// Ordem desc por created_at.
 	for i := 1; i < len(items); i++ {
@@ -71,8 +69,8 @@ func TestRecentActivity_OrderLimitLabels(t *testing.T) {
 		}
 	}
 	// Label conhecido mapeado.
-	if items[1].Label != "Criou evento" {
-		t.Fatalf("label criar_evento = %q", items[1].Label)
+	if items[0].Label != "Criou evento" {
+		t.Fatalf("label criar_evento = %q", items[0].Label)
 	}
 }
 
@@ -83,7 +81,7 @@ func TestRecentActivity_DefaultLimit(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 	for i := 0; i < 12; i++ {
-		insertActionLog(t, db, u.ID, "consultar_agenda", time.Now().UTC().Add(time.Duration(i)*time.Minute))
+		insertActionLog(t, db, u.ID, "medication_taken", time.Now().UTC().Add(time.Duration(i)*time.Minute))
 	}
 	items, err := a.RecentActivity(context.Background(), u.ID, 0) // 0 -> default 8
 	if err != nil {
@@ -91,6 +89,34 @@ func TestRecentActivity_DefaultLimit(t *testing.T) {
 	}
 	if len(items) != 8 {
 		t.Fatalf("len = %d, want 8 (default limit)", len(items))
+	}
+}
+
+func TestRecentActivity_FiltersNoise(t *testing.T) {
+	a, db, _ := mkAdapter(t)
+	u := &User{PhoneNumber: "5511988884444", Name: "Carla", Type: UserTypeComum}
+	if err := db.CreateUser(u); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	base := time.Now().UTC()
+	// Mistura ruido (consultas/sistema) com acoes relevantes.
+	insertActionLog(t, db, u.ID, "consultar_agenda", base.Add(1*time.Minute))
+	insertActionLog(t, db, u.ID, "web_login_succeeded", base.Add(2*time.Minute))
+	insertActionLog(t, db, u.ID, "criar_evento", base.Add(3*time.Minute))
+	insertActionLog(t, db, u.ID, "synthesis_executed", base.Add(4*time.Minute))
+	insertActionLog(t, db, u.ID, "medication_taken", base.Add(5*time.Minute))
+
+	items, err := a.ActivityHistory(context.Background(), u.ID, 100)
+	if err != nil {
+		t.Fatalf("ActivityHistory: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("len = %d, want 2 relevantes", len(items))
+	}
+	for _, it := range items {
+		if it.Action != "criar_evento" && it.Action != "medication_taken" {
+			t.Fatalf("acao de ruido vazou: %q", it.Action)
+		}
 	}
 }
 

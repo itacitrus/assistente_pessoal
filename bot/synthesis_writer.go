@@ -247,18 +247,18 @@ func (w *snapshotWriterImpl) handleSafetyAlertFromWriter(ctx context.Context, el
 // Tom mais sobrio que alertar_familia direto — eh padrao detectado por
 // observador externo, nao chamada do companion no calor da conversa.
 func formatSafetyNetMessage(elder *User, sa *synthesis.SafetyAlert) string {
-	prefix := "Aviso — observamos sinais que merecem atencao em " + elder.Name + "."
+	prefix := "Aviso — observamos sinais que merecem atenção em " + elder.Name + "."
 	switch sa.Severity {
 	case "critical":
-		prefix = "URGENTE — " + elder.Name + " apresentou sinais que precisam de atencao agora."
+		prefix = "URGENTE — " + elder.Name + " apresentou sinais que precisam de atenção agora."
 	case "warn":
-		prefix = "Atencao — observamos algo preocupante em " + elder.Name + "."
+		prefix = "Atenção — observamos algo preocupante em " + elder.Name + "."
 	}
-	body := prefix + "\n\nObservacao: " + sa.Reason
+	body := prefix + "\n\nObservação: " + sa.Reason
 	if sa.Recommended != "" {
-		body += "\n\nSugestao: " + sa.Recommended
+		body += "\n\nSugestão: " + sa.Recommended
 	}
-	body += "\n\n— Lurch (companion de " + elder.Name + ")"
+	body += "\n\n— Zello (companion de " + elder.Name + ")"
 	return body
 }
 

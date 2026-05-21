@@ -84,7 +84,7 @@ func handleStatusDependente(ctx context.Context, agent *Agent, user *User, param
 		return "", fmt.Errorf("is guardian of: %w", err)
 	}
 	if !ok {
-		return fmt.Sprintf("Voce nao tem autorizacao pra consultar o status de %s. Se acha que isso esta errado, peca pra %s te cadastrar como responsavel.", dep.Name, dep.Name), nil
+		return fmt.Sprintf("Você não tem autorização pra consultar o status de %s. Se acha que isso está errado, peça pra %s te cadastrar como responsável.", dep.Name, dep.Name), nil
 	}
 
 	consent, err := agent.db.GetDependentConsent(user.ID, dep.ID)
@@ -93,7 +93,7 @@ func handleStatusDependente(ctx context.Context, agent *Agent, user *User, param
 	}
 	if consent == ConsentRevoked {
 		// Mensagem padrao — sem vazar dados, sem revelar o que existia antes.
-		return fmt.Sprintf("%s revogou o consentimento de relatorio agregado. Voce ainda pode entrar em contato direto.", dep.Name), nil
+		return fmt.Sprintf("%s revogou o consentimento de relatório agregado. Você ainda pode entrar em contato direto.", dep.Name), nil
 	}
 
 	report, err := BuildDependentStatus(ctx, agent.db, agent.report, dep, p.Days)
@@ -196,7 +196,7 @@ func BuildDependentStatus(ctx context.Context, db *DB, report llm.ReportProvider
 		if sErr != nil {
 			rep.Synthesis = synthesis.ReportOutput{
 				Tendencia:        "indeterminado",
-				Resumo:           "Nao foi possivel gerar sintese agora.",
+				Resumo:           "Não foi possível gerar síntese agora.",
 				NivelPreocupacao: "indeterminado",
 			}
 			// Caller registra synthesis_failed se tiver auditor.
@@ -211,7 +211,7 @@ func BuildDependentStatus(ctx context.Context, db *DB, report llm.ReportProvider
 		// Sem report client (testes) — fallback explicito.
 		rep.Synthesis = synthesis.ReportOutput{
 			Tendencia:        "indeterminado",
-			Resumo:           "Nao foi possivel gerar sintese (provider nao configurado).",
+			Resumo:           "Não foi possível gerar síntese (provider não configurado).",
 			NivelPreocupacao: "indeterminado",
 		}
 	}
@@ -309,9 +309,9 @@ func toSynthesisAlerts(alerts []FamilyAlert) []synthesis.Alert {
 // formatStatusError eh a saida amigavel quando resolveDependent falha.
 func formatStatusError(err error) string {
 	if errors.Is(err, ErrUserNotFound) {
-		return "Nao encontrei esse dependente nos meus registros. Confere o nome ou pede pra ele se cadastrar primeiro."
+		return "Não encontrei esse dependente nos meus registros. Confere o nome ou pede pra ele se cadastrar primeiro."
 	}
-	return fmt.Sprintf("Nao consegui localizar o dependente: %v", err)
+	return fmt.Sprintf("Não consegui localizar o dependente: %v", err)
 }
 
 // formatStatusForChat eh a renderizacao pro WhatsApp. Foco no que cabe em
@@ -319,35 +319,35 @@ func formatStatusError(err error) string {
 // resumo, ponto de atencao, 1 sugestao.
 func formatStatusForChat(r *DependentStatusReport) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Status de %s (ultimos %d dias):\n\n", r.Dependent.Name, r.Days))
+	sb.WriteString(fmt.Sprintf("Status de %s (últimos %d dias):\n\n", r.Dependent.Name, r.Days))
 
-	// Tendencia (estrela).
+	// Tendência (estrela).
 	if r.Synthesis.Tendencia != "" {
-		sb.WriteString(fmt.Sprintf("Tendencia: %s.\n", r.Synthesis.Tendencia))
+		sb.WriteString(fmt.Sprintf("Tendência: %s.\n", r.Synthesis.Tendencia))
 	}
 	if r.Synthesis.Comparacao != "" {
 		sb.WriteString(r.Synthesis.Comparacao + "\n")
 	}
 
-	// Medicacao.
+	// Medicação.
 	if r.Medication.Scheduled == 0 {
-		sb.WriteString("Sem medicacoes cadastradas.\n")
+		sb.WriteString("Sem medicações cadastradas.\n")
 	} else {
 		pct := int(100 * r.Medication.AdherenceFrac)
-		sb.WriteString(fmt.Sprintf("Aderencia 7d: %d/%d doses (%d%%).\n",
+		sb.WriteString(fmt.Sprintf("Aderência 7d: %d/%d doses (%d%%).\n",
 			r.Medication.Taken, r.Medication.Scheduled, pct))
 	}
 
-	// Ultima conversa.
+	// Última conversa.
 	switch {
 	case !r.LastUserMessageAt.Valid:
-		sb.WriteString("Ainda nao houve conversa.\n")
+		sb.WriteString("Ainda não houve conversa.\n")
 	case r.DaysSinceLastTalk == 0:
-		sb.WriteString("Falou com o Lurch hoje.\n")
+		sb.WriteString("Falou com o Zello hoje.\n")
 	case r.DaysSinceLastTalk == 1:
-		sb.WriteString("Ultima conversa: ontem.\n")
+		sb.WriteString("Última conversa: ontem.\n")
 	default:
-		sb.WriteString(fmt.Sprintf("Ultima conversa ha %d dias.\n", r.DaysSinceLastTalk))
+		sb.WriteString(fmt.Sprintf("Última conversa há %d dias.\n", r.DaysSinceLastTalk))
 	}
 
 	if len(r.AlertsOpen) > 0 {
@@ -356,10 +356,10 @@ func formatStatusForChat(r *DependentStatusReport) string {
 
 	sb.WriteString("\n" + r.Synthesis.Resumo)
 	if r.Synthesis.PontoDeAtencao != "" {
-		sb.WriteString("\n\nPonto de atencao: " + r.Synthesis.PontoDeAtencao)
+		sb.WriteString("\n\nPonto de atenção: " + r.Synthesis.PontoDeAtencao)
 	}
 	if len(r.Synthesis.RecomendacoesCarinhosas) > 0 {
-		sb.WriteString("\n\nSugestao: " + r.Synthesis.RecomendacoesCarinhosas[0])
+		sb.WriteString("\n\nSugestão: " + r.Synthesis.RecomendacoesCarinhosas[0])
 	}
 	return sb.String()
 }

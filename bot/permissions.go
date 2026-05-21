@@ -108,11 +108,11 @@ func (pm *PermissionManager) ResolveByName(name string) (*User, error) {
 // FormatAccessList formats the list of users the grantee can schedule for.
 func (pm *PermissionManager) FormatAccessList(granteeName string, targets []User) string {
 	if len(targets) == 0 {
-		return fmt.Sprintf("%s, voce ainda nao tem permissao para agendar na agenda de ninguem.", granteeName)
+		return fmt.Sprintf("%s, você ainda não tem permissão para agendar na agenda de ninguém.", granteeName)
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%s, voce pode agendar na agenda de:\n", granteeName))
+	sb.WriteString(fmt.Sprintf("%s, você pode agendar na agenda de:\n", granteeName))
 	for _, u := range targets {
 		sb.WriteString(fmt.Sprintf("  - %s\n", u.Name))
 	}
@@ -133,7 +133,7 @@ func (pm *PermissionManager) RequestPermission(requester *User, target *User, ev
 	}
 
 	msg := fmt.Sprintf(
-		"%s quer criar um evento na sua agenda. Voce autoriza? Pode responder em texto livre — por exemplo: sim (so desta vez), sempre (autoriza permanente), ou nao.",
+		"%s quer criar um evento na sua agenda. Você autoriza? Pode responder em texto livre — por exemplo: sim (só desta vez), sempre (autoriza permanente), ou não.",
 		requester.Name,
 	)
 	return msg, nil
@@ -179,7 +179,7 @@ func (pm *PermissionManager) ResolvePendingPermission(target *User, decision Res
 			return "", "", "", err
 		}
 		return fmt.Sprintf("Ok! %s agora pode sempre agendar na sua agenda.", requester.Name),
-			fmt.Sprintf("%s concedeu acesso permanente a voce.", target.Name),
+			fmt.Sprintf("%s concedeu acesso permanente a você.", target.Name),
 			requester.PhoneNumber, nil
 
 	case DecisionDeny:

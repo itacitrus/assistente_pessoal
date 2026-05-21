@@ -70,7 +70,7 @@ func handleCadastrarMedicamento(ctx context.Context, agent *Agent, user *User, p
 		return "", fmt.Errorf("parse params: %w", err)
 	}
 	if strings.TrimSpace(p.Name) == "" || strings.TrimSpace(p.ScheduleRRULE) == "" {
-		return "Preciso do nome do medicamento e dos horarios. Pergunte ao usuario.", nil
+		return "Preciso do nome do medicamento e dos horários. Pergunte ao usuário.", nil
 	}
 
 	target, denyMsg, err := resolveTargetForMedication(agent, user, p.TargetUser)
@@ -82,7 +82,7 @@ func handleCadastrarMedicamento(ctx context.Context, agent *Agent, user *User, p
 	}
 
 	if _, err := ParseRRULE(p.ScheduleRRULE); err != nil {
-		return fmt.Sprintf("Nao consegui entender o horario '%s' (%v). Pode descrever em palavras (ex: 'todos os dias as 8h')?", p.ScheduleRRULE, err), nil
+		return fmt.Sprintf("Não consegui entender o horário '%s' (%v). Pode descrever em palavras (ex: 'todos os dias às 8h')?", p.ScheduleRRULE, err), nil
 	}
 
 	startDate := strings.TrimSpace(p.StartDate)
@@ -153,9 +153,9 @@ func handleListarMedicamentos(ctx context.Context, agent *Agent, user *User, par
 	}
 	if len(meds) == 0 {
 		if target.ID == user.ID {
-			return "Voce nao tem medicamentos cadastrados.", nil
+			return "Você não tem medicamentos cadastrados.", nil
 		}
-		return fmt.Sprintf("%s nao tem medicamentos cadastrados.", target.Name), nil
+		return fmt.Sprintf("%s não tem medicamentos cadastrados.", target.Name), nil
 	}
 	var sb strings.Builder
 	if target.ID == user.ID {
@@ -170,7 +170,7 @@ func handleListarMedicamentos(ctx context.Context, agent *Agent, user *User, par
 			if m.Dose != "" {
 				line += " " + m.Dose
 			}
-			sb.WriteString(line + " (sem horarios)\n")
+			sb.WriteString(line + " (sem horários)\n")
 			continue
 		}
 		for _, s := range scheds {
@@ -180,7 +180,7 @@ func handleListarMedicamentos(ctx context.Context, agent *Agent, user *User, par
 			}
 			line += " — " + DescribeRRULE(s.RRULE)
 			if s.Critical {
-				line += " (critico)"
+				line += " (crítico)"
 			}
 			sb.WriteString(line + "\n")
 		}
@@ -218,7 +218,7 @@ func handleEditarMedicamento(ctx context.Context, agent *Agent, user *User, para
 
 	if p.NewScheduleRRULE != "" {
 		if _, err := ParseRRULE(p.NewScheduleRRULE); err != nil {
-			return fmt.Sprintf("Nao consegui entender o novo horario '%s' (%v).", p.NewScheduleRRULE, err), nil
+			return fmt.Sprintf("Não consegui entender o novo horário '%s' (%v).", p.NewScheduleRRULE, err), nil
 		}
 	}
 
@@ -266,7 +266,7 @@ func handleEditarMedicamento(ctx context.Context, agent *Agent, user *User, para
 		if strings.TrimSpace(p.NewEndDate) != "" {
 			ed, parseErr := time.ParseInLocation(dateLayout, p.NewEndDate, BRT())
 			if parseErr != nil {
-				return fmt.Sprintf("Nao entendi a data de fim '%s' (use YYYY-MM-DD).", p.NewEndDate), nil
+				return fmt.Sprintf("Não entendi a data de fim '%s' (use YYYY-MM-DD).", p.NewEndDate), nil
 			}
 			endDatePtr = &ed
 		}
@@ -330,7 +330,7 @@ func handleCancelarMedicamento(ctx context.Context, agent *Agent, user *User, pa
 	}
 	agent.audit.Log(user.ID, "medication_canceled", med.Name,
 		fmt.Sprintf("med_id=%d|reason=%s", med.ID, strings.TrimSpace(p.Reason)))
-	return fmt.Sprintf("Cancelei %s. Os lembretes futuros vao parar.", med.Name), nil
+	return fmt.Sprintf("Cancelei %s. Os lembretes futuros vão parar.", med.Name), nil
 }
 
 // =========================================================================
@@ -364,12 +364,12 @@ func handleMarcarRemedioTomado(ctx context.Context, agent *Agent, user *User, pa
 				return fmt.Sprintf("Anotado, %s.", firstName(user.Name)), nil
 			}
 		}
-		return "Nao tenho lembrete de remedio em aberto pra anotar.", nil
+		return "Não tenho lembrete de remédio em aberto pra anotar.", nil
 	}
 
 	mi := parseMedicationIntent(pc)
 	if mi == nil || mi.MedicationID == 0 {
-		return "Anotei, mas nao identifiquei qual lembrete. Se o lembrete vier de novo, me avisa.", nil
+		return "Anotei, mas não identifiquei qual lembrete. Se o lembrete vier de novo, me avisa.", nil
 	}
 
 	if err := agent.db.UpdateIntakeStatus(mi.MedicationID, mi.ScheduledAt, IntakeTaken, "tomei"); err != nil {
@@ -407,7 +407,7 @@ func handlePularDose(ctx context.Context, agent *Agent, user *User, params json.
 		return "", fmt.Errorf("parse params: %w", err)
 	}
 	if strings.TrimSpace(p.Reason) == "" {
-		return "Preciso saber a razao do pulo (ex: 'esqueci de comprar', 'estou enjoado'). Pergunte ao usuario.", nil
+		return "Preciso saber a razão do pulo (ex: 'esqueci de comprar', 'estou enjoado'). Pergunte ao usuário.", nil
 	}
 
 	pc, err := agent.db.GetActivePendingForUserAndMedication(user.ID, p.MedicationID)
@@ -415,11 +415,11 @@ func handlePularDose(ctx context.Context, agent *Agent, user *User, params json.
 		return "", fmt.Errorf("get pending: %w", err)
 	}
 	if pc == nil {
-		return "Nao tenho lembrete em aberto pra registrar como pulada.", nil
+		return "Não tenho lembrete em aberto pra registrar como pulada.", nil
 	}
 	mi := parseMedicationIntent(pc)
 	if mi == nil || mi.MedicationID == 0 {
-		return "Anotei o pulo, mas nao identifiquei qual lembrete.", nil
+		return "Anotei o pulo, mas não identifiquei qual lembrete.", nil
 	}
 
 	if err := agent.db.UpdateIntakeStatus(mi.MedicationID, mi.ScheduledAt, IntakeSkipped, p.Reason); err != nil {
@@ -437,7 +437,7 @@ func handlePularDose(ctx context.Context, agent *Agent, user *User, params json.
 	agent.audit.Log(user.ID, "medication_skipped", medName,
 		fmt.Sprintf("med_id=%d|pc=%d|reason=%s", mi.MedicationID, pc.ID, strings.TrimSpace(p.Reason)))
 
-	return fmt.Sprintf("Anotei que voce pulou esta dose (%s).", strings.TrimSpace(p.Reason)), nil
+	return fmt.Sprintf("Anotei que você pulou esta dose (%s).", strings.TrimSpace(p.Reason)), nil
 }
 
 // =========================================================================
@@ -479,7 +479,7 @@ func handleExtrairReceitaImagem(ctx context.Context, agent *Agent, user *User, p
 		return "", fmt.Errorf("parse params: %w", err)
 	}
 	if len(p.Items) == 0 {
-		return "Nao consegui identificar medicamentos na imagem. Pode me mandar de novo, ou descrever em texto?", nil
+		return "Não consegui identificar medicamentos na imagem. Pode me mandar de novo, ou descrever em texto?", nil
 	}
 
 	// Audit: extracao bruta para revisao posterior. NUNCA persiste a imagem
@@ -489,19 +489,19 @@ func handleExtrairReceitaImagem(ctx context.Context, agent *Agent, user *User, p
 
 	// Sumario para o agente seguir o fluxo item-a-item (vide §7 do plano).
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Extraidos %d medicamentos da receita. ", len(p.Items)))
-	sb.WriteString("Apresentar item-a-item ao usuario em linguagem natural, sem menu numerado, ")
-	sb.WriteString("perguntando o horario de cada um, e chamar cadastrar_medicamento ao confirmar:\n")
+	sb.WriteString(fmt.Sprintf("Extraídos %d medicamentos da receita. ", len(p.Items)))
+	sb.WriteString("Apresentar item-a-item ao usuário em linguagem natural, sem menu numerado, ")
+	sb.WriteString("perguntando o horário de cada um, e chamar cadastrar_medicamento ao confirmar:\n")
 	for i, it := range p.Items {
 		line := fmt.Sprintf("%d. %s", i+1, it.Name)
 		if strings.TrimSpace(it.Dose) != "" {
 			line += " " + it.Dose
 		}
 		if strings.TrimSpace(it.FrequencyText) != "" {
-			line += " (frequencia: " + it.FrequencyText + ")"
+			line += " (frequência: " + it.FrequencyText + ")"
 		}
 		if strings.TrimSpace(it.DurationText) != "" {
-			line += " (duracao: " + it.DurationText + ")"
+			line += " (duração: " + it.DurationText + ")"
 		}
 		sb.WriteString(line + "\n")
 	}
@@ -558,14 +558,14 @@ func resolveTargetForMedication(agent *Agent, user *User, targetName string) (*U
 		return nil, "", fmt.Errorf("resolve target: %w", err)
 	}
 	if t == nil {
-		return nil, fmt.Sprintf("Nao encontrei o usuario '%s'.", targetName), nil
+		return nil, fmt.Sprintf("Não encontrei o usuário '%s'.", targetName), nil
 	}
 	can, err := agent.db.CanManageMedicationFor(user.ID, t.ID)
 	if err != nil {
 		return nil, "", fmt.Errorf("check family link: %w", err)
 	}
 	if !can {
-		return nil, fmt.Sprintf("Voce nao tem permissao pra mexer em medicamento de %s. Cadastre o vinculo familiar primeiro.", t.Name), nil
+		return nil, fmt.Sprintf("Você não tem permissão pra mexer em medicamento de %s. Cadastre o vínculo familiar primeiro.", t.Name), nil
 	}
 	return t, "", nil
 }
@@ -578,14 +578,14 @@ func resolveMedication(agent *Agent, user *User, id int64, nameQuery string) (*M
 		med, err := agent.db.GetMedicationByID(id)
 		if err != nil {
 			if errors.Is(err, ErrMedicationNotFound) {
-				return nil, fmt.Sprintf("Nao achei medicamento com id %d.", id), nil
+				return nil, fmt.Sprintf("Não achei medicamento com id %d.", id), nil
 			}
 			return nil, "", fmt.Errorf("get medication: %w", err)
 		}
 		if med.UserID != user.ID {
 			can, _ := agent.db.CanManageMedicationFor(user.ID, med.UserID)
 			if !can {
-				return nil, "Esse medicamento nao eh seu e voce nao tem permissao pra mexer.", nil
+				return nil, "Esse medicamento não é seu e você não tem permissão pra mexer.", nil
 			}
 		}
 		return med, "", nil
@@ -603,5 +603,5 @@ func resolveMedication(agent *Agent, user *User, id int64, nameQuery string) (*M
 			return &meds[i], "", nil
 		}
 	}
-	return nil, fmt.Sprintf("Nao achei medicamento com nome parecido com '%s'.", nameQuery), nil
+	return nil, fmt.Sprintf("Não achei medicamento com nome parecido com '%s'.", nameQuery), nil
 }

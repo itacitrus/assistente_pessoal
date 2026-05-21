@@ -64,11 +64,11 @@ func (s *Server) RequireAuth(next http.Handler) http.Handler {
 			clearSessionCookie(w, s.cookieSecure, s.cookieDomain)
 			switch {
 			case errors.Is(err, ErrSessionExpired):
-				writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Sua sessao expirou. Faca login de novo.")
+				writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Sua sessão expirou. Faça login de novo.")
 			case errors.Is(err, ErrSessionInvalid), errors.Is(err, ErrNotFound):
-				writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Sessao invalida.")
+				writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Sessão inválida.")
 			default:
-				writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao validar sessao.")
+				writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao validar sessão.")
 			}
 			return
 		}
@@ -79,7 +79,7 @@ func (s *Server) RequireAuth(next http.Handler) http.Handler {
 		user, err := s.store.GetUserByID(ctx, userID)
 		if err != nil {
 			clearSessionCookie(w, s.cookieSecure, s.cookieDomain)
-			writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Usuario da sessao nao existe mais.")
+			writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Usuário da sessão não existe mais.")
 			return
 		}
 
@@ -108,11 +108,11 @@ func (s *Server) RequireOrigin(next http.Handler) http.Handler {
 		origin := r.Header.Get("Origin")
 		if origin == "" {
 			// Sem Origin em request mutativo: bloqueia.
-			writeError(w, http.StatusForbidden, CodeOriginForbidden, "Origin header obrigatorio.")
+			writeError(w, http.StatusForbidden, CodeOriginForbidden, "Origin header obrigatório.")
 			return
 		}
 		if !s.originAllowed(origin) {
-			writeError(w, http.StatusForbidden, CodeOriginForbidden, "Origin nao autorizado.")
+			writeError(w, http.StatusForbidden, CodeOriginForbidden, "Origin não autorizado.")
 			return
 		}
 		next.ServeHTTP(w, r)

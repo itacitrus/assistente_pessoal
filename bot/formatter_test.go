@@ -119,10 +119,10 @@ func TestRelativeDayLabel(t *testing.T) {
 	}{
 		{"mesmo dia retorna HOJE", time.Date(2026, 4, 16, 15, 0, 0, 0, brt), "HOJE"},
 		{"mesmo dia mais cedo retorna HOJE", time.Date(2026, 4, 16, 6, 0, 0, 0, brt), "HOJE"},
-		{"proximo dia retorna AMANHA", time.Date(2026, 4, 17, 5, 0, 0, 0, brt), "AMANHA"},
+		{"proximo dia retorna AMANHA", time.Date(2026, 4, 17, 5, 0, 0, 0, brt), "AMANHÃ"},
 		{"2 dias no futuro retorna vazio", time.Date(2026, 4, 18, 10, 0, 0, 0, brt), ""},
 		{"ontem retorna vazio", time.Date(2026, 4, 15, 10, 0, 0, 0, brt), ""},
-		{"travessia meia-noite: evento amanha 00:30 vs agora 23:59", time.Date(2026, 4, 17, 0, 30, 0, 0, brt), "AMANHA"},
+		{"travessia meia-noite: evento amanha 00:30 vs agora 23:59", time.Date(2026, 4, 17, 0, 30, 0, 0, brt), "AMANHÃ"},
 	}
 
 	for _, tc := range cases {
@@ -149,7 +149,7 @@ func TestFormatEventCreated_RelativeLabel(t *testing.T) {
 	if !strings.Contains(out, "Reuniao com OTC") {
 		t.Fatalf("output deveria conter titulo, got: %s", out)
 	}
-	if !strings.Contains(out, "Quinta, 16/04 as 09:00") {
+	if !strings.Contains(out, "Quinta, 16/04 às 09:00") {
 		t.Fatalf("output deveria conter weekday/data/hora, got: %s", out)
 	}
 }

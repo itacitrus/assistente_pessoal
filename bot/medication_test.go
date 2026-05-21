@@ -614,7 +614,7 @@ func TestPularDose_RequiresReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.ToLower(resp), "razao") {
+	if !strings.Contains(strings.ToLower(resp), "razão") {
 		t.Fatalf("expected ask-for-reason response, got %q", resp)
 	}
 }
@@ -638,7 +638,7 @@ func TestCadastrarMedicamento_ForElder_RequiresFamilyLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.ToLower(resp), "permissao") {
+	if !strings.Contains(strings.ToLower(resp), "permissão") {
 		t.Fatalf("expected denial mentioning permission, got %q", resp)
 	}
 	if _, err := db.GetPendingConfirmation(users[0].ID); err != ErrNoPendingConfirmation {
@@ -706,7 +706,7 @@ func TestExtrairReceita_EmptyItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.ToLower(resp), "nao consegui") {
+	if !strings.Contains(strings.ToLower(resp), "não consegui") {
 		t.Fatalf("expected fail-soft response, got %q", resp)
 	}
 }
@@ -723,7 +723,7 @@ func TestListarMedicamentos_Empty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.ToLower(resp), "nao tem") {
+	if !strings.Contains(strings.ToLower(resp), "não tem") {
 		t.Fatalf("expected 'nao tem' empty msg, got %q", resp)
 	}
 }
@@ -746,7 +746,7 @@ func TestListarMedicamentos_Multiple(t *testing.T) {
 	if !strings.Contains(resp, "8h") || !strings.Contains(resp, "20h") {
 		t.Fatalf("expected hours in response, got %q", resp)
 	}
-	if !strings.Contains(strings.ToLower(resp), "critico") {
+	if !strings.Contains(strings.ToLower(resp), "crítico") {
 		t.Fatalf("expected critical marker, got %q", resp)
 	}
 }
@@ -801,7 +801,7 @@ func TestEditarMedicamento_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.ToLower(resp), "nao achei") {
+	if !strings.Contains(strings.ToLower(resp), "não achei") {
 		t.Fatalf("expected not-found msg, got %q", resp)
 	}
 }
@@ -817,7 +817,7 @@ func TestEditarMedicamento_InvalidRRULE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.ToLower(resp), "horario") {
+	if !strings.Contains(strings.ToLower(resp), "horário") {
 		t.Fatalf("expected RRULE-error msg, got %q", resp)
 	}
 }
@@ -852,7 +852,7 @@ func TestCancelarMedicamento_NameNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.ToLower(resp), "nao achei") {
+	if !strings.Contains(strings.ToLower(resp), "não achei") {
 		t.Fatalf("expected not-found msg, got %q", resp)
 	}
 }

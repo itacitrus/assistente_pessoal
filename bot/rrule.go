@@ -142,7 +142,7 @@ func DescribeRRULE(s string) string {
 			freq = "toda " + joinPT(days)
 		}
 	case rrule.MONTHLY:
-		freq = "todo mes"
+		freq = "todo mês"
 	default:
 		return s
 	}
@@ -153,7 +153,7 @@ func DescribeRRULE(s string) string {
 	for _, h := range opts.Byhour {
 		hours = append(hours, fmt.Sprintf("%dh", h))
 	}
-	return freq + " as " + joinPT(hours)
+	return freq + " às " + joinPT(hours)
 }
 
 // weekdayPT mapeia rrule.Weekday (lib usa 0=MO..6=SU) para nome em PT-BR.
@@ -162,7 +162,7 @@ func weekdayPT(d rrule.Weekday) string {
 	case 0:
 		return "segunda"
 	case 1:
-		return "terca"
+		return "terça"
 	case 2:
 		return "quarta"
 	case 3:
@@ -170,7 +170,7 @@ func weekdayPT(d rrule.Weekday) string {
 	case 4:
 		return "sexta"
 	case 5:
-		return "sabado"
+		return "sábado"
 	case 6:
 		return "domingo"
 	}

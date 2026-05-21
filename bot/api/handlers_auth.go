@@ -29,12 +29,12 @@ type requestLinkBody struct {
 func (s *Server) handleRequestLink(w http.ResponseWriter, r *http.Request) {
 	var body requestLinkBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, CodeValidation, "JSON invalido.")
+		writeError(w, http.StatusBadRequest, CodeValidation, "JSON inválido.")
 		return
 	}
 	phone := normalizePhone(body.Phone)
 	if !validBRPhone(phone) {
-		writeError(w, http.StatusBadRequest, CodeInvalidPhone, "Telefone invalido. Use 55 + DDD + numero.")
+		writeError(w, http.StatusBadRequest, CodeInvalidPhone, "Telefone inválido. Use 55 + DDD + número.")
 		return
 	}
 	ip := clientIP(r)
@@ -65,20 +65,20 @@ func (s *Server) handleRequestLink(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 			return
 		}
-		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao buscar usuario.")
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao buscar usuário.")
 		return
 	}
 
 	sessID, plaintext, err := s.store.CreatePendingSession(ctx, user.ID, ip, r.UserAgent())
 	if err != nil {
 		log.Printf("api: create pending session: %v", err)
-		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao iniciar sessao.")
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao iniciar sessão.")
 		return
 	}
 
 	url := s.webBaseURL + "/auth/verify?token=" + plaintext
 	msg := fmt.Sprintf(
-		"Oi %s! Aqui esta seu link de acesso ao painel do Zello — vale por 15 minutos:\n\n%s\n\nSe nao foi voce que pediu, pode ignorar.",
+		"Oi %s! Aqui está seu link de acesso ao painel do Zello — vale por 15 minutos:\n\n%s\n\nSe não foi você que pediu, pode ignorar.",
 		user.Name, url,
 	)
 	if err := s.store.SendMagicLink(ctx, user.PhoneNumber, msg); err != nil {
@@ -104,7 +104,7 @@ type verifyBody struct {
 func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 	var body verifyBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, CodeValidation, "JSON invalido.")
+		writeError(w, http.StatusBadRequest, CodeValidation, "JSON inválido.")
 		return
 	}
 	body.Token = strings.TrimSpace(body.Token)
@@ -118,9 +118,9 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrNotFound):
-			writeError(w, http.StatusBadRequest, CodeInvalidToken, "Link invalido ou ja consumido.")
+			writeError(w, http.StatusBadRequest, CodeInvalidToken, "Link inválido ou já consumido.")
 		case errors.Is(err, ErrSessionExpired):
-			writeError(w, http.StatusGone, CodeTokenExpired, "Link expirado. Peca um novo pelo painel.")
+			writeError(w, http.StatusGone, CodeTokenExpired, "Link expirado. Peça um novo pelo painel.")
 		case errors.Is(err, ErrSessionInvalid):
 			writeError(w, http.StatusConflict, CodeAlreadyUsed, "Link ja usado. Peca um novo pelo painel.")
 		default:
@@ -132,7 +132,7 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 
 	user, err := s.store.GetUserByID(ctx, userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, CodeInternal, "Usuario nao encontrado.")
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Usuário não encontrado.")
 		return
 	}
 
@@ -162,7 +162,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	user := userFromContext(r.Context())
 	if user == nil {
 		// RequireAuth ja teria pego — defensivo.
-		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Nao autenticado.")
+		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Não autenticado.")
 		return
 	}
 	writeJSON(w, http.StatusOK, user)

@@ -35,7 +35,7 @@ export default function LandingPage() {
 function Hero() {
   return (
     <section className="relative overflow-hidden">
-      {/* Formas organicas de fundo */}
+      {/* Formas orgânicas de fundo */}
       <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
         <div className="absolute -left-24 -top-24 h-[28rem] w-[28rem] rounded-full bg-[--zello-emerald]/15 blur-3xl animate-float-slow" />
         <div className="absolute -right-20 top-24 h-80 w-80 rounded-full bg-[--zello-amber]/25 blur-3xl animate-float-slow [animation-delay:1.5s]" />
@@ -51,13 +51,13 @@ function Hero() {
           </span>
 
           <h1 className="animate-rise mt-6 text-balance text-4xl font-semibold leading-[1.05] tracking-tight text-foreground sm:text-5xl lg:text-6xl [animation-delay:80ms]">
-            Alguem de olho em quem voce ama.
+            Alguém de olho em quem você ama.
           </h1>
 
           <p className="animate-rise mt-6 text-balance text-lg leading-relaxed text-muted-foreground [animation-delay:160ms]">
-            O Zello e um assistente carinhoso no WhatsApp do seu familiar idoso.
-            Cuida da agenda, lembra dos remedios na hora certa, faz companhia
-            todos os dias — e avisa a familia quando algo precisa de atencao.
+            O Zello é um assistente carinhoso no WhatsApp do seu familiar idoso.
+            Cuida da agenda, lembra dos remédios na hora certa, faz companhia
+            todos os dias — e avisa a família quando algo precisa de atenção.
           </p>
 
           <div className="animate-rise mt-8 flex flex-col gap-3 sm:flex-row [animation-delay:240ms]">
@@ -65,12 +65,12 @@ function Hero() {
               <Link href="/signup">Criar conta</Link>
             </Button>
             <Button asChild size="lg" variant="outline" className="text-base">
-              <Link href="/login">Ja tenho conta</Link>
+              <Link href="/login">Já tenho conta</Link>
             </Button>
           </div>
 
           <p className="animate-rise mt-5 text-sm text-muted-foreground [animation-delay:320ms]">
-            Configurou em minutos. A pessoa cuidada so precisa saber usar o
+            Você configura em minutos. A pessoa cuidada só precisa saber usar o
             WhatsApp.
           </p>
         </div>
@@ -86,7 +86,7 @@ function Hero() {
 function ChatMock() {
   return (
     <div className="relative mx-auto max-w-sm">
-      {/* leve rotacao/profundidade */}
+      {/* leve rotação/profundidade */}
       <div
         aria-hidden
         className="absolute -inset-3 -z-10 rounded-[2rem] bg-[--zello-emerald]/10 blur-xl"
@@ -106,18 +106,18 @@ function ChatMock() {
         {/* mensagens */}
         <div className="space-y-3 bg-secondary/40 px-4 py-5">
           <BotBubble time="08:00">
-            Bom dia, Dona Cida! Hora do <strong>Losartana</strong>. Ja tomou com
-            um copo d&apos;agua? 💊
+            Bom dia, Dona Cida! Hora do <strong>Losartana</strong>. Já tomou com
+            um copo d&apos;água? 💊
           </BotBubble>
           <UserBubble time="08:03">Tomei sim, querido. Obrigada!</UserBubble>
           <BotBubble time="08:03">
-            Que otimo! Anotei aqui. Hoje tem a consulta da tarde, lembra? Te
+            Que ótimo! Anotei aqui. Hoje tem a consulta da tarde, lembra? Te
             aviso 1h antes. 😊
           </BotBubble>
-          <UserBubble time="08:04">Ah, ainda bem que voce lembra ❤️</UserBubble>
+          <UserBubble time="08:04">Ah, ainda bem que você lembra ❤️</UserBubble>
           <SystemNote>
             <ShieldCheck className="h-3.5 w-3.5 text-[--zello-emerald]" />
-            Familia recebeu: &ldquo;Tudo bem hoje — remedio tomado, bom
+            Família recebeu: &ldquo;Tudo bem hoje — remédio tomado, bom
             humor.&rdquo;
           </SystemNote>
         </div>
@@ -181,8 +181,8 @@ function Pillars() {
   const pillars = [
     {
       icon: Pill,
-      title: "Remedios na hora certa",
-      body: "Lembra com carinho e insiste com gentileza ate confirmar. Se o horario passar sem resposta, avisa a familia — ninguem fica sem cobertura.",
+      title: "Remédios na hora certa",
+      body: "Lembra com carinho e insiste com gentileza até confirmar. Se o horário passar sem resposta, avisa a família — ninguém fica sem cobertura.",
     },
     {
       icon: MessageCircleHeart,
@@ -191,8 +191,8 @@ function Pillars() {
     },
     {
       icon: ShieldCheck,
-      title: "A familia tranquila",
-      body: "Voce recebe um retrato do bem-estar: humor, energia, autocuidado. Sinais agregados, nunca as mensagens literais. Privacidade respeitada.",
+      title: "A família tranquila",
+      body: "Você recebe um retrato do bem-estar: humor, energia, autocuidado. Sinais agregados, nunca as mensagens literais. Privacidade respeitada.",
     },
   ];
 
@@ -200,7 +200,7 @@ function Pillars() {
     <section className="container py-16 md:py-24">
       <div className="mx-auto max-w-2xl text-center">
         <h2 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-          Tres formas de cuidar, todos os dias
+          Três formas de cuidar, todos os dias
         </h2>
         <p className="mt-4 text-balance text-muted-foreground">
           O Zello acompanha de perto sem ser invasivo — pra pessoa cuidada e pra
@@ -235,7 +235,7 @@ function Pillars() {
 function HowItWorks() {
   const steps = [
     {
-      title: "Voce cria a conta",
+      title: "Você cria a conta",
       body: "Cadastra seu WhatsApp e o da pessoa que vai receber o cuidado.",
     },
     {
@@ -243,8 +243,8 @@ function HowItWorks() {
       body: "A pessoa cuidada recebe a primeira mensagem do Zello. Nada pra baixar, nada pra configurar.",
     },
     {
-      title: "Conversa em portugues normal",
-      body: "&ldquo;Marca a consulta de sexta&rdquo;, &ldquo;lembra do remedio das 8&rdquo;, &ldquo;como foi seu dia?&rdquo;. So conversar.",
+      title: "Conversa em português normal",
+      body: "&ldquo;Marca a consulta de sexta&rdquo;, &ldquo;lembra do remédio das 8&rdquo;, &ldquo;como foi seu dia?&rdquo;. Só conversar.",
     },
   ];
 
@@ -256,7 +256,7 @@ function HowItWorks() {
             Como funciona
           </h2>
           <p className="mt-4 text-muted-foreground">
-            Simples de comecar, natural de usar.
+            Simples de começar, natural de usar.
           </p>
         </div>
 
@@ -291,12 +291,12 @@ function Privacy() {
     {
       icon: EyeOff,
       title: "Sinais, nunca conversas",
-      body: "A familia acompanha o bem-estar — humor, remedios, atividade. Mas nunca le o que foi dito. Nem uma linha.",
+      body: "A família acompanha o bem-estar — humor, remédios, atividade. Mas nunca lê o que foi dito. Nem uma linha.",
     },
     {
       icon: Lock,
-      title: "O que e do idoso, fica com ele",
-      body: "As conversas pertencem a quem as teve. O Zello so compartilha o que ajuda a cuidar — o resto permanece privado.",
+      title: "O que é do idoso, fica com ele",
+      body: "As conversas pertencem a quem as teve. O Zello só compartilha o que ajuda a cuidar — o resto permanece privado.",
     },
     {
       icon: ShieldCheck,
@@ -319,11 +319,11 @@ function Privacy() {
             Privacidade
           </span>
           <h2 className="mt-4 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-            Cuidado nao e vigilancia
+            Cuidado não é vigilância
           </h2>
           <p className="mt-3 text-balance text-lg leading-relaxed text-muted-foreground">
-            Acompanhar quem amamos exige confianca. Por isso o Zello mostra a
-            voce o que importa — sem nunca expor o que foi dito.
+            Acompanhar quem amamos exige confiança. Por isso o Zello mostra a
+            você o que importa — sem nunca expor o que foi dito.
           </p>
         </div>
 
@@ -366,7 +366,7 @@ function FinalCta() {
             Comece a cuidar melhor hoje.
           </h2>
           <p className="mt-4 text-balance text-lg text-white">
-            Crie sua conta gratuitamente e deixe o Zello acompanhar quem voce
+            Crie sua conta gratuitamente e deixe o Zello acompanhar quem você
             ama, com carinho e tranquilidade.
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -375,7 +375,7 @@ function FinalCta() {
               size="lg"
               className="bg-[--zello-amber] text-[--zello-ink] text-base hover:bg-[--zello-amber]/90"
             >
-              <Link href="/signup">Criar conta gratis</Link>
+              <Link href="/signup">Criar conta grátis</Link>
             </Button>
             <Button
               asChild
@@ -383,7 +383,7 @@ function FinalCta() {
               variant="outline"
               className="border-[--zello-cream]/30 bg-transparent text-base text-[--zello-cream] hover:bg-[--zello-cream]/10 hover:text-[--zello-cream]"
             >
-              <Link href="/login">Ja tenho conta</Link>
+              <Link href="/login">Já tenho conta</Link>
             </Button>
           </div>
         </div>

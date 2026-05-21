@@ -77,28 +77,28 @@ var disclosurePolicy = map[string]struct {
 }{
 	"medico_fisico": {
 		Disclose: true,
-		Tone: "calmo e tranquilizador, mencione que avisou alguem da familia (ele ja sabe que esta passando mal — saber que a ajuda esta a caminho conforta), reforce 192 (SAMU) se for sintoma agudo",
-		Note: "Pode dizer: 'avisei sua filha pra ela ficar atenta, ta?'",
+		Tone: "calmo e tranquilizador, mencione que avisou alguém da família (ele já sabe que está passando mal — saber que a ajuda está a caminho conforta), reforce 192 (SAMU) se for sintoma agudo",
+		Note: "Pode dizer: 'avisei sua filha pra ela ficar atenta, tá?'",
 	},
 	"psicologico": {
 		Disclose: false,
-		Tone: "acolhedor, presente, sem sair do papel de amigo. NAO mencione que avisou a familia. Mencione 188 (CVV) como se fosse so uma sugestao de canal de apoio que voce conhece, nao como contramedida ao alerta. Continue a escuta — ele te confiou algo intimo, nao o desampare agora.",
-		Note: "REGRA DURA: nunca dizer 'avisei sua filha' nem equivalente. A confianca dele em voce e fundamento da intervencao continuar funcionando.",
+		Tone: "acolhedor, presente, sem sair do papel de amigo. NÃO mencione que avisou a família. Mencione 188 (CVV) como se fosse só uma sugestão de canal de apoio que você conhece, não como contramedida ao alerta. Continue a escuta — ele te confiou algo íntimo, não o desampare agora.",
+		Note: "REGRA DURA: nunca dizer 'avisei sua filha' nem equivalente. A confiança dele em você é fundamento da intervenção continuar funcionando.",
 	},
 	"violencia": {
 		Disclose: false,
-		Tone: "absolutamente normal, como se a conversa nao tivesse mudado de tom. Idoso pode estar sendo monitorado pelo agressor neste momento — qualquer sinal de mudanca de comportamento na conversa pode escalar o risco fisico dele.",
-		Note: "REGRA DURA: nao mencione, nao mude o tom da conversa, nao ofereca 188/192 explicitamente. Se ele perguntar diretamente 'voce vai contar pra alguem', responda evasivo em registro classico (ex: 'fique tranquilo, estou aqui te escutando, e isso por enquanto'). A familia ja foi alertada com urgencia.",
+		Tone: "absolutamente normal, como se a conversa não tivesse mudado de tom. Idoso pode estar sendo monitorado pelo agressor neste momento — qualquer sinal de mudança de comportamento na conversa pode escalar o risco físico dele.",
+		Note: "REGRA DURA: não mencione, não mude o tom da conversa, não ofereça 188/192 explicitamente. Se ele perguntar diretamente 'você vai contar pra alguém', responda evasivo em registro clássico (ex: 'fique tranquilo, estou aqui te escutando, é isso por enquanto'). A família já foi alertada com urgência.",
 	},
 	"negligencia": {
 		Disclose: false,
-		Tone: "normal, sem alarme. Mesma logica da vigilancia da violencia — pode haver vigilancia.",
-		Note: "REGRA DURA: nao mencione. A intervencao tem que vir de fora.",
+		Tone: "normal, sem alarme. Mesma lógica da vigilância da violência — pode haver vigilância.",
+		Note: "REGRA DURA: não mencione. A intervenção tem que vir de fora.",
 	},
 	"outros": {
 		Disclose: false,
-		Tone: "discreto. Em duvida, prefira nao mencionar — confianca uma vez quebrada nao volta. Use discricao por padrao.",
-		Note: "Categoria ambigua — escolhi discricao por padrao. Se voce achar que faz sentido contar, pondere antes de dizer.",
+		Tone: "discreto. Em dúvida, prefira não mencionar — confiança uma vez quebrada não volta. Use discrição por padrão.",
+		Note: "Categoria ambígua — escolhi discrição por padrão. Se você achar que faz sentido contar, pondere antes de dizer.",
 	},
 }
 
@@ -288,7 +288,7 @@ func handleAlertarFamilia(ctx context.Context, agent *Agent, user *User, params 
 			return fmt.Sprintf("Alerta enviado para: %s. severity=%s. Pode mencionar ao idoso que avisou.",
 				strings.Join(sentTo, ", "), p.Severity), nil
 		}
-		return fmt.Sprintf("Alerta enviado para: %s. severity=%s. NAO mencione ao idoso que voce avisou.",
+		return fmt.Sprintf("Alerta enviado para: %s. severity=%s. NÃO mencione ao idoso que você avisou.",
 			strings.Join(sentTo, ", "), p.Severity), nil
 	}
 	return string(out), nil
@@ -301,23 +301,23 @@ func formatFamilyAlertMessage(elder *User, p alertarFamiliaParams) string {
 	var sb strings.Builder
 	switch p.Severity {
 	case "critical":
-		sb.WriteString(fmt.Sprintf("URGENTE — %s precisa de atencao agora.\n\n", elder.Name))
+		sb.WriteString(fmt.Sprintf("URGENTE — %s precisa de atenção agora.\n\n", elder.Name))
 	case "warn":
-		sb.WriteString(fmt.Sprintf("Atencao — %s deu um sinal preocupante.\n\n", elder.Name))
+		sb.WriteString(fmt.Sprintf("Atenção — %s deu um sinal preocupante.\n\n", elder.Name))
 	case "info":
 		sb.WriteString(fmt.Sprintf("Aviso — %s mencionou algo a observar.\n\n", elder.Name))
 	}
 	sb.WriteString(fmt.Sprintf("O que ele(a) me contou: %s\n", p.Reason))
 	if strings.TrimSpace(p.RecommendedAction) != "" {
-		sb.WriteString(fmt.Sprintf("\nSugestao: %s\n", p.RecommendedAction))
+		sb.WriteString(fmt.Sprintf("\nSugestão: %s\n", p.RecommendedAction))
 	}
 	if p.Severity == "critical" {
 		sb.WriteString(
-			"\nSe nao conseguir contato direto, " +
-				"lembre-se: 188 (CVV — apoio emocional 24h) e 192 (SAMU — emergencia medica).\n",
+			"\nSe não conseguir contato direto, " +
+				"lembre-se: 188 (CVV — apoio emocional 24h) e 192 (SAMU — emergência médica).\n",
 		)
 	}
-	sb.WriteString("\n— Lurch (companion de " + elder.Name + ")")
+	sb.WriteString("\n— Zello (companion de " + elder.Name + ")")
 	return sb.String()
 }
 
@@ -356,7 +356,7 @@ func handlePausarProatividade(_ context.Context, agent *Agent, user *User, param
 		return "", fmt.Errorf("parse params: %w", err)
 	}
 	if user == nil || user.Type != UserTypeIdoso {
-		return "Pausa de proatividade so aplica em modo companion.", nil
+		return "Pausa de proatividade só aplica em modo companion.", nil
 	}
 	if p.Dias < 1 {
 		p.Dias = 1
@@ -370,7 +370,7 @@ func handlePausarProatividade(_ context.Context, agent *Agent, user *User, param
 	if agent.audit != nil {
 		agent.audit.Log(user.ID, "pausar_proatividade", "", fmt.Sprintf("dias=%d", p.Dias))
 	}
-	return fmt.Sprintf("Combinado, nao te incomodo por %d dia(s). Volto depois.", p.Dias), nil
+	return fmt.Sprintf("Combinado, não te incomodo por %d dia(s). Volto depois.", p.Dias), nil
 }
 
 // -------------------------------------------------------------------------
@@ -409,25 +409,25 @@ func handleComentarImagem(ctx context.Context, agent *Agent, user *User, params 
 	}
 
 	if agent == nil || agent.media == nil {
-		return "Cache de imagens nao configurado neste ambiente. Pede pro idoso te contar do que se trata.", nil
+		return "Cache de imagens não configurado neste ambiente. Pede pro idoso te contar do que se trata.", nil
 	}
 	if agent.vision == nil {
-		return "Vision provider nao configurado. Pede pro idoso te contar do que se trata.", nil
+		return "Vision provider não configurado. Pede pro idoso te contar do que se trata.", nil
 	}
 
 	media, mediaType, err := agent.media.Load(p.ImageID)
 	if err != nil {
-		return fmt.Sprintf("Imagem nao encontrada (id=%s).", p.ImageID), nil
+		return fmt.Sprintf("Imagem não encontrada (id=%s).", p.ImageID), nil
 	}
 	if !isSupportedImageType(mediaType) {
-		return fmt.Sprintf("Tipo de imagem nao suportado: %s.", mediaType), nil
+		return fmt.Sprintf("Tipo de imagem não suportado: %s.", mediaType), nil
 	}
 
 	prompt := "Descreva esta imagem que um idoso recebeu numa conversa de WhatsApp. " +
-		"Foco no que humanamente e interessante: pessoas, lugar, comida, animal, evento. " +
-		"Nao descreva pixels, composicao ou estilo fotografico. Nao infira sentimentos " +
-		"clinicos. Em PT-BR, 2-3 frases. Ao final, em uma linha separada, classifique o " +
-		"tom em: familia | meme | paisagem | comida | religioso | humoristico | outros. " +
+		"Foco no que humanamente é interessante: pessoas, lugar, comida, animal, evento. " +
+		"Não descreva pixels, composição ou estilo fotográfico. Não infira sentimentos " +
+		"clínicos. Em PT-BR, 2-3 frases. Ao final, em uma linha separada, classifique o " +
+		"tom em: família | meme | paisagem | comida | religioso | humorístico | outros. " +
 		"Formato: 'TOM: <classe>'."
 	if p.ContextHint != "" {
 		prompt += "\n\nContexto adicional: " + p.ContextHint
@@ -508,7 +508,7 @@ const (
 	linkFetchTimeout = 3 * time.Second
 	linkMaxBody      = 64 * 1024 // 64KB
 	linkMaxRedirects = 2
-	linkUserAgent    = "Lurch-Bot/1.0 (+https://lurch.bot/about)"
+	linkUserAgent    = "Zello-Bot/1.0 (+https://zello.chat/about)"
 )
 
 // httpClientFactory permite injetar transports custom em testes — default
@@ -545,7 +545,7 @@ func handleComentarLink(ctx context.Context, agent *Agent, user *User, params js
 		if agent != nil && agent.audit != nil && user != nil {
 			agent.audit.Log(user.ID, "comentar_link_rejected", host, "domain not in allowlist")
 		}
-		return fmt.Sprintf("Esse link (%s) eu nao consigo abrir, mas se quiser me conta do que e.", host), nil
+		return fmt.Sprintf("Esse link (%s) eu não consigo abrir, mas se quiser me conta do que é.", host), nil
 	}
 
 	preview, err := fetchOpenGraph(ctx, rawURL)
@@ -553,7 +553,7 @@ func handleComentarLink(ctx context.Context, agent *Agent, user *User, params js
 		if agent != nil && agent.audit != nil && user != nil {
 			agent.audit.Log(user.ID, "comentar_link_error", host, sanitizeForDetails(err.Error()))
 		}
-		return "Nao consegui abrir o link agora — me conta do que se trata.", nil
+		return "Não consegui abrir o link agora — me conta do que se trata.", nil
 	}
 
 	if agent != nil && agent.audit != nil && user != nil {

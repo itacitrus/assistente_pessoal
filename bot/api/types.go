@@ -106,6 +106,39 @@ type CreateDependentResponse struct {
 	Link FamilyLink `json:"link"`
 }
 
+// =========================================================================
+// Family / medicacao do dependente
+// =========================================================================
+
+// MedicationItem eh a forma publica de um medicamento do dependente.
+// `Schedule` eh texto humano em PT-BR (ex: "Todos os dias as 08:00 e 20:00").
+// CONTRATO ESPELHADO 1:1 PELO FRONTEND — nao renomear campos.
+type MedicationItem struct {
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	Dose         string `json:"dose"`
+	Instructions string `json:"instructions"`
+	Schedule     string `json:"schedule"`
+	Active       bool   `json:"active"`
+}
+
+// MedicationsResponse eh o payload de GET /family/dependents/{id}/medications.
+type MedicationsResponse struct {
+	Medications []MedicationItem `json:"medications"`
+}
+
+// CreateMedicationRequest eh o body de POST /family/dependents/{id}/medications.
+// frequency: "daily" (ignora Days) | "weekly" (usa Days, subset de mon..sun).
+// times: 1-6 horarios no formato HH:MM.
+type CreateMedicationRequest struct {
+	Name         string   `json:"name"`
+	Dose         string   `json:"dose"`
+	Instructions string   `json:"instructions"`
+	Times        []string `json:"times"`
+	Frequency    string   `json:"frequency"`
+	Days         []string `json:"days,omitempty"`
+}
+
 // SnapshotPoint eh um ponto da timeline. Confidence < 3 ainda eh retornado
 // — o frontend decide visualmente como mostrar (low confidence styling).
 type SnapshotPoint struct {
@@ -179,7 +212,7 @@ type SynthesisSummary struct {
 	NivelPreocupacao        string   `json:"nivel_preocupacao"`
 	Comparacao              string   `json:"comparacao,omitempty"`
 	PontoDeAtencao          string   `json:"ponto_de_atencao,omitempty"`
-	RecomendacoesCarinhosas []string `json:"recomendacoes_carinhosas,omitempty"`
+	RecomendacoesCarinhosas []string `json:"recomendacoes_carinhosas"`
 }
 
 // =========================================================================
@@ -214,6 +247,13 @@ type ActivityItem struct {
 	At     time.Time `json:"at"`
 }
 
+// ActivityResponse eh o payload de GET /api/v1/me/activity. Historico
+// completo (limitado) das acoes relevantes do usuario. CONTRATO ESPELHADO 1:1
+// PELO FRONTEND — nao renomear campos.
+type ActivityResponse struct {
+	Items []ActivityItem `json:"items"`
+}
+
 // =========================================================================
 // Me / insights (GET /api/v1/me/insights)
 // =========================================================================
@@ -234,4 +274,38 @@ type InsightItem struct {
 	Title  string `json:"title"`
 	Detail string `json:"detail"`
 	Kind   string `json:"kind"`
+}
+
+// =========================================================================
+// Me / profile-facts (GET /api/v1/me/profile-facts)
+// =========================================================================
+
+// ProfileFactsResponse eh o payload de GET /api/v1/me/profile-facts —
+// "o que o Zello sabe sobre voce". CONTRATO ESPELHADO 1:1 PELO FRONTEND.
+type ProfileFactsResponse struct {
+	Available bool           `json:"available"`
+	Relations []RelationFact `json:"relations"`
+	People    []PersonFact   `json:"people"`
+	Trips     []TripFact     `json:"trips"`
+}
+
+// RelationFact eh um vinculo familiar/relacao do usuario. Kind ∈ dependent|guardian|memory.
+type RelationFact struct {
+	Name     string `json:"name"`
+	Relation string `json:"relation"`
+	Kind     string `json:"kind"`
+}
+
+// PersonFact eh uma pessoa que o Zello conhece do contexto social do usuario.
+type PersonFact struct {
+	Name   string `json:"name"`
+	Detail string `json:"detail"`
+}
+
+// TripFact eh uma viagem (passada recente ou futura) do usuario.
+type TripFact struct {
+	Label       string `json:"label"`
+	Destination string `json:"destination"`
+	Start       string `json:"start"` // YYYY-MM-DD
+	End         string `json:"end"`   // YYYY-MM-DD
 }

@@ -12,12 +12,12 @@ import (
 func (s *Server) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 	user := userFromContext(r.Context())
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Nao autenticado.")
+		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Não autenticado.")
 		return
 	}
 	var p PreferencesPatch
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		writeError(w, http.StatusBadRequest, CodeValidation, "JSON invalido.")
+		writeError(w, http.StatusBadRequest, CodeValidation, "JSON inválido.")
 		return
 	}
 	if msg := validatePreferencesPatch(&p); msg != "" {

@@ -417,10 +417,15 @@ func (a *apiAdapter) BuildDependentStatus(ctx context.Context, guardianID, depen
 	if err != nil {
 		return nil, err
 	}
+	// Slices nao-nil sempre: Go serializa slice nil como `null`, o que quebra
+	// o frontend que espera array. Inicializamos vazios e os loops abaixo
+	// fazem append.
 	resp := &api.StatusResponse{
 		Dependent:         api.DependentRef{ID: dep.ID, Name: dep.Name},
 		Days:              report.Days,
 		DaysSinceLastTalk: report.DaysSinceLastTalk,
+		AlertsOpen:        []api.AlertSummary{},
+		Snapshots:         []api.SnapshotPoint{},
 		Medication: api.MedicationStats{
 			Scheduled:     report.Medication.Scheduled,
 			Taken:         report.Medication.Taken,
@@ -441,6 +446,9 @@ func (a *apiAdapter) BuildDependentStatus(ctx context.Context, guardianID, depen
 			PontoDeAtencao:          report.Synthesis.PontoDeAtencao,
 			RecomendacoesCarinhosas: report.Synthesis.RecomendacoesCarinhosas,
 		},
+	}
+	if resp.Synthesis.RecomendacoesCarinhosas == nil {
+		resp.Synthesis.RecomendacoesCarinhosas = []string{}
 	}
 	if report.LastUserMessageAt.Valid {
 		t := report.LastUserMessageAt.Time
@@ -577,20 +585,37 @@ func isAllDayEvent(ev CalendarEvent) bool {
 	return local.Hour() == 0 && local.Minute() == 0 && local.Second() == 0
 }
 
-// RecentActivity le as ultimas `limit` entradas do action_log do usuario,
-// mais recentes primeiro, com label PT-BR amigavel (reusa actionLabelsPT).
+// RecentActivity le as entradas relevantes (allowlist api.IsRelevantActivity)
+// mais recentes do action_log do usuario, ate `limit` itens, com label PT-BR
+// amigavel. Delega pra ActivityHistory — mesmo filtro, single source of truth.
 func (a *apiAdapter) RecentActivity(ctx context.Context, userID int64, limit int) ([]api.ActivityItem, error) {
 	if limit <= 0 {
 		limit = 8
 	}
-	rows, err := a.db.conn.QueryContext(ctx, `
+	return a.ActivityHistory(ctx, userID, limit)
+}
+
+// ActivityHistory le o historico das acoes relevantes (allowlist) do usuario,
+// mais recentes primeiro, ate `limit` itens. O filtro de relevancia eh feito
+// em SQL (IN (...)) pra nao trazer ruido do banco e respeitar o LIMIT sobre o
+// conjunto ja filtrado.
+func (a *apiAdapter) ActivityHistory(ctx context.Context, userID int64, limit int) ([]api.ActivityItem, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	placeholders, args := relevantActivitySQLArgs()
+	args = append([]any{userID}, args...)
+	args = append(args, limit)
+	query := `
 		SELECT action, created_at
 		  FROM action_log
 		 WHERE user_id = ?
+		   AND action IN (` + placeholders + `)
 		 ORDER BY created_at DESC, id DESC
-		 LIMIT ?`, userID, limit)
+		 LIMIT ?`
+	rows, err := a.db.conn.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("query recent activity: %w", err)
+		return nil, fmt.Errorf("query activity history: %w", err)
 	}
 	defer rows.Close()
 
@@ -599,7 +624,7 @@ func (a *apiAdapter) RecentActivity(ctx context.Context, userID int64, limit int
 		var action string
 		var at time.Time
 		if err := rows.Scan(&action, &at); err != nil {
-			return nil, fmt.Errorf("scan recent activity: %w", err)
+			return nil, fmt.Errorf("scan activity history: %w", err)
 		}
 		out = append(out, api.ActivityItem{
 			Action: action,
@@ -608,6 +633,23 @@ func (a *apiAdapter) RecentActivity(ctx context.Context, userID int64, limit int
 		})
 	}
 	return out, rows.Err()
+}
+
+// relevantActivitySQLArgs devolve a lista de placeholders "?,?,..." e os args
+// correspondentes (as acoes do allowlist), pra montar o IN (...) de forma
+// segura (sem string interpolation de valores).
+func relevantActivitySQLArgs() (string, []any) {
+	actions := api.RelevantActivityActions()
+	placeholders := make([]byte, 0, len(actions)*2)
+	args := make([]any, 0, len(actions))
+	for i, act := range actions {
+		if i > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '?')
+		args = append(args, act)
+	}
+	return string(placeholders), args
 }
 
 // activityLabelPT mapeia action -> descricao PT-BR amigavel. Reusa
@@ -725,6 +767,16 @@ func (a *apiAdapter) Audit(ctx context.Context, userID int64, action, target, de
 func (a *apiAdapter) SendMagicLink(ctx context.Context, phone, message string) error {
 	if a.sendMsg == nil {
 		return errors.New("send magic link: sendMsg callback nao configurado")
+	}
+	return a.sendMsg(phone, message)
+}
+
+// SendWhatsApp envia uma mensagem WhatsApp generica reusando o mesmo callback
+// de envio do magic link (Handler.SendTextToPhone). Mantido separado de
+// SendMagicLink na interface para deixar a intencao explicita no call site.
+func (a *apiAdapter) SendWhatsApp(ctx context.Context, phone, message string) error {
+	if a.sendMsg == nil {
+		return errors.New("send whatsapp: sendMsg callback nao configurado")
 	}
 	return a.sendMsg(phone, message)
 }

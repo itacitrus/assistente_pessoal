@@ -274,7 +274,7 @@ func TestComentarImagem_RejectsUnsupportedType(t *testing.T) {
 	}
 	params, _ := json.Marshal(comentarImagemParams{ImageID: "abc"})
 	res, _ := handleComentarImagem(context.Background(), agent, u, params)
-	if !strings.Contains(res, "nao suportado") {
+	if !strings.Contains(res, "não suportado") {
 		t.Fatalf("expected unsupported, got: %s", res)
 	}
 }
@@ -290,7 +290,7 @@ func TestComentarImagem_MediaNotFound(t *testing.T) {
 	}
 	params, _ := json.Marshal(comentarImagemParams{ImageID: "abc"})
 	res, _ := handleComentarImagem(context.Background(), agent, u, params)
-	if !strings.Contains(res, "Imagem nao encontrada") {
+	if !strings.Contains(res, "Imagem não encontrada") {
 		t.Fatalf("expected not-found, got: %s", res)
 	}
 }

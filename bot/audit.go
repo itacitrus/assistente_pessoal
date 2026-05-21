@@ -66,23 +66,23 @@ var actionLabelsPT = map[string]string{
 	"revoke_access":               "Revogou acesso",
 	"deny_access":                 "Negou acesso",
 	"permission_request":          "Solicitou acesso",
-	"consultar_log":               "Consultou historico",
+	"consultar_log":               "Consultou histórico",
 	"family_link_created":         "Cadastrou familiar",
 	"family_link_removed":         "Removeu familiar",
 	"family_notify_prefs_updated": "Atualizou alertas de familiar",
-	"user_type_changed":           "Mudou tipo de usuario",
+	"user_type_changed":           "Mudou tipo de usuário",
 	// Fase 3 (idosos): medicacao + escalacao.
 	"medication_created":           "Cadastrou medicamento",
 	"medication_edited":            "Editou medicamento",
 	"medication_canceled":          "Cancelou medicamento",
 	"medication_taken":             "Tomou medicamento",
 	"medication_skipped":           "Pulou dose",
-	"medication_missed":            "Dose nao tomada",
-	"medication_escalated":         "Escalou medicamento pra familia",
+	"medication_missed":            "Dose não tomada",
+	"medication_escalated":         "Escalou medicamento pra família",
 	"medication_reminder_sent":     "Lembrete de medicamento enviado",
 	"prescription_image_processed": "Processou foto de receita",
 	// Fase 4 (idosos): companion + proatividade.
-	"alertar_familia":           "Alertou familia (sinal serio)",
+	"alertar_familia":           "Alertou família (sinal sério)",
 	"pausar_proatividade":       "Pausou proatividade",
 	"proactive_attempt_sent":    "Tentou puxar conversa",
 	"companion_provider_switch": "Trocou provider do companion",
@@ -90,23 +90,23 @@ var actionLabelsPT = map[string]string{
 	"comentar_link":             "Comentou link recebido",
 	"comentar_link_rejected":    "Rejeitou link fora da allowlist",
 	"comentar_link_error":       "Erro ao buscar Open Graph",
-	"snapshot_updated":          "Snapshot psicologico atualizado",
+	"snapshot_updated":          "Snapshot psicológico atualizado",
 	"safety_net_fired":          "Safety net disparou alerta",
 	// Fase 5 (idosos): relatorio longitudinal + alertas + snapshots.
 	"status_dependente_consulted":     "Consultou status do dependente",
 	"timeline_consulted":              "Consultou timeline do dependente",
-	"synthesis_executed":              "Sintese gerada",
-	"synthesis_failed":                "Falha na sintese",
-	"psych_snapshot_written":          "Snapshot psicologico escrito",
+	"synthesis_executed":              "Síntese gerada",
+	"synthesis_failed":                "Falha na síntese",
+	"psych_snapshot_written":          "Snapshot psicológico escrito",
 	"psych_snapshot_failed":           "Falha ao escrever snapshot",
-	"safety_alert_from_writer":        "Alerta de seguranca disparado pelo writer",
-	"inactivity_escalation_triggered": "Escalou inatividade para familia",
+	"safety_alert_from_writer":        "Alerta de segurança disparado pelo writer",
+	"inactivity_escalation_triggered": "Escalou inatividade para família",
 	// Fase 2 (web/UI): autenticacao via magic link e gestao de preferencias.
 	"web_login_requested":      "Solicitou link de acesso ao painel",
 	"web_login_succeeded":      "Entrou no painel",
 	"web_login_failed":         "Falha em login no painel",
 	"web_session_revoked":      "Saiu do painel",
-	"user_preferences_updated": "Atualizou preferencias",
+	"user_preferences_updated": "Atualizou preferências",
 	"me_insights_generated":    "Gerou insights da agenda",
 }
 
@@ -211,11 +211,11 @@ func (a *AuditLog) LogUserTypeChanged(userID, targetUserID int64, before, after 
 
 func FormatAuditLog(userName string, entries []AuditEntry) string {
 	if len(entries) == 0 {
-		return fmt.Sprintf("%s, nenhuma acao registrada nesse periodo.", userName)
+		return fmt.Sprintf("%s, nenhuma ação registrada nesse período.", userName)
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Historico de acoes de %s:\n\n", userName))
+	sb.WriteString(fmt.Sprintf("Histórico de ações de %s:\n\n", userName))
 
 	for _, e := range entries {
 		timeStr := e.CreatedAt.Format("02/01 15:04")

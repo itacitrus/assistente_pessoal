@@ -83,11 +83,11 @@ func resetPhase5State() {
 // =========================================================================
 
 // inactivityEscalationThreshold eh o tempo minimo apos a tentativa proativa
-// (Fase 4: Lurch puxou conversa) sem resposta antes de escalar para a familia
+// (Fase 4: Zello puxou conversa) sem resposta antes de escalar para a familia
 // (Fase 5: alertar responsavel). Default 4h.
 //
 // IMPORTANTE: este threshold eh DIFERENTE de users.inactivity_threshold_hours
-// (Fase 4) — aquela coluna define quando Lurch puxa conversa (default 24h);
+// (Fase 4) — aquela coluna define quando Zello puxa conversa (default 24h);
 // esta constante define a janela pos-puxada antes de avisar o responsavel.
 // Sao decisoes distintas pra evitar alarme falso quando idoso so esta dormindo.
 const inactivityEscalationThreshold = 4 * time.Hour
@@ -201,7 +201,7 @@ func buildInactivityEscalationMsg(elder *User, link *FamilyLink, hoursIdle int) 
 		guardianFirst = "Oi " + firstName(link.Other.Name)
 	}
 	return fmt.Sprintf(
-		"%s, sua %s %s nao responde ao Lurch ha %s. Tentei puxar conversa sem sucesso. Pode ser nada — telefone descarregado, viagem — mas vale dar uma ligada.",
+		"%s, sua %s %s não responde ao Zello há %s. Tentei puxar conversa sem sucesso. Pode ser nada — telefone descarregado, viagem — mas vale dar uma ligada.",
 		guardianFirst, rel, elder.Name, humanizeIdleHours(hoursIdle),
 	)
 }
@@ -211,13 +211,13 @@ func buildInactivityEscalationMsg(elder *User, link *FamilyLink, hoursIdle int) 
 func relationshipPT(rel string) string {
 	switch rel {
 	case "filho_de", "filha_de", "filha", "filho":
-		return "mae"
+		return "mãe"
 	case "marido_de", "marido":
 		return "esposa"
 	case "esposa_de", "esposa":
 		return "marido"
 	case "neto_de", "neta_de", "neto", "neta":
-		return "avo"
+		return "avó"
 	case "sobrinho_de", "sobrinha_de", "sobrinha", "sobrinho":
 		return "tia"
 	default:

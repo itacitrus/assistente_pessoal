@@ -224,7 +224,7 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 	}
 	if p.Time == "" {
 		log.Printf("[%s] criar_evento early-return: missing time (title=%q date=%s)", user.Name, p.Title, p.Date)
-		return "Preciso do horario do evento. Pergunte ao usuario.", nil
+		return "Preciso do horário do evento. Pergunte ao usuário.", nil
 	}
 	if p.DateSource == "" {
 		// Defensive: o schema exige date_source, mas se vier vazio tratamos
@@ -285,7 +285,7 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 				if _, reauthErr := SendReauthLinkIfDue(agent.db, agent.cal, agent.sendMsg, user, time.Now()); reauthErr != nil {
 					log.Printf("[%s] SendReauthLinkIfDue: %v", user.Name, reauthErr)
 				}
-				return "AUTH_EXPIRED|display=Nao consegui checar a agenda — sua autorizacao com o Google Calendar expirou. Acabei de te mandar um link pra reautorizar.", nil
+				return "AUTH_EXPIRED|display=Não consegui checar a agenda — sua autorização com o Google Calendar expirou. Acabei de te mandar um link pra reautorizar.", nil
 			}
 			log.Printf("[%s] criar_evento conflict-check ListEvents failed (continuing anyway): %v", user.Name, listErr)
 			conflictCheckWarn = fmt.Sprintf("\n(aviso: nao consegui checar conflitos: %v)", listErr)
@@ -306,7 +306,7 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 				}
 				log.Printf("[%s] criar_evento early-return: CONFLITO detected title=%q start=%s conflicts=%d",
 					user.Name, p.Title, startTime.Format(time.RFC3339), len(realConflicts))
-				return fmt.Sprintf("CONFLITO: ja existem eventos nesse horario:\n%s\nO evento NAO foi criado. Pergunte ao usuario se quer marcar mesmo assim. Se ele confirmar, chame criar_evento novamente com force_conflict=true.", strings.Join(conflicts, "\n")), nil
+				return fmt.Sprintf("CONFLITO: já existem eventos nesse horário:\n%s\nO evento NÃO foi criado. Pergunte ao usuário se quer marcar mesmo assim. Se ele confirmar, chame criar_evento novamente com force_conflict=true.", strings.Join(conflicts, "\n")), nil
 			}
 		}
 	}
@@ -345,7 +345,7 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 			if _, reauthErr := SendReauthLinkIfDue(agent.db, agent.cal, agent.sendMsg, user, time.Now()); reauthErr != nil {
 				log.Printf("[%s] SendReauthLinkIfDue: %v", user.Name, reauthErr)
 			}
-			return "AUTH_EXPIRED|display=Nao consegui criar o evento — sua autorizacao com o Google Calendar expirou. Acabei de te mandar um link pra reautorizar.", nil
+			return "AUTH_EXPIRED|display=Não consegui criar o evento — sua autorização com o Google Calendar expirou. Acabei de te mandar um link pra reautorizar.", nil
 		}
 		return "", fmt.Errorf("create event: %w", err)
 	}
@@ -495,7 +495,7 @@ func handleCancelarEvento(ctx context.Context, agent *Agent, user *User, params 
 	} else if p.SearchQuery != "" {
 		ev, findErr := agent.cal.FindEvent(ctx, refreshToken, user.GoogleCalendarID, p.SearchQuery)
 		if findErr != nil {
-			return fmt.Sprintf("Nao encontrei o evento: %v", findErr), nil
+			return fmt.Sprintf("Não encontrei o evento: %v", findErr), nil
 		}
 		eventID = ev.ID
 		eventTitle = ev.Title
@@ -532,7 +532,7 @@ func handleBuscarHistorico(ctx context.Context, agent *Agent, user *User, params
 	}
 
 	if len(msgs) == 0 {
-		return "Nenhuma mensagem encontrada no historico.", nil
+		return "Nenhuma mensagem encontrada no histórico.", nil
 	}
 
 	var sb strings.Builder
@@ -569,7 +569,7 @@ func handleCriarEventoOutroUsuario(ctx context.Context, agent *Agent, user *User
 		return "", fmt.Errorf("resolve target user: %w", err)
 	}
 	if target == nil {
-		return fmt.Sprintf("Nao encontrei o usuario '%s'.", p.TargetUser), nil
+		return fmt.Sprintf("Não encontrei o usuário '%s'.", p.TargetUser), nil
 	}
 
 	canSchedule, err := agent.perms.CanScheduleFor(user.ID, target.ID)
@@ -596,7 +596,7 @@ func handleCriarEventoOutroUsuario(ctx context.Context, agent *Agent, user *User
 		if agent.sendMsg != nil {
 			agent.sendMsg(target.PhoneNumber, msgForTarget)
 		}
-		return fmt.Sprintf("Pedi permissao a %s para criar o evento. Aguardando resposta.", target.Name), nil
+		return fmt.Sprintf("Pedi permissão a %s para criar o evento. Aguardando resposta.", target.Name), nil
 	}
 
 	// Has permission: create event on target's calendar
@@ -737,23 +737,23 @@ func handleConvidarExterno(ctx context.Context, agent *Agent, user *User, params
 
 	// Build invite message
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Ola, %s! Sou Charles Lurch, assistente do Waldyr.\n\n", p.Name))
+	sb.WriteString(fmt.Sprintf("Olá, %s! Sou Zello, assistente do %s.\n\n", p.Name, firstName(user.Name)))
 	sb.WriteString(fmt.Sprintf("*%s* te convidou para:\n", user.Name))
 	sb.WriteString(fmt.Sprintf("*%s*\n", p.EventTitle))
-	sb.WriteString(fmt.Sprintf("Data: %s as %s\n", p.EventDate, p.EventTime))
+	sb.WriteString(fmt.Sprintf("Data: %s às %s\n", p.EventDate, p.EventTime))
 	if p.Location != "" {
 		sb.WriteString(fmt.Sprintf("Local: %s\n", p.Location))
 	}
 	if p.MeetLink != "" {
-		sb.WriteString(fmt.Sprintf("\nLink da reuniao: %s\n", p.MeetLink))
+		sb.WriteString(fmt.Sprintf("\nLink da reunião: %s\n", p.MeetLink))
 	}
 	if calLink != "" {
-		sb.WriteString(fmt.Sprintf("\nAdicionar a sua agenda: %s\n", calLink))
+		sb.WriteString(fmt.Sprintf("\nAdicionar à sua agenda: %s\n", calLink))
 	}
-	sb.WriteString("\nQualquer duvida, fale diretamente com " + user.Name + ".")
+	sb.WriteString("\nQualquer dúvida, fale diretamente com " + user.Name + ".")
 
 	if agent.sendMsg == nil {
-		return "Erro: nao consigo enviar mensagens no momento.", nil
+		return "Erro: não consigo enviar mensagens no momento.", nil
 	}
 
 	err := agent.sendMsg(phone, sb.String())
@@ -838,7 +838,7 @@ func handleBuscarMemoria(ctx context.Context, agent *Agent, user *User, params j
 	}
 
 	if len(mems) == 0 {
-		return "Nenhuma informacao encontrada.", nil
+		return "Nenhuma informação encontrada.", nil
 	}
 
 	var sb strings.Builder

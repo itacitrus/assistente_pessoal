@@ -91,7 +91,7 @@ var escalationPolicies = map[string]EscalationPolicy{
 // guardian pos-escalacao usa finalFamilyMsg.
 func insistMsg(ec EscalationContext) string {
 	name := firstName(ec.User.Name)
-	medName := "o remedio"
+	medName := "o remédio"
 	if ec.Medication != nil {
 		medName = ec.Medication.Name
 	}
@@ -99,13 +99,13 @@ func insistMsg(ec EscalationContext) string {
 	case 1:
 		return fmt.Sprintf("Hora do %s, %s. Me avisa quando tomar, sem pressa.", medName, name)
 	case 2:
-		return fmt.Sprintf("%s, tudo bem por ai? Me avisa quando puder.", name)
+		return fmt.Sprintf("%s, tudo bem por aí? Me avisa quando puder.", name)
 	case 3:
-		return fmt.Sprintf("%s, ainda nao tive noticia sobre o %s. Aconteceu alguma coisa? Estou aqui.", name, medName)
+		return fmt.Sprintf("%s, ainda não tive notícia sobre o %s. Aconteceu alguma coisa? Estou aqui.", name, medName)
 	case 4:
-		return fmt.Sprintf("%s, fiquei pensando em voce. Me avisa quando puder, mesmo que so um \"oi\".", name)
+		return fmt.Sprintf("%s, fiquei pensando em você. Me avisa quando puder, mesmo que só um \"oi\".", name)
 	}
-	return fmt.Sprintf("%s, esta tudo bem por ai?", name)
+	return fmt.Sprintf("%s, está tudo bem por aí?", name)
 }
 
 // lastUserMsg eh enviada no AttemptNumber == MaxAttempts: avisa que vai
@@ -114,8 +114,8 @@ func insistMsg(ec EscalationContext) string {
 func lastUserMsg(ec EscalationContext) string {
 	name := firstName(ec.User.Name)
 	return fmt.Sprintf(
-		"%s, vou anotar essa dose como nao tomada e avisar a familia. "+
-			"Por seguranca, nao oriento sobre dose atrasada — se for o caso, fale com seu medico ou familia antes.",
+		"%s, vou anotar essa dose como não tomada e avisar a família. "+
+			"Por segurança, não oriento sobre dose atrasada — se for o caso, fale com seu médico ou família antes.",
 		name,
 	)
 }
@@ -125,15 +125,15 @@ func lastUserMsg(ec EscalationContext) string {
 // especifica.
 func finalFamilyMsg(ec EscalationContext) string {
 	elderName := firstName(ec.User.Name)
-	medName := "o remedio"
+	medName := "o remédio"
 	if ec.Medication != nil {
 		medName = ec.Medication.Name
 	}
 	timeStr := ec.ScheduledAt.In(BRT()).Format("15h")
 	return fmt.Sprintf(
-		"Oi. %s nao confirmou que tomou %s das %s e nao respondeu apos varias tentativas. "+
-			"Anotei como dose nao tomada. Vale falar com %s e, se necessario, conferir com o medico "+
-			"se essa dose deve ou nao ser compensada — eu nao oriento isso por seguranca.",
+		"Oi. %s não confirmou que tomou %s das %s e não respondeu após várias tentativas. "+
+			"Anotei como dose não tomada. Vale falar com %s e, se necessário, conferir com o médico "+
+			"se essa dose deve ou não ser compensada — eu não oriento isso por segurança.",
 		elderName, medName, timeStr, elderName,
 	)
 }

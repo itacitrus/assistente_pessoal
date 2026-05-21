@@ -55,7 +55,7 @@ func TestStatusDependente_NotGuardian(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected nil err (msg natural), got %v", err)
 	}
-	if !strings.Contains(out, "nao tem autorizacao") {
+	if !strings.Contains(out, "não tem autorização") {
 		t.Errorf("expected unauthorized msg, got: %s", out)
 	}
 }
@@ -116,7 +116,7 @@ func TestStatusDependente_AuthorizedReturnsReport(t *testing.T) {
 	if !strings.Contains(out, "Status de Antonia") {
 		t.Errorf("expected status header, got: %s", out)
 	}
-	if !strings.Contains(out, "Tendencia: estavel") {
+	if !strings.Contains(out, "Tendência: estavel") {
 		t.Errorf("expected tendencia line, got: %s", out)
 	}
 }
@@ -173,8 +173,8 @@ func TestStatusDependente_DependentNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected nil err, got %v", err)
 	}
-	if !strings.Contains(strings.ToLower(out), "nao encontrei") {
-		t.Errorf("expected 'nao encontrei' msg, got: %s", out)
+	if !strings.Contains(strings.ToLower(out), "não encontrei") {
+		t.Errorf("expected 'não encontrei' msg, got: %s", out)
 	}
 }
 

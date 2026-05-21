@@ -110,7 +110,7 @@ func validateCreateDependent(req *CreateDependentRequest) string {
 		return msg
 	}
 	if req.Phone == "" || !validBRPhone(req.Phone) {
-		return "phone deve ter 55 + DDD + numero (ex: 5511999999999)."
+		return "phone deve ter 55 + DDD + número (ex: 5511999999999)."
 	}
 	rel := strings.TrimSpace(req.Relationship)
 	if len(rel) < 2 || len(rel) > 30 {

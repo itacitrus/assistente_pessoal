@@ -242,7 +242,7 @@ func (s *Scheduler) checkExpiredPermissionRequests() {
 	for _, req := range expired {
 		s.db.ResolvePermissionRequest(req.ID, "expired")
 		// Notify requester that request expired
-		msg := fmt.Sprintf("%s nao respondeu a sua solicitacao de acesso. Tente novamente mais tarde.", req.TargetName)
+		msg := fmt.Sprintf("%s não respondeu à sua solicitação de acesso. Tente novamente mais tarde.", req.TargetName)
 		if err := s.sendMsg(req.RequesterPhone, msg); err != nil {
 			log.Printf("Scheduler: error notifying requester %s about expired permission: %v", req.RequesterName, err)
 		}

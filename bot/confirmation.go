@@ -59,7 +59,7 @@ func (cm *ConfirmationManager) CreatePendingForTarget(user *User, target *User, 
 func (cm *ConfirmationManager) Confirm(user *User) (string, error) {
 	pc, err := cm.db.GetPendingConfirmation(user.ID)
 	if err == ErrNoPendingConfirmation {
-		return "Nao ha nenhuma acao pendente para confirmar.", nil
+		return "Não há nenhuma ação pendente para confirmar.", nil
 	}
 	if err != nil {
 		return "", err
@@ -71,7 +71,7 @@ func (cm *ConfirmationManager) Confirm(user *User) (string, error) {
 func (cm *ConfirmationManager) Deny(user *User) (string, error) {
 	pc, err := cm.db.GetPendingConfirmation(user.ID)
 	if err == ErrNoPendingConfirmation {
-		return "Nao ha nenhuma acao pendente para cancelar.", nil
+		return "Não há nenhuma ação pendente para cancelar.", nil
 	}
 	if err != nil {
 		return "", err

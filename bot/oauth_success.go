@@ -25,8 +25,8 @@ const oauthSuccessHTML = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Autorizado — Charles Lurch</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%234bb71b'/%3E%3Ctext x='16' y='21' font-family='system-ui,sans-serif' font-size='14' font-weight='700' text-anchor='middle' fill='white'%3EC%3C/text%3E%3C/svg%3E">
+<title>Autorizado — Zello</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%234bb71b'/%3E%3Ctext x='16' y='21' font-family='system-ui,sans-serif' font-size='14' font-weight='700' text-anchor='middle' fill='white'%3EZ%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap">
@@ -166,7 +166,7 @@ const oauthSuccessHTML = `<!doctype html>
 <body>
 <div class="card">
   <div class="brand-mark">
-    <strong>Charles Lurch<span class="dot">.</span></strong>
+    <strong>Zello<span class="dot">.</span></strong>
     por Itacitrus
   </div>
   <svg class="checkmark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 52 52" aria-hidden="true">

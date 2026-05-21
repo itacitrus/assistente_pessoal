@@ -118,10 +118,10 @@ func TestBuildSystemPromptStable_SwitchByType(t *testing.T) {
 		userType UserType
 		contains string
 	}{
-		{"idoso", UserTypeIdoso, "amigo Lurch"},
-		{"comum", UserTypeComum, "REGRA SAGRADA DE DATA IMPLICITA"},
-		{"responsavel", UserTypeResponsavel, "REGRA SAGRADA DE DATA IMPLICITA"},
-		{"vazio (legacy)", "", "REGRA SAGRADA DE DATA IMPLICITA"},
+		{"idoso", UserTypeIdoso, "amigo Zello"},
+		{"comum", UserTypeComum, "REGRA SAGRADA DE DATA IMPLÍCITA"},
+		{"responsavel", UserTypeResponsavel, "REGRA SAGRADA DE DATA IMPLÍCITA"},
+		{"vazio (legacy)", "", "REGRA SAGRADA DE DATA IMPLÍCITA"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -138,7 +138,7 @@ func TestBuildSystemPromptStable_SwitchByType(t *testing.T) {
 func TestCompanionPrompt_NotForOperationalUser(t *testing.T) {
 	u := &User{Name: "Giovanni", Type: UserTypeComum}
 	got := buildSystemPromptStable(u)
-	if strings.Contains(got, "amigo Lurch") {
+	if strings.Contains(got, "amigo Zello") {
 		t.Fatalf("operational user got companion prompt — leaked")
 	}
 	if strings.Contains(got, "alertar_familia") {
@@ -150,10 +150,10 @@ func TestCompanionPrompt_HasCriticalElements(t *testing.T) {
 	u := &User{Name: "Joaquim", Type: UserTypeIdoso}
 	got := buildSystemPromptStable(u)
 	requires := []string{
-		"amigo Lurch", "188", "192", "alertar_familia",
+		"amigo Zello", "188", "192", "alertar_familia",
 		"VALIDAR SEM PRENDER NA TRISTEZA",
-		"REGRA FARMACOLOGICA",
-		"PROTOCOLO DE RISCO CRITICO",
+		"REGRA FARMACOLÓGICA",
+		"PROTOCOLO DE RISCO CRÍTICO",
 		"social_context",
 		"risco:",
 		"medico_fisico", "psicologico", "violencia", "negligencia",
@@ -412,9 +412,9 @@ func TestAlertarFamilia_DisclosurePolicyByCategory(t *testing.T) {
 		{"medico fisico -> discloses", "medico_fisico", true, "192"},
 		{"psicologico -> silence", "psicologico", false, "188"},
 		{"violencia -> silence absoluto", "violencia", false, "monitorado"},
-		{"negligencia -> silence", "negligencia", false, "vigilancia"},
-		{"outros -> default discreto", "outros", false, "discricao"},
-		{"categoria invalida -> fallback outros", "qualquer_coisa", false, "discricao"},
+		{"negligencia -> silence", "negligencia", false, "vigilância"},
+		{"outros -> default discreto", "outros", false, "discrição"},
+		{"categoria invalida -> fallback outros", "qualquer_coisa", false, "discrição"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -661,7 +661,7 @@ func TestComentarLink_RejectsUnknownHost(t *testing.T) {
 	agent := &Agent{db: db, audit: NewAuditLog(db)}
 	params, _ := json.Marshal(comentarLinkParams{URL: "https://random-blog.tk/post"})
 	res, _ := handleComentarLink(context.Background(), agent, u, params)
-	if !strings.Contains(res, "nao consigo abrir") {
+	if !strings.Contains(res, "não consigo abrir") {
 		t.Fatalf("expected friendly rejection, got: %s", res)
 	}
 }
@@ -672,7 +672,7 @@ func TestComentarLink_BlocksLocalhost(t *testing.T) {
 	agent := &Agent{db: db, audit: NewAuditLog(db)}
 	params, _ := json.Marshal(comentarLinkParams{URL: "http://localhost:6379/"})
 	res, _ := handleComentarLink(context.Background(), agent, u, params)
-	if !strings.Contains(res, "nao consigo abrir") {
+	if !strings.Contains(res, "não consigo abrir") {
 		t.Fatalf("SSRF attempt should be blocked, got: %s", res)
 	}
 }

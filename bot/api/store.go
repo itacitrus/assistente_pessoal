@@ -52,17 +52,33 @@ type Store interface {
 	BuildDependentStatus(ctx context.Context, guardianID, dependentID int64, days int) (*StatusResponse, error)
 	GetTimeline(ctx context.Context, dependentID int64, days int) ([]SnapshotPoint, error)
 
+	// Medicacao do dependente ---------------------------------------------
+	// Todas validam IsGuardianOf(guardianID, dependentID) internamente e
+	// retornam ErrNotFound quando o guardiao nao eh autorizado ou o
+	// medicamento nao pertence ao dependente.
+	ListDependentMedications(ctx context.Context, guardianID, dependentID int64) ([]MedicationItem, error)
+	CreateDependentMedication(ctx context.Context, guardianID, dependentID int64, in CreateMedicationRequest) (*MedicationItem, error)
+	DeactivateDependentMedication(ctx context.Context, guardianID, dependentID, medID int64) error
+
 	// Me / agenda ----------------------------------------------------------
 	// UpcomingEvents le o Google Calendar do proprio usuario (proximos 14d,
 	// ordenado por start asc). Retorna lista vazia se o usuario nao tem
 	// Google conectado — nunca erro por isso.
 	UpcomingEvents(ctx context.Context, userID int64) ([]AgendaEvent, error)
-	// RecentActivity le as ultimas `limit` entradas do action_log do usuario,
-	// mais recentes primeiro.
+	// RecentActivity le as ultimas `limit` entradas RELEVANTES (allowlist
+	// IsRelevantActivity) do action_log do usuario, mais recentes primeiro.
 	RecentActivity(ctx context.Context, userID int64, limit int) ([]ActivityItem, error)
+	// ActivityHistory le o historico completo (ate `limit`) das acoes
+	// relevantes do usuario, mais recentes primeiro. Mesmo filtro de
+	// RecentActivity, sem teto fixo de 8.
+	ActivityHistory(ctx context.Context, userID int64, limit int) ([]ActivityItem, error)
 	// AgendaInsightsData monta o input do sub-agente de insights lendo
 	// calendar (passado + futuro) + action_log agregado por tipo de acao.
 	AgendaInsightsData(ctx context.Context, userID int64, days int) (synthesis.AgendaInsightsInput, error)
+	// ProfileFacts retorna os fatos que o Zello conhece do usuario:
+	// relacoes (dependentes/guardioes/memorias), pessoas do contexto social e
+	// viagens. Le o DB direto. available=false quando tudo vazio.
+	ProfileFacts(ctx context.Context, userID int64) (ProfileFactsResponse, error)
 
 	// Audit ---------------------------------------------------------------
 	Audit(ctx context.Context, userID int64, action, target, details string)
@@ -71,6 +87,13 @@ type Store interface {
 	// "{webBaseURL}/auth/verify?token=<plaintext>". A URL completa eh
 	// montada pelo api package — store recebe so o texto pronto.
 	SendMagicLink(ctx context.Context, phone, message string) error
+
+	// SendWhatsApp envia uma mensagem WhatsApp generica para `phone` (apenas
+	// digitos, prefixo 55). Usado para mensagens transacionais que nao sao
+	// magic link — ex: boas-vindas ao dependente recem-criado. O envio eh
+	// best-effort do ponto de vista do caller: falha nao deve abortar o fluxo
+	// de negocio que a originou.
+	SendWhatsApp(ctx context.Context, phone, message string) error
 }
 
 // Store-level sentinels. Adapter mapeia erros internos de *DB pra estes.

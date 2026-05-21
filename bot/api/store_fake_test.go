@@ -39,6 +39,15 @@ type fakeStore struct {
 
 	// Magic link sink + counters.
 	magicLinks []magicLink
+	// WhatsApp sink (boas-vindas e outras mensagens transacionais).
+	whatsappSent []magicLink
+
+	// Medicacao do dependente: fixtures por dependentID + counter.
+	dependentMeds map[int64][]MedicationItem
+	createMedErr  error
+
+	// ProfileFacts fixture por userID.
+	profileFacts map[int64]ProfileFactsResponse
 
 	// Synthesize counter — proves cache works.
 	synthesizeCalls atomic.Int64
@@ -91,9 +100,11 @@ func newFakeStore() *fakeStore {
 		linksByGD:    map[string]int64{},
 		consents:     map[string]string{},
 		snapshots:    map[int64][]SnapshotPoint{},
-		upcoming:     map[int64][]AgendaEvent{},
-		activity:     map[int64][]ActivityItem{},
-		insightsData: map[int64]synthesis.AgendaInsightsInput{},
+		upcoming:      map[int64][]AgendaEvent{},
+		activity:      map[int64][]ActivityItem{},
+		insightsData:  map[int64]synthesis.AgendaInsightsInput{},
+		dependentMeds: map[int64][]MedicationItem{},
+		profileFacts:  map[int64]ProfileFactsResponse{},
 	}
 }
 
@@ -501,18 +512,32 @@ func (s *fakeStore) UpcomingEvents(_ context.Context, userID int64) ([]AgendaEve
 	return out, nil
 }
 
-func (s *fakeStore) RecentActivity(_ context.Context, userID int64, limit int) ([]ActivityItem, error) {
+func (s *fakeStore) RecentActivity(ctx context.Context, userID int64, limit int) ([]ActivityItem, error) {
+	if limit <= 0 {
+		limit = 8
+	}
+	return s.ActivityHistory(ctx, userID, limit)
+}
+
+func (s *fakeStore) ActivityHistory(_ context.Context, userID int64, limit int) ([]ActivityItem, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.activityErr != nil {
 		return nil, s.activityErr
 	}
-	items := s.activity[userID]
-	if limit > 0 && len(items) > limit {
-		items = items[:limit]
+	if limit <= 0 {
+		limit = 50
 	}
-	out := make([]ActivityItem, len(items))
-	copy(out, items)
+	out := make([]ActivityItem, 0, limit)
+	for _, it := range s.activity[userID] {
+		if !IsRelevantActivity(it.Action) {
+			continue
+		}
+		if len(out) >= limit {
+			break
+		}
+		out = append(out, it)
+	}
 	return out, nil
 }
 
@@ -541,6 +566,81 @@ func (s *fakeStore) SendMagicLink(_ context.Context, phone, msg string) error {
 	defer s.mu.Unlock()
 	s.magicLinks = append(s.magicLinks, magicLink{Phone: phone, Message: msg})
 	return nil
+}
+
+func (s *fakeStore) SendWhatsApp(_ context.Context, phone, msg string) error {
+	if s.sendMagicLinkErr != nil {
+		return s.sendMagicLinkErr
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.whatsappSent = append(s.whatsappSent, magicLink{Phone: phone, Message: msg})
+	return nil
+}
+
+func (s *fakeStore) ProfileFacts(_ context.Context, userID int64) (ProfileFactsResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	resp := s.profileFacts[userID]
+	if resp.Relations == nil {
+		resp.Relations = []RelationFact{}
+	}
+	if resp.People == nil {
+		resp.People = []PersonFact{}
+	}
+	if resp.Trips == nil {
+		resp.Trips = []TripFact{}
+	}
+	resp.Available = len(resp.Relations) > 0 || len(resp.People) > 0 || len(resp.Trips) > 0
+	return resp, nil
+}
+
+func (s *fakeStore) ListDependentMedications(_ context.Context, guardianID, dependentID int64) ([]MedicationItem, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.linksByGD[joinGDKey(guardianID, dependentID)]; !ok {
+		return nil, ErrNotFound
+	}
+	out := make([]MedicationItem, len(s.dependentMeds[dependentID]))
+	copy(out, s.dependentMeds[dependentID])
+	return out, nil
+}
+
+func (s *fakeStore) CreateDependentMedication(_ context.Context, guardianID, dependentID int64, in CreateMedicationRequest) (*MedicationItem, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.createMedErr != nil {
+		return nil, s.createMedErr
+	}
+	if _, ok := s.linksByGD[joinGDKey(guardianID, dependentID)]; !ok {
+		return nil, ErrNotFound
+	}
+	item := MedicationItem{
+		ID:           int64(len(s.dependentMeds[dependentID]) + 1),
+		Name:         in.Name,
+		Dose:         in.Dose,
+		Instructions: in.Instructions,
+		Schedule:     "Todos os dias",
+		Active:       true,
+	}
+	s.dependentMeds[dependentID] = append(s.dependentMeds[dependentID], item)
+	return &item, nil
+}
+
+func (s *fakeStore) DeactivateDependentMedication(_ context.Context, guardianID, dependentID, medID int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.linksByGD[joinGDKey(guardianID, dependentID)]; !ok {
+		return ErrNotFound
+	}
+	meds := s.dependentMeds[dependentID]
+	for i := range meds {
+		if meds[i].ID == medID {
+			s.dependentMeds[dependentID] = append(meds[:i], meds[i+1:]...)
+			return nil
+		}
+	}
+	return ErrNotFound
 }
 
 // helpers ---

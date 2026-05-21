@@ -9,11 +9,11 @@ import (
 var weekdaysPT = map[time.Weekday]string{
 	time.Sunday:    "Domingo",
 	time.Monday:    "Segunda",
-	time.Tuesday:   "Terca",
+	time.Tuesday:   "Terça",
 	time.Wednesday: "Quarta",
 	time.Thursday:  "Quinta",
 	time.Friday:    "Sexta",
-	time.Saturday:  "Sabado",
+	time.Saturday:  "Sábado",
 }
 
 // relativeDayLabel retorna "HOJE" se eventStart e now caem no mesmo dia
@@ -31,7 +31,7 @@ func relativeDayLabel(eventStart, now time.Time) string {
 	tomorrow := nowInLoc.AddDate(0, 0, 1)
 	tY, tM, tD := tomorrow.Date()
 	if sY == tY && sM == tM && sD == tD {
-		return "AMANHA"
+		return "AMANHÃ"
 	}
 	return ""
 }
@@ -41,7 +41,7 @@ func FormatDailySummary(userName string, events []CalendarEvent, date time.Time)
 	weekday := weekdaysPT[date.Weekday()]
 
 	if len(events) == 0 {
-		return fmt.Sprintf("Bom dia, %s! Sua agenda de %s (%s) esta livre. Nenhum compromisso hoje.", userName, weekday, dayStr)
+		return fmt.Sprintf("Bom dia, %s! Sua agenda de %s (%s) está livre. Nenhum compromisso hoje.", userName, weekday, dayStr)
 	}
 
 	var sb strings.Builder
@@ -59,7 +59,7 @@ func FormatWeeklySummary(userName string, events []CalendarEvent, weekStart time
 	weekEndDate := weekStart.AddDate(0, 0, 6)
 
 	if len(events) == 0 {
-		return fmt.Sprintf("Boa noite, %s! Sua semana de %s a %s esta livre.",
+		return fmt.Sprintf("Boa noite, %s! Sua semana de %s a %s está livre.",
 			userName, weekStart.Format("02/01"), weekEndDate.Format("02/01"))
 	}
 
@@ -85,14 +85,14 @@ func FormatWeeklySummary(userName string, events []CalendarEvent, weekStart time
 }
 
 func FormatReminder(ev CalendarEvent) string {
-	return fmt.Sprintf("Lembrete: *%s* comeca as %s (em 1 hora)",
+	return fmt.Sprintf("Lembrete: *%s* começa às %s (em 1 hora)",
 		ev.Title, ev.Start.Format("15:04"))
 }
 
 func FormatEventCreated(ev CalendarEvent) string {
 	weekday := weekdaysPT[ev.Start.Weekday()]
 	if ev.EventType == "birthday" {
-		return fmt.Sprintf("Aniversario criado: *%s*\n%s, %s (repete todo ano)",
+		return fmt.Sprintf("Aniversário criado: *%s*\n%s, %s (repete todo ano)",
 			ev.Title, weekday, ev.Start.Format("02/01"))
 	}
 	rel := relativeDayLabel(ev.Start, time.Now())
@@ -100,13 +100,13 @@ func FormatEventCreated(ev CalendarEvent) string {
 	if rel != "" {
 		prefix = rel + " — "
 	}
-	return fmt.Sprintf("Evento criado: *%s*\n%s%s, %s as %s",
+	return fmt.Sprintf("Evento criado: *%s*\n%s%s, %s às %s",
 		ev.Title, prefix, weekday, ev.Start.Format("02/01"), ev.Start.Format("15:04"))
 }
 
 func FormatEventList(events []CalendarEvent) string {
 	if len(events) == 0 {
-		return "Nenhum compromisso encontrado nesse periodo."
+		return "Nenhum compromisso encontrado nesse período."
 	}
 
 	var sb strings.Builder

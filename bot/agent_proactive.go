@@ -40,10 +40,10 @@ func (a *Agent) RunProactive(ctx context.Context, user *User, hoursIdle int) (st
 	history, _ := a.db.GetConversationHistory(user.ID, 30)
 
 	syntheticPrompt := fmt.Sprintf(
-		"[SISTEMA] %s nao fala ha cerca de %d horas. Puxe conversa naturalmente, "+
-			"referenciando algo que voce ja sabe sobre ele/ela (busque em social_context "+
-			"se precisar). Mensagem unica, curta, sem soar robotico, sem perguntar de "+
-			"saude diretamente, sem listas. Se ele pediu tregua recente, NAO mande nada — "+
+		"[SISTEMA] %s não fala há cerca de %d horas. Puxe conversa naturalmente, "+
+			"referenciando algo que você já sabe sobre ele/ela (busque em social_context "+
+			"se precisar). Mensagem única, curta, sem soar robótico, sem perguntar de "+
+			"saúde diretamente, sem listas. Se ele pediu trégua recente, NÃO mande nada — "+
 			"responda com a string vazia.",
 		user.Name, hoursIdle,
 	)

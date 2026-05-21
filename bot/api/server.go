@@ -109,6 +109,10 @@ func (s *Server) Mount(mux *http.ServeMux) {
 		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMeAgenda))))
 	mux.Handle(s.route("/api/v1/me/insights"),
 		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMeInsights))))
+	mux.Handle(s.route("/api/v1/me/activity"),
+		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMeActivity))))
+	mux.Handle(s.route("/api/v1/me/profile-facts"),
+		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMeProfileFacts))))
 
 	// Family — colecao.
 	mux.Handle(s.route("/api/v1/family/dependents"),
@@ -131,7 +135,7 @@ func (s *Server) handleDependentsCollection(w http.ResponseWriter, r *http.Reque
 	case http.MethodPost:
 		s.handleCreateDependent(w, r)
 	default:
-		writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Metodo nao permitido.")
+		writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
 	}
 }
 
@@ -142,12 +146,12 @@ func (s *Server) handleDependentResource(w http.ResponseWriter, r *http.Request)
 	path := strings.TrimPrefix(r.URL.Path, s.route("/api/v1/family/dependents/"))
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) == 0 || parts[0] == "" {
-		writeError(w, http.StatusNotFound, CodeNotFound, "Rota nao encontrada.")
+		writeError(w, http.StatusNotFound, CodeNotFound, "Rota não encontrada.")
 		return
 	}
 	depID, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil || depID <= 0 {
-		writeError(w, http.StatusBadRequest, CodeValidation, "ID do dependente invalido.")
+		writeError(w, http.StatusBadRequest, CodeValidation, "ID do dependente inválido.")
 		return
 	}
 	if len(parts) == 1 {
@@ -155,28 +159,60 @@ func (s *Server) handleDependentResource(w http.ResponseWriter, r *http.Request)
 		case http.MethodPatch:
 			s.handleUpdateDependent(w, r, depID)
 		default:
-			writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Metodo nao permitido.")
+			writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
 		}
 		return
 	}
-	// Sub-resource.
-	sub := parts[1]
-	switch {
-	case sub == "status":
+	// Sub-resource. Pode ser simples ("status", "timeline", "medications") ou
+	// aninhado ("medications/{medId}").
+	subParts := strings.SplitN(parts[1], "/", 2)
+	sub := subParts[0]
+	switch sub {
+	case "status":
 		if r.Method != http.MethodGet {
-			writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Metodo nao permitido.")
+			writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
 			return
 		}
 		s.handleDependentStatus(w, r, depID)
-	case sub == "timeline":
+	case "timeline":
 		if r.Method != http.MethodGet {
-			writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Metodo nao permitido.")
+			writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
 			return
 		}
 		s.handleDependentTimeline(w, r, depID)
+	case "medications":
+		s.routeDependentMedications(w, r, depID, subParts)
 	default:
-		writeError(w, http.StatusNotFound, CodeNotFound, "Rota nao encontrada.")
+		writeError(w, http.StatusNotFound, CodeNotFound, "Rota não encontrada.")
 	}
+}
+
+// routeDependentMedications roteia /family/dependents/{id}/medications e
+// /family/dependents/{id}/medications/{medId}. subParts[0] == "medications".
+func (s *Server) routeDependentMedications(w http.ResponseWriter, r *http.Request, depID int64, subParts []string) {
+	// Coletivo: /medications  (sem id, ou trailing slash vazio)
+	if len(subParts) == 1 || strings.TrimSpace(subParts[1]) == "" {
+		switch r.Method {
+		case http.MethodGet:
+			s.handleListDependentMedications(w, r, depID)
+		case http.MethodPost:
+			s.handleCreateDependentMedication(w, r, depID)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
+		}
+		return
+	}
+	// Item: /medications/{medId}
+	medID, err := strconv.ParseInt(strings.Trim(subParts[1], "/"), 10, 64)
+	if err != nil || medID <= 0 {
+		writeError(w, http.StatusBadRequest, CodeValidation, "ID do medicamento inválido.")
+		return
+	}
+	if r.Method != http.MethodDelete {
+		writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
+		return
+	}
+	s.handleDeleteDependentMedication(w, r, depID, medID)
 }
 
 // handleLinkResource roteia /family/links/{id}/notify.
@@ -184,21 +220,21 @@ func (s *Server) handleLinkResource(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, s.route("/api/v1/family/links/"))
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) < 2 || parts[0] == "" {
-		writeError(w, http.StatusNotFound, CodeNotFound, "Rota nao encontrada.")
+		writeError(w, http.StatusNotFound, CodeNotFound, "Rota não encontrada.")
 		return
 	}
 	linkID, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil || linkID <= 0 {
-		writeError(w, http.StatusBadRequest, CodeValidation, "ID do vinculo invalido.")
+		writeError(w, http.StatusBadRequest, CodeValidation, "ID do vínculo inválido.")
 		return
 	}
 	if parts[1] == "notify" {
 		if r.Method != http.MethodPatch {
-			writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Metodo nao permitido.")
+			writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
 			return
 		}
 		s.handleUpdateNotify(w, r, linkID)
 		return
 	}
-	writeError(w, http.StatusNotFound, CodeNotFound, "Rota nao encontrada.")
+	writeError(w, http.StatusNotFound, CodeNotFound, "Rota não encontrada.")
 }
