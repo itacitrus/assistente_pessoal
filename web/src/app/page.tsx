@@ -172,7 +172,7 @@ function TwoWorlds() {
             Dois mundos, uma conversa
           </p>
           <h2 className="mt-3 text-balance font-display text-[28px] font-semibold leading-[1.1] tracking-[-0.02em] md:text-[38px]">
-            O Zello atende a vida toda, sem misturar as caixas.
+            A sua vida e a de quem você ama, sem uma atravessar a outra.
           </h2>
           <p className="mt-4 text-balance text-[15px] leading-relaxed text-muted-foreground md:text-[17px]">
             Você fala com o Zello no seu WhatsApp. A sua mãe fala com o Zello no

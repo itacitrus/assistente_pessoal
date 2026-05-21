@@ -193,9 +193,9 @@ export default function TermosPage() {
         disponível&rdquo;, sem garantias expressas ou implícitas. Não garantimos
         uptime contínuo, ausência de erros ou disponibilidade em janelas
         específicas. Manutenções, atualizações, dependências externas (WhatsApp,
-        Google, Anthropic, DeepSeek, AssemblyAI, AWS) ou incidentes técnicos
-        podem causar indisponibilidade temporária — inclusive de lembretes e
-        alertas.
+        Google e demais provedores dos quais o serviço depende) ou incidentes
+        técnicos podem causar indisponibilidade temporária — inclusive de
+        lembretes e alertas.
       </p>
 
       <h2>9. Propriedade intelectual</h2>
@@ -217,9 +217,8 @@ export default function TermosPage() {
           de oportunidade;
         </li>
         <li>
-          Indisponibilidade de serviços de terceiros (WhatsApp, Google,
-          Anthropic, DeepSeek, AssemblyAI, AWS) que afetem o funcionamento do
-          serviço;
+          Indisponibilidade de serviços de terceiros (WhatsApp, Google e demais
+          provedores externos) que afetem o funcionamento do serviço;
         </li>
         <li>
           Perdas decorrentes de eventos não criados, não excluídos ou não

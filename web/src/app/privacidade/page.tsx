@@ -375,64 +375,59 @@ export default function PrivacidadePage() {
 
       <h2>11. Compartilhamento com terceiros (operadores)</h2>
       <p>
-        Alguns serviços técnicos processam dados para viabilizar o funcionamento
-        do assistente:
+        Para viabilizar o funcionamento do assistente, contamos com prestadores
+        de serviço técnicos que tratam dados estritamente conforme nossas
+        instruções e apenas no necessário. Por categoria:
       </p>
       <ul>
         <li>
-          <strong>Anthropic</strong> (Claude API) — processa o texto das
-          mensagens para gerar respostas e a síntese de bem-estar. Segundo a
-          política da Anthropic, conteúdo de API não é retido para treinamento. O
-          processamento pode ocorrer fora do Brasil.
+          <strong>Provedores de inteligência artificial</strong> — processam o
+          texto das conversas para gerar respostas e a leitura de bem-estar. Por
+          contrato e/ou política, o conteúdo não é utilizado para treinar
+          modelos.
         </li>
         <li>
-          <strong>DeepSeek</strong> — usado como modelo conversacional na camada
-          de companhia da pessoa cuidada. O processamento ocorre{" "}
-          <strong>fora do Brasil</strong>; trata-se de transferência
-          internacional de dados, adotada com as salvaguardas aplicáveis. Caso a
-          chave do DeepSeek não esteja configurada, essa função recai sobre a
-          Anthropic.
+          <strong>Serviço de transcrição de áudio</strong> — converte mensagens
+          de voz em texto; os dados são processados e descartados após a
+          transcrição.
         </li>
         <li>
-          <strong>AssemblyAI</strong> — transcreve mensagens de áudio; os dados
-          são processados e descartados após a transcrição. O processamento pode
-          ocorrer fora do Brasil.
+          <strong>Provedor de infraestrutura de nuvem</strong> — hospeda os
+          servidores e os dados.
         </li>
         <li>
-          <strong>Google</strong> — provedor da API do Calendar (apenas se você
-          conectar).
-        </li>
-        <li>
-          <strong>Amazon Web Services</strong> — hospedagem dos servidores, na
-          região <code>sa-east-1</code> (São Paulo, Brasil).
+          <strong>Google</strong> — quando você conecta o Google Calendar, é o
+          provedor dessa integração (ver seções 6 e 7).
         </li>
       </ul>
       <p>
+        Esses prestadores atuam como operadores, sob dever de confidencialidade.{" "}
         <strong>Nunca vendemos</strong> nem compartilhamos dados para fins de
-        marketing. Transferências internacionais (Anthropic, DeepSeek,
-        AssemblyAI) são feitas com base nas hipóteses do Art. 33 da LGPD, com as
-        garantias contratuais aplicáveis.
+        marketing. Parte do tratamento pode ocorrer fora do Brasil; nesse caso, a
+        transferência internacional é feita com base nas hipóteses do Art. 33 da
+        LGPD, com as garantias aplicáveis.
       </p>
 
       <h2>12. Armazenamento e segurança</h2>
       <ul>
         <li>
-          Servidores na AWS, região <code>sa-east-1</code> (São Paulo, Brasil).
+          Servidores e banco de dados hospedados em provedor de nuvem, com os
+          dados mantidos no Brasil.
         </li>
         <li>
-          Refresh tokens do Google e credenciais sensíveis armazenados com
-          criptografia <strong>AES-256-GCM</strong> em repouso.
+          Credenciais sensíveis (como o refresh token do Google) armazenadas com
+          criptografia forte em repouso.
         </li>
         <li>
-          Conexões com WhatsApp, Google e processadores sempre via HTTPS/TLS.
+          Conexões com serviços externos sempre por canais cifrados (HTTPS/TLS).
         </li>
         <li>
-          Backups automáticos do banco de dados a cada 6 horas, retidos por 30
-          dias em bucket S3 com acesso restrito.
+          Backups automáticos e periódicos do banco de dados, com retenção
+          limitada e acesso restrito.
         </li>
         <li>
-          Acesso administrativo restrito a operadores autenticados (chave SSH +
-          AWS SSM), com registro de auditoria.
+          Acesso administrativo restrito a operadores autenticados, com registro
+          de auditoria.
         </li>
       </ul>
 
