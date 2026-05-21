@@ -67,7 +67,7 @@ export default async function DependentDetailPage({ params }: PageProps) {
 
       <StatusHeader status={status} relationship={relationship} />
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <MetricCard data={status.medication} days={status.days} />
         <SynthesisCard synthesis={status.synthesis} />
       </div>

@@ -43,7 +43,7 @@ function Hero() {
         <div className="absolute inset-0 bg-noise opacity-[0.5] mix-blend-multiply" />
       </div>
 
-      <div className="container grid items-center gap-12 py-16 md:py-24 lg:grid-cols-[1.05fr_0.95fr] lg:gap-8">
+      <div className="container grid grid-cols-1 items-center gap-12 py-16 md:py-24 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:gap-8">
         <div className="max-w-xl">
           <span className="animate-rise inline-flex items-center gap-2 rounded-full border border-border bg-card/70 px-3 py-1 text-sm font-medium text-secondary-foreground shadow-sm [animation-delay:0ms]">
             <span className="h-2 w-2 rounded-full bg-[--zello-emerald]" />
@@ -208,7 +208,7 @@ function Pillars() {
         </p>
       </div>
 
-      <div className="mt-12 grid gap-6 md:grid-cols-3">
+      <div className="mt-12 grid grid-cols-1 gap-6 md:grid-cols-3">
         {pillars.map((p) => (
           <article
             key={p.title}
@@ -260,7 +260,7 @@ function HowItWorks() {
           </p>
         </div>
 
-        <ol className="mx-auto mt-12 grid max-w-4xl gap-6 md:grid-cols-3">
+        <ol className="mx-auto mt-12 grid max-w-4xl grid-cols-1 gap-6 md:grid-cols-3">
           {steps.map((s, i) => (
             <li
               key={s.title}
@@ -327,7 +327,7 @@ function Privacy() {
           </p>
         </div>
 
-        <div className="relative mx-auto mt-10 grid max-w-5xl gap-5 md:grid-cols-3">
+        <div className="relative mx-auto mt-10 grid max-w-5xl grid-cols-1 gap-5 md:grid-cols-3">
           {pillars.map(({ icon: Icon, title, body }) => (
             <div
               key={title}

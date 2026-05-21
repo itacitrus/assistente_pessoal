@@ -144,7 +144,7 @@ function AgendaSection({ agenda }: { agenda: AgendaResponse }) {
         </h2>
       </header>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <UpcomingCard agenda={agenda} />
         <ActivityCard items={agenda.recent_activity} />
       </div>
@@ -314,7 +314,7 @@ function InsightsSection({ insights }: { insights: InsightsResponse }) {
           ) : null}
 
           {insights.insights.length > 0 ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {insights.insights.map((ins, i) => (
                 <InsightCard key={`${ins.kind}-${i}`} insight={ins} />
               ))}
@@ -411,7 +411,7 @@ function ProfileFactsSection({ facts }: { facts: ProfileFacts }) {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {hasPeople ? (
             <PeopleCard relations={relations} people={people} />
           ) : null}
