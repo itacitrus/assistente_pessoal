@@ -16,6 +16,20 @@ func writeOAuthSuccess(w http.ResponseWriter, userName string) {
 	}
 }
 
+var oauthErrorTmpl = template.Must(template.New("oauth_err").Parse(oauthErrorHTML))
+
+// writeOAuthError renderiza uma pagina amigavel quando o state de conexao eh
+// invalido/expirado/ja usado. Mesma identidade visual da de sucesso, sem
+// confete, com a mensagem especifica do motivo. 400 — erro do lado do link.
+func writeOAuthError(w http.ResponseWriter, reason string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusBadRequest)
+	if err := oauthErrorTmpl.Execute(w, map[string]string{"Reason": reason}); err != nil {
+		log.Printf("oauth error render: %v", err)
+	}
+}
+
 // oauthSuccessHTML mirrors the Charles Lurch / Itacitrus brand used on
 // assistente.itacitrus.com.br: Plus Jakarta Sans, light theme, green #4bb71b
 // accent. Confetti animation kept (adapted from the packing_house repo's
@@ -174,7 +188,7 @@ const oauthSuccessHTML = `<!doctype html>
     <path class="checkmark__check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8"/>
   </svg>
   <h1>Google Calendar conectado<span class="green">.</span></h1>
-  <p class="lead">Boa, <span class="name">{{.UserName}}</span>! A sua agenda agora está em boas mãos — o Charles toma conta.</p>
+  <p class="lead">Boa, <span class="name">{{.UserName}}</span>! A sua agenda agora está em boas mãos — o Zello toma conta.</p>
   <p class="hint">Pode fechar esta janela e voltar ao WhatsApp.</p>
 </div>
 <script>
@@ -306,6 +320,72 @@ window.addEventListener("load", function() {
   setTimeout(function() { confetti.stop(); }, 2200);
 });
 </script>
+</body>
+</html>
+`
+
+// oauthErrorHTML reaproveita o esqueleto visual da pagina de sucesso (mesma
+// marca/tipografia), troca o checkmark verde por um aviso ambar e omite o
+// confete. {{.Reason}} traz o motivo especifico (expirado/usado/invalido).
+const oauthErrorHTML = `<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Link expirado — Zello</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%234bb71b'/%3E%3Ctext x='16' y='21' font-family='system-ui,sans-serif' font-size='14' font-weight='700' text-anchor='middle' fill='white'%3EZ%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --ink: #131a15; --ink-soft: #3a4640; --ink-muted: #6a7671; --ink-faint: #97a29d;
+    --paper: #ffffff; --line: #e3eade; --line-soft: #edf1e8;
+    --amber: #c8870d; --amber-dark: #9a6707;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    font-family: "Plus Jakarta Sans", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+    color: var(--ink);
+    background:
+      radial-gradient(ellipse at 50% -10%, #faf1dc 0%, transparent 55%),
+      radial-gradient(ellipse at 10% 110%, #f9f3e6 0%, transparent 50%),
+      var(--paper);
+    background-attachment: fixed;
+  }
+  body { display: flex; align-items: center; justify-content: center; padding: 1.25rem; }
+  .card {
+    background: var(--paper); border: 1px solid var(--line); border-radius: 22px;
+    padding: 2.5rem 2.25rem 2.25rem; text-align: center; max-width: 460px; width: 100%;
+    box-shadow: 0 32px 60px -28px rgba(62, 44, 12, 0.18), 0 6px 18px rgba(19, 26, 21, 0.05);
+    animation: cardIn 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes cardIn { from { opacity: 0; transform: translateY(14px) scale(0.985); } to { opacity: 1; transform: none; } }
+  .brand-mark { font-size: 0.88rem; color: var(--ink-muted); margin-bottom: 1.75rem; }
+  .brand-mark strong { color: var(--ink); font-weight: 700; font-size: 0.96rem; margin-right: 0.3rem; }
+  .brand-mark strong .dot { color: var(--amber); }
+  .badge {
+    width: 82px; height: 82px; border-radius: 50%; margin: 0 auto;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(200, 135, 13, 0.1); color: var(--amber);
+    font-size: 2.4rem; line-height: 1;
+  }
+  h1 { font-size: clamp(1.45rem, 4vw, 1.65rem); font-weight: 700; letter-spacing: -0.028em; line-height: 1.15; margin: 1.5rem 0 0.55rem; }
+  .lead { font-size: 1rem; line-height: 1.55; color: var(--ink-soft); margin-bottom: 1.5rem; }
+  .hint { display: inline-block; font-size: 0.82rem; color: var(--ink-faint); padding-top: 1.25rem; border-top: 1px solid var(--line-soft); width: 100%; }
+  @media (max-width: 480px) { .card { padding: 2.25rem 1.5rem 1.75rem; } }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="brand-mark"><strong>Zello<span class="dot">.</span></strong> por Itacitrus</div>
+  <div class="badge" aria-hidden="true">!</div>
+  <h1>Não consegui conectar</h1>
+  <p class="lead">{{.Reason}}</p>
+  <p class="hint">Pode fechar esta janela.</p>
+</div>
 </body>
 </html>
 `

@@ -306,6 +306,9 @@ export interface InsightsResponse {
   available: boolean;
   summary: string;
   insights: Insight[];
+  /** true quando os insights ainda estão sendo gerados em background (primeiro
+   * acesso). A UI mostra "preparando" e dá auto-refresh. */
+  pending?: boolean;
 }
 
 // ---- Atividade (historico completo) ----

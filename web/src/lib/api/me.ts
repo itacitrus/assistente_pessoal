@@ -93,6 +93,20 @@ export async function getMyActivity(
 }
 
 /**
+ * POST /api/v1/me/google/connect-url
+ *
+ * Pede ao backend a URL de consentimento do Google Calendar para o proprio
+ * usuario logado (com um state opaco de uso unico ja embutido). O caller
+ * redireciona o navegador pra essa URL — ao autorizar, o callback OAuth grava
+ * as credenciais. POST porque emite um token de uso unico (efeito colateral).
+ */
+export async function getGoogleConnectUrl(): Promise<{ url: string }> {
+  return fetchApi<{ url: string }>("/api/v1/me/google/connect-url", {
+    method: "POST",
+  });
+}
+
+/**
  * GET /api/v1/me/profile-facts
  *
  * Devolve os fatos que o Zello aprendeu sobre o usuario: pessoas na vida dele

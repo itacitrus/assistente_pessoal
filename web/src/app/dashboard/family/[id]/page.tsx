@@ -2,10 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { AlertList } from "@/components/family/AlertList";
+import { ConnectDependentGoogleButton } from "@/components/family/ConnectDependentGoogleButton";
 import { DependentDataForm } from "@/components/family/DependentDataForm";
 import { MetricCard } from "@/components/family/MetricCard";
 import { StatusHeader } from "@/components/family/StatusHeader";
-import { SynthesisAutoRefresh } from "@/components/family/SynthesisAutoRefresh";
+import { PendingAutoRefresh } from "@/components/PendingAutoRefresh";
 import { SynthesisCard } from "@/components/family/SynthesisCard";
 import { Pill } from "lucide-react";
 
@@ -39,6 +40,7 @@ export default async function DependentDetailPage({ params }: PageProps) {
   let relationship: string | undefined;
   let dependentName = "";
   let dependentPhone = "";
+  let dependentGoogleConnected = false;
   let medications: MedicationItem[] = [];
   try {
     const [s, deps, meds] = await Promise.all([
@@ -52,6 +54,7 @@ export default async function DependentDetailPage({ params }: PageProps) {
     relationship = entry?.link.relationship;
     dependentName = entry?.user.name ?? "";
     dependentPhone = entry?.user.phone_number ?? "";
+    dependentGoogleConnected = entry?.user.google_connected ?? false;
     medications = meds;
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) {
@@ -80,7 +83,7 @@ export default async function DependentDetailPage({ params }: PageProps) {
           available={status.synthesis_available !== false}
         />
       </div>
-      <SynthesisAutoRefresh pending={status.synthesis_available === false} />
+      <PendingAutoRefresh pending={status.synthesis_available === false} />
 
       <AlertList alerts={status.alerts_open} />
 
@@ -101,6 +104,24 @@ export default async function DependentDetailPage({ params }: PageProps) {
           →
         </span>
       </Link>
+
+      <div className="space-y-3 rounded-lg border bg-card p-5 shadow-warm">
+        <div>
+          <h2 className="font-display text-lg font-semibold tracking-tight">
+            Agenda do Google
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {dependentGoogleConnected
+              ? "A agenda está conectada. O Zello usa ela para lembrar dos compromissos."
+              : `O Zello envia um link no WhatsApp de ${dependentName.split(" ")[0] || "do dependente"} para conectar a agenda. Quem autoriza é a própria pessoa, no aparelho dela.`}
+          </p>
+        </div>
+        <ConnectDependentGoogleButton
+          dependentId={id}
+          dependentName={dependentName}
+          connected={dependentGoogleConnected}
+        />
+      </div>
 
       <div className="flex flex-wrap gap-3">
         <Button asChild>

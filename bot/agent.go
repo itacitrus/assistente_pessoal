@@ -210,11 +210,9 @@ func (a *Agent) Run(ctx context.Context, user *User, message string, images []Im
 
 	log.Printf("[%s] Agent final response (%d chars): %.100s", user.Name, len(response), response)
 
-	// Save assistant response to history
-	if response != "" {
-		a.db.AddConversationMessage(user.ID, "assistant", response)
-	}
-
+	// Nao persiste aqui: a persistencia em conversation_history acontece no
+	// transporte (Handler.persistOutbound), quando a resposta eh efetivamente
+	// enviada. Ver comentario em Handler.persistOutbound.
 	return response, nil
 }
 

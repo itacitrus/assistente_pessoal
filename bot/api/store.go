@@ -39,6 +39,14 @@ type Store interface {
 	// User update ---------------------------------------------------------
 	UpdateUserPreferences(ctx context.Context, userID int64, p PreferencesPatch) (*User, error)
 
+	// Google Calendar -----------------------------------------------------
+	// GoogleConnectURL gera a URL de consentimento do Google Calendar para
+	// userID, embutindo um state opaco de uso unico vinculado a esse user.
+	// O titular usa pra redirecionar o proprio navegador; o guardiao usa pra
+	// montar o link que o Zello envia ao dependente por WhatsApp. Retorna erro
+	// se o cliente de calendario nao estiver configurado.
+	GoogleConnectURL(ctx context.Context, userID int64) (string, error)
+
 	// Family --------------------------------------------------------------
 	CreateDependent(ctx context.Context, guardianID int64, req CreateDependentRequest) (*User, *FamilyLink, error)
 	ListDependents(ctx context.Context, guardianID int64) ([]DependentSummary, error)
@@ -75,6 +83,12 @@ type Store interface {
 	// AgendaInsightsData monta o input do sub-agente de insights lendo
 	// calendar (passado + futuro) + action_log agregado por tipo de acao.
 	AgendaInsightsData(ctx context.Context, userID int64, days int) (synthesis.AgendaInsightsInput, error)
+	// GetUserInsights le os insights de agenda PERSISTIDOS (Sonnet) de
+	// (userID, days). Retorna ErrNotFound quando ainda nao ha geracao.
+	GetUserInsights(ctx context.Context, userID int64, days int) (*InsightsResponse, error)
+	// SaveUserInsights grava os insights persistidos. Chamado pelo regen
+	// assincrono — nunca no caminho da requisicao.
+	SaveUserInsights(ctx context.Context, userID int64, days int, resp *InsightsResponse) error
 	// ProfileFacts retorna os fatos que o Zello conhece do usuario:
 	// relacoes (dependentes/guardioes/memorias), pessoas do contexto social e
 	// viagens. Le o DB direto. available=false quando tudo vazio.

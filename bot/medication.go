@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"time"
 )
 
@@ -165,6 +166,11 @@ func (n *WhatsAppNotifier) Send(_ context.Context, recipient *User, message stri
 
 // Channel retorna o nome do canal usado por este notifier. Persistido em
 // escalations.notifier_used pra observabilidade.
+//
+// Nota: a persistencia das mensagens enviadas em conversation_history acontece
+// no transporte (Handler.persistOutbound, alcancado via sendMsg callback), nao
+// aqui — assim todo envio ao cliente (notifier ou nao) entra no historico por
+// um unico ponto.
 func (n *WhatsAppNotifier) Channel() string { return "whatsapp" }
 
 // =========================================================================

@@ -24,6 +24,10 @@ func (f *fakeCal) ListEvents(_ context.Context, _, _ string, _, _ time.Time) ([]
 	return f.events, nil
 }
 
+func (f *fakeCal) AuthURL(state string) string {
+	return "https://accounts.google.com/o/oauth2/auth?state=" + state
+}
+
 // insertActionLog grava uma linha de action_log com created_at explicito.
 func insertActionLog(t *testing.T, db *DB, userID int64, action string, at time.Time) {
 	t.Helper()

@@ -40,7 +40,11 @@ func SendReauthLinkIfDue(db *DB, cal *CalendarClient, sendMsg func(phone, text s
 		return false, nil
 	}
 
-	authURL := cal.AuthURL(user.PhoneNumber)
+	state, err := db.CreateOAuthState(user.ID, oauthStateTTL)
+	if err != nil {
+		return false, fmt.Errorf("create oauth state: %w", err)
+	}
+	authURL := cal.AuthURL(state)
 	msg := fmt.Sprintf(
 		"Ops, sua autorização com o Google Calendar expirou (é uma limitação temporária enquanto meu app não é verificado pelo Google — acontece a cada 7 dias).\n\nReautorize aqui e eu volto a funcionar:\n\n%s",
 		authURL,

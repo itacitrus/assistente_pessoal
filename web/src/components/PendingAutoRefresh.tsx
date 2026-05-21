@@ -4,12 +4,12 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 
 /**
- * Quando a síntese ainda está sendo preparada (geração assíncrona no backend),
- * recarrega os dados do servidor uma vez após um curto intervalo, até um teto
- * de tentativas. Assim a página "se completa" sozinha sem o usuário precisar
- * dar F5, e sem ficar em loop infinito se a geração falhar.
+ * Quando algum dado da página ainda está sendo gerado em background (síntese,
+ * insights), recarrega os dados do servidor após um curto intervalo, até um
+ * teto de tentativas. A página "se completa" sozinha sem F5, e não entra em
+ * loop infinito se a geração falhar.
  */
-export function SynthesisAutoRefresh({
+export function PendingAutoRefresh({
   pending,
   intervalMs = 6000,
   maxAttempts = 3,

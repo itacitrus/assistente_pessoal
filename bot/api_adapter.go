@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -26,12 +27,13 @@ import (
 // Reuso: BuildDependentStatus eh a mesma funcao usada pelo chat (tools_family.go).
 // O adapter chama-a, depois converte DependentStatusReport -> api.StatusResponse.
 
-// calendarReader eh o subset de CalendarClient que o adapter precisa pra
-// ler a agenda do proprio usuario. Mantido como interface (nao *CalendarClient
-// concreto) pra permitir fake em testes sem OAuth real. *CalendarClient
-// satisfaz isto.
+// calendarReader eh o subset de CalendarClient que o adapter precisa: ler a
+// agenda do proprio usuario (ListEvents) e montar a URL de consentimento do
+// OAuth (AuthURL). Mantido como interface (nao *CalendarClient concreto) pra
+// permitir fake em testes sem OAuth real. *CalendarClient satisfaz isto.
 type calendarReader interface {
 	ListEvents(ctx context.Context, refreshToken, calendarID string, start, end time.Time) ([]CalendarEvent, error)
+	AuthURL(state string) string
 }
 
 type apiAdapter struct {
@@ -250,6 +252,22 @@ func (a *apiAdapter) UpdateUserPreferences(ctx context.Context, userID int64, p 
 		return nil, err
 	}
 	return userToAPI(updated), nil
+}
+
+// GoogleConnectURL gera a URL de consentimento do Google Calendar para userID,
+// com um state opaco de uso unico (vide oauth_state.go) que o callback resgata
+// pra descobrir QUAL user deve receber as credenciais. Vincular o state ao
+// user no servidor — em vez de aceitar telefone vindo do cliente — eh o que
+// torna seguro disparar a conexao tanto do titular quanto de um dependente.
+func (a *apiAdapter) GoogleConnectURL(ctx context.Context, userID int64) (string, error) {
+	if a.cal == nil {
+		return "", errors.New("calendar client not configured")
+	}
+	state, err := a.db.CreateOAuthState(userID, oauthStateTTL)
+	if err != nil {
+		return "", fmt.Errorf("create oauth state: %w", err)
+	}
+	return a.cal.AuthURL(state), nil
 }
 
 // CreateDependent cria User tipo idoso (se phone novo) + family_link.
@@ -781,6 +799,42 @@ func activityLabelPT(action string) string {
 // periodo retroativo (`days`) + proximos agendaWindowDays + contagem de
 // atividade por tipo de acao no periodo. Tolera ausencia de Google — nesse
 // caso so popula activity_counts (HasEnoughData decide se vale gerar).
+// GetUserInsights le os insights de agenda persistidos. A frescura eh decidida
+// pelo caller via resp.GeneratedAt.
+func (a *apiAdapter) GetUserInsights(ctx context.Context, userID int64, days int) (*api.InsightsResponse, error) {
+	if days <= 0 {
+		days = 30
+	}
+	payload, _, err := a.db.GetAgendaInsights(userID, days)
+	if err != nil {
+		if errors.Is(err, ErrInsightsNotFound) {
+			return nil, api.ErrNotFound
+		}
+		return nil, err
+	}
+	var resp api.InsightsResponse
+	if uerr := json.Unmarshal([]byte(payload), &resp); uerr != nil {
+		// Payload corrompido — trata como ausente pra forcar regen.
+		return nil, api.ErrNotFound
+	}
+	return &resp, nil
+}
+
+// SaveUserInsights persiste os insights (marshala o api.InsightsResponse).
+func (a *apiAdapter) SaveUserInsights(ctx context.Context, userID int64, days int, resp *api.InsightsResponse) error {
+	if days <= 0 {
+		days = 30
+	}
+	if resp == nil {
+		return errors.New("SaveUserInsights: nil resp")
+	}
+	payload, err := json.Marshal(resp)
+	if err != nil {
+		return fmt.Errorf("marshal insights: %w", err)
+	}
+	return a.db.UpsertAgendaInsights(userID, days, string(payload), resp.GeneratedAt)
+}
+
 func (a *apiAdapter) AgendaInsightsData(ctx context.Context, userID int64, days int) (synthesis.AgendaInsightsInput, error) {
 	if days <= 0 {
 		days = 30

@@ -193,6 +193,22 @@ export async function resendDependentWelcome(
 }
 
 /**
+ * POST /api/v1/family/dependents/{id}/google
+ * Faz o Zello enviar ao PROPRIO dependente, no WhatsApp dele, o link de
+ * conexao com o Google Calendar. Quem autoriza eh o dependente no aparelho
+ * dele — assim a conta conectada eh a da pessoa certa. Devolve `{ ok: true }`
+ * so apos o envio confirmar.
+ */
+export async function sendDependentGoogleConnect(
+  id: number,
+): Promise<{ ok: boolean }> {
+  return fetchApi<{ ok: boolean }>(
+    `/api/v1/family/dependents/${id}/google`,
+    { method: "POST" },
+  );
+}
+
+/**
  * Converte 0 -> null nos scores psicologicos. Backend serializa 0 quando o
  * sinal nao existe naquele dia (vide Fase 5 §3); manter 0 no frontend
  * confunde com a escala 1..5.

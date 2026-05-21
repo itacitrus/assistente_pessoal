@@ -101,6 +101,69 @@ func (s *Server) handleResendWelcome(w http.ResponseWriter, r *http.Request, dep
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// handleDependentGoogleConnect — POST /family/dependents/{id}/google. Envia ao
+// PROPRIO dependente, no WhatsApp dele, o link de conexao com o Google
+// Calendar. O guardiao dispara pelo painel, mas quem autoriza eh o dependente
+// no aparelho dele — assim a conta Google conectada eh a da pessoa certa (e nao
+// a que estiver logada no navegador do guardiao). Apenas o guardiao do
+// dependente pode disparar. Envio NAO best-effort: e um clique explicito, entao
+// falha de envio vira erro pro guardiao saber que nao chegou.
+func (s *Server) handleDependentGoogleConnect(w http.ResponseWriter, r *http.Request, depID int64) {
+	user := userFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Não autenticado.")
+		return
+	}
+	ok, err := s.store.IsGuardianOf(r.Context(), user.ID, depID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao verificar autorizacao.")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusForbidden, CodeForbidden, "Você não é responsável por este dependente.")
+		return
+	}
+	dep, err := s.store.GetUserByID(r.Context(), depID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeError(w, http.StatusNotFound, CodeNotFound, "Dependente não encontrado.")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao buscar dependente.")
+		return
+	}
+	url, err := s.store.GoogleConnectURL(r.Context(), depID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Não foi possível gerar o link de conexão agora.")
+		return
+	}
+	msg := buildDependentGoogleConnectMessage(dep.Name, url)
+	if err := s.store.SendWhatsApp(r.Context(), dep.PhoneNumber, msg); err != nil {
+		writeError(w, http.StatusBadGateway, CodeInternal,
+			"Não foi possível enviar a mensagem agora. Tente de novo em instantes.")
+		return
+	}
+	s.store.Audit(r.Context(), user.ID, "google_connect_url_issued", dep.PhoneNumber,
+		fmt.Sprintf("dependent_id=%d|target=dependent", dep.ID))
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// buildDependentGoogleConnectMessage compoe a mensagem que leva o dependente a
+// autorizar o Google Calendar. Tom companion (pt-BR, caloroso), primeiro nome,
+// com a URL de consentimento ao final.
+func buildDependentGoogleConnectMessage(dependentName, url string) string {
+	dep := firstNamePT(dependentName)
+	saudacao := "Oi"
+	if dep != "" {
+		saudacao = "Oi, " + dep
+	}
+	return fmt.Sprintf(
+		"%s! Pra eu poder te lembrar dos seus compromissos na hora certa, preciso "+
+			"que você conecte a sua agenda do Google. É rapidinho e seguro:\n\n%s\n\n"+
+			"Toque no link, escolha sua conta e autorize. Qualquer dúvida, é só me chamar. 😊\n\n— Zello",
+		saudacao, url)
+}
+
 // buildDependentWelcomeMessage compoe a mensagem calorosa de apresentacao do
 // Zello ao idoso recem-cadastrado. Tom companion (caloroso/acolhedor), pt-BR,
 // assinada Zello. `dependentName` e `guardianName` sao nomes completos — usamos

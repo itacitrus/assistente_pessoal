@@ -16,16 +16,17 @@ import (
 // o idoso fica calado por mais que user.InactivityThresholdHours horas. A
 // mensagem-sintetica "[SISTEMA] %s nao fala ha N horas — puxe conversa..."
 // e injetada como role=user no array de mensagens, MAS NAO eh persistida
-// em conversation_history. So a resposta do Lurch eh persistida.
+// em conversation_history (o user nao mandou nada de fato).
 //
 // Justificativa: nao queremos que mensagens "[SISTEMA] ..." poluam
 // historico futuro. O agente precisa do prompt synthetic so naquele turno.
+// A resposta gerada eh persistida no transporte (Handler.persistOutbound)
+// quando o scheduler a envia ao usuario.
 //
 // Caminho:
 //   1. Carrega historico (30 mensagens).
 //   2. Append synthetic prompt como role=user no fim.
 //   3. Roda runLoop com persona companion (rotada por user.Type=idoso).
-//   4. Persiste so a response em conversation_history.
 //
 // Retorna a string da mensagem proativa, ou "" se o agente decidir nao
 // puxar (resposta vazia respeitada — caller nao envia).
@@ -76,11 +77,9 @@ func (a *Agent) RunProactive(ctx context.Context, user *User, hoursIdle int) (st
 		return "", nil
 	}
 
-	// Persiste so a resposta. NAO persiste o synthetic prompt — o user nao
-	// mandou nada de fato.
-	if err := a.db.AddConversationMessage(user.ID, "assistant", response); err != nil {
-		log.Printf("[%s] RunProactive: persist response: %v", user.Name, err)
-	}
+	// Nao persiste aqui: a mensagem proativa entra em conversation_history no
+	// transporte (Handler.persistOutbound) quando o scheduler a envia. O
+	// synthetic prompt [SISTEMA] nunca eh enviado, entao nunca eh persistido.
 	return response, nil
 }
 

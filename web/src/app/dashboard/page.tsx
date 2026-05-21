@@ -26,7 +26,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ConnectGoogleButton } from "@/components/me/ConnectGoogleButton";
 import { DependentList } from "@/components/family/DependentList";
+import { PendingAutoRefresh } from "@/components/PendingAutoRefresh";
 import { ApiError } from "@/lib/api";
 import { getMe } from "@/lib/api/auth";
 import { getMyAgenda, getMyInsights, getProfileFacts } from "@/lib/api/me";
@@ -134,14 +136,20 @@ function AgendaSection({ agenda }: { agenda: AgendaResponse }) {
       style={{ animationDelay: "60ms" }}
       aria-labelledby="agenda-title"
     >
-      <header className="flex items-center gap-2">
-        <CalendarClock className="h-5 w-5 text-[--zello-emerald]" aria-hidden />
-        <h2
-          id="agenda-title"
-          className="font-display text-2xl font-semibold tracking-tight"
-        >
-          Minha agenda
-        </h2>
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <CalendarClock
+            className="h-5 w-5 text-[--zello-emerald]"
+            aria-hidden
+          />
+          <h2
+            id="agenda-title"
+            className="font-display text-2xl font-semibold tracking-tight"
+          >
+            Minha agenda
+          </h2>
+        </div>
+        <ConnectGoogleButton connected={agenda.google_connected} />
       </header>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -164,7 +172,7 @@ function UpcomingCard({ agenda }: { agenda: AgendaResponse }) {
           <EmptyHint
             icon={<CalendarClock className="h-6 w-6" aria-hidden />}
             title="Agenda ainda não conectada"
-            body="Conecte seu Google Calendar pelo WhatsApp para ver seus compromissos aqui."
+            body="Toque em “Conectar Google Agenda” aqui em cima para ver seus compromissos."
           />
         ) : agenda.upcoming.length === 0 ? (
           <EmptyHint
@@ -298,7 +306,19 @@ function InsightsSection({ insights }: { insights: InsightsResponse }) {
         </span>
       </header>
 
-      {insights.available ? (
+      {insights.pending ? (
+        <Card className="border-dashed bg-muted/30 shadow-warm">
+          <CardContent className="flex flex-col items-center gap-3 p-8 text-center sm:p-10">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[--zello-amber]/15 text-[--zello-amber]">
+              <Sparkles className="h-6 w-6 animate-pulse" aria-hidden />
+            </div>
+            <p className="max-w-md text-base text-muted-foreground">
+              Estamos preparando seus insights — eles aparecem aqui em
+              instantes.
+            </p>
+          </CardContent>
+        </Card>
+      ) : insights.available ? (
         <div className="space-y-5">
           {insights.summary ? (
             <Card className="overflow-hidden border-[--zello-emerald]/20 bg-[--zello-emerald]/5 shadow-warm">
@@ -334,6 +354,8 @@ function InsightsSection({ insights }: { insights: InsightsResponse }) {
           </CardContent>
         </Card>
       )}
+
+      <PendingAutoRefresh pending={insights.pending === true} />
     </section>
   );
 }

@@ -294,7 +294,6 @@ func (h *Handler) flushBuffer(phone string, gen uint64) {
 		return
 	}
 	if response != "" {
-		h.db.AddConversationMessage(user.ID, "assistant", response)
 		h.sendText(pb.senderJID, response)
 	}
 
@@ -355,7 +354,9 @@ func (h *Handler) sendText(to types.JID, text string) {
 	})
 	if err != nil {
 		log.Printf("Error sending message to %s: %v", to.User, err)
+		return
 	}
+	h.persistOutbound(to.User, text)
 }
 
 func (h *Handler) SendTextToPhone(phone, text string) error {
@@ -369,6 +370,9 @@ func (h *Handler) SendTextToPhone(phone, text string) error {
 		_, err := h.client.SendMessage(context.Background(), results[0].JID, &waE2E.Message{
 			Conversation: &text,
 		})
+		if err == nil {
+			h.persistOutbound(phone, text)
+		}
 		return err
 	} else if len(results) > 0 && !results[0].IsIn {
 		log.Printf("SendTextToPhone: %s is NOT on WhatsApp", phone)
@@ -381,7 +385,36 @@ func (h *Handler) SendTextToPhone(phone, text string) error {
 	_, err = h.client.SendMessage(context.Background(), jid, &waE2E.Message{
 		Conversation: &text,
 	})
+	if err == nil {
+		h.persistOutbound(phone, text)
+	}
 	return err
+}
+
+// persistOutbound grava em conversation_history toda mensagem efetivamente
+// enviada a um usuario cadastrado, como turno role="assistant".
+//
+// Centralizado aqui — no unico ponto de transporte — de proposito: TODA fala
+// do bot (resposta, lembrete de medicacao, escalacao, sintese, alerta a
+// guardiao, magic link) deve fazer parte do historico. Caso contrario o LLM
+// monta a janela de contexto sem a propria fala anterior e perde o fio — ex:
+// ao confirmar um remedio que ele mesmo lembrou, respondia "tomar o que?".
+// Persistir no transporte garante que nenhum sender novo possa esquecer.
+//
+// Lookup por telefone com variantes do 9o digito BR. Numero sem usuario
+// (ex: resposta a desconhecido) eh ignorado — nao ha historico a manter.
+// So eh chamado apos envio bem-sucedido: turno "fantasma" nao delivered nao
+// entra no historico.
+func (h *Handler) persistOutbound(phone, text string) {
+	if text == "" {
+		return
+	}
+	for _, variant := range normalizeBRPhone(phone) {
+		if u, err := h.db.GetUserByPhone(variant); err == nil {
+			h.db.AddConversationMessage(u.ID, "assistant", text)
+			return
+		}
+	}
 }
 
 // parseContactMessage extracts name and phone from a shared WhatsApp contact vCard.

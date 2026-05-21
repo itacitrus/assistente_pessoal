@@ -56,6 +56,12 @@ type fakeStore struct {
 	upcoming     map[int64][]AgendaEvent
 	activity     map[int64][]ActivityItem
 	insightsData map[int64]synthesis.AgendaInsightsInput
+	// Insights persistidos (L2): "userID-days" -> resp.
+	userInsights map[string]*InsightsResponse
+
+	// Google connect: sink dos userIDs que pediram URL + erro opcional.
+	googleConnectFor []int64
+	googleConnectErr error
 
 	// Optional overrides for failure modes.
 	sendMagicLinkErr error
@@ -103,6 +109,7 @@ func newFakeStore() *fakeStore {
 		upcoming:      map[int64][]AgendaEvent{},
 		activity:      map[int64][]ActivityItem{},
 		insightsData:  map[int64]synthesis.AgendaInsightsInput{},
+		userInsights:  map[string]*InsightsResponse{},
 		dependentMeds: map[int64][]MedicationItem{},
 		profileFacts:  map[int64]ProfileFactsResponse{},
 	}
@@ -345,6 +352,19 @@ func (s *fakeStore) UpdateUserPreferences(_ context.Context, userID int64, p Pre
 	return &cp, nil
 }
 
+func (s *fakeStore) GoogleConnectURL(_ context.Context, userID int64) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.googleConnectErr != nil {
+		return "", s.googleConnectErr
+	}
+	if _, ok := s.users[userID]; !ok {
+		return "", ErrNotFound
+	}
+	s.googleConnectFor = append(s.googleConnectFor, userID)
+	return fmt.Sprintf("https://accounts.google.com/o/oauth2/auth?state=fake-%d", userID), nil
+}
+
 func (s *fakeStore) CreateDependent(_ context.Context, guardianID int64, req CreateDependentRequest) (*User, *FamilyLink, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -555,6 +575,25 @@ func (s *fakeStore) ActivityHistory(_ context.Context, userID int64, limit int) 
 		out = append(out, it)
 	}
 	return out, nil
+}
+
+func (s *fakeStore) GetUserInsights(_ context.Context, userID int64, days int) (*InsightsResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.userInsights[fmt.Sprintf("%d-%d", userID, days)]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	cp := *r
+	return &cp, nil
+}
+
+func (s *fakeStore) SaveUserInsights(_ context.Context, userID int64, days int, resp *InsightsResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := *resp
+	s.userInsights[fmt.Sprintf("%d-%d", userID, days)] = &cp
+	return nil
 }
 
 func (s *fakeStore) AgendaInsightsData(_ context.Context, userID int64, days int) (synthesis.AgendaInsightsInput, error) {

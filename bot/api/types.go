@@ -274,6 +274,10 @@ type InsightsResponse struct {
 	Available   bool          `json:"available"`
 	Summary     string        `json:"summary"`
 	Insights    []InsightItem `json:"insights"`
+	// Pending=true quando ainda nao ha insights persistidos e a geracao foi
+	// disparada em background (primeiro acesso). O frontend mostra "preparando"
+	// e da auto-refresh. NAO eh persistido (so existe na resposta placeholder).
+	Pending bool `json:"pending,omitempty"`
 }
 
 // InsightItem eh um insight individual. Kind ∈ pattern|health|social|productivity|other.

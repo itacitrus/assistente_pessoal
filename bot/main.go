@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -234,7 +235,12 @@ func runBot() {
 
 	// Fase 3 (idosos): notifier abstrai canal de envio para escalacao;
 	// engine de escalacao decide quando insistir/avisar familia.
-	notifier := NewWhatsAppNotifier(handler.SendTextToPhone)
+	// PersistingNotifier embrulha o canal para que todo envio proativo
+	// (lembrete de medicacao, escalacao) entre em conversation_history como
+	// turno do assistente — sem isso o LLM perde o contexto da propria fala
+	// quando o usuario responde ao lembrete.
+	var notifier Notifier = NewWhatsAppNotifier(handler.SendTextToPhone)
+	notifier = NewPersistingNotifier(notifier, db)
 	escEng := NewEscalationEngine(db, notifier)
 
 	scheduler := NewScheduler(db, cal, cfg, handler.SendTextToPhone, notifier, escEng)
@@ -298,7 +304,28 @@ func startHTTPServer(cal *CalendarClient, db *DB, cfg *Config, apiServer *api.Se
 			return
 		}
 
-		user, err := db.GetUserByPhone(state)
+		// Resgata o state opaco -> user alvo. Single-use + expiravel: protege
+		// contra forja de state (ninguem conecta a agenda em conta alheia) e
+		// contra replay de um link interceptado. So consumimos APOS o exchange
+		// dar certo — assim um "negar" no Google nao queima o link, e o state
+		// so eh marcado usado quando vamos de fato gravar credenciais.
+		userID, err := db.ConsumeOAuthState(state)
+		if err != nil {
+			switch {
+			case errors.Is(err, ErrOAuthStateExpired):
+				writeOAuthError(w, "Esse link de autorização expirou. Volte ao Zello e gere um novo.")
+			case errors.Is(err, ErrOAuthStateUsed):
+				writeOAuthError(w, "Esse link já foi usado. Se precisar reconectar, gere um novo pelo Zello.")
+			case errors.Is(err, ErrOAuthStateNotFound):
+				writeOAuthError(w, "Link de autorização inválido. Gere um novo pelo Zello.")
+			default:
+				log.Printf("OAuth state consume error: %v", err)
+				http.Error(w, "OAuth state error", http.StatusInternalServerError)
+			}
+			return
+		}
+
+		user, err := db.GetUserByID(userID)
 		if err != nil {
 			http.Error(w, "User not found", http.StatusNotFound)
 			return

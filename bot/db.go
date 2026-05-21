@@ -415,6 +415,19 @@ func (db *DB) migrate() error {
 			generated_at DATETIME NOT NULL
 		)`,
 
+		// Fase 2 (web/UI): insights de uso da agenda (Sonnet) PERSISTIDOS, por
+		// (user_id, days). Mesma motivacao da sintese: tirar a geracao cara do
+		// caminho do request — o dashboard do titular ficava lento no login.
+		// Servido instantaneamente; regen assincrono quando "stale" (mais velho
+		// que o TTL). payload = JSON de api.InsightsResponse.
+		`CREATE TABLE IF NOT EXISTS user_agenda_insights (
+			user_id      INTEGER NOT NULL REFERENCES users(id),
+			days         INTEGER NOT NULL,
+			payload      TEXT NOT NULL,
+			generated_at DATETIME NOT NULL,
+			PRIMARY KEY (user_id, days)
+		)`,
+
 		// Fase 2 (web/UI): sessoes do painel web. Token plaintext nunca eh
 		// gravado — apenas sha256(token) em token_hash. status segue o ciclo
 		// pending -> active -> revoked|expired. expires_at carrega:
@@ -458,6 +471,24 @@ func (db *DB) migrate() error {
 			ON web_login_attempts(phone, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_web_login_attempts_ip_time
 			ON web_login_attempts(ip, created_at)`,
+
+		// OAuth state opaco do fluxo de conexao com o Google Calendar.
+		// Substitui o telefone-como-state (adivinhavel) por um token aleatorio
+		// de uso unico, vinculado ao user alvo. Gravamos apenas sha256(token)
+		// em token_hash — o plaintext vive so na URL de consentimento (no
+		// navegador do titular ou na mensagem de WhatsApp do dependente).
+		// used_at NULL = ainda nao consumido; o callback marca no resgate,
+		// tornando o token single-use. expires_at fecha a janela de validade.
+		`CREATE TABLE IF NOT EXISTS oauth_states (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id     INTEGER NOT NULL REFERENCES users(id),
+			token_hash  TEXT NOT NULL UNIQUE,
+			expires_at  DATETIME NOT NULL,
+			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			used_at     DATETIME
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_oauth_states_expires
+			ON oauth_states(expires_at)`,
 	}
 	for _, stmt := range additive {
 		if _, err := db.conn.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column") {

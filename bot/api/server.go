@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/giovannirambo/assistente_pessoal/bot/synthesis"
@@ -24,7 +25,10 @@ type Server struct {
 	cookieDomain   string
 	statusCache    *statusCache
 	insightsCache  *insightsCache
+	insightsTTL    time.Duration
 	reportClient   synthesis.ReportClient
+	// insightsInFlight deduplica o regen assincrono de insights por (user,days).
+	insightsInFlight sync.Map // map[string]struct{}
 }
 
 // route prefixa um pattern de rota com o pathPrefix configurado. Em dev
@@ -77,6 +81,7 @@ func NewServer(cfg Config) *Server {
 		cookieDomain:   strings.TrimSpace(cfg.CookieDomain),
 		statusCache:    newStatusCache(cfg.StatusCacheTTL),
 		insightsCache:  newInsightsCache(cfg.InsightsCacheTTL),
+		insightsTTL:    cfg.InsightsCacheTTL,
 		reportClient:   cfg.ReportClient,
 	}
 }
@@ -113,6 +118,11 @@ func (s *Server) Mount(mux *http.ServeMux) {
 		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMeActivity))))
 	mux.Handle(s.route("/api/v1/me/profile-facts"),
 		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMeProfileFacts))))
+
+	// Conexao com o Google Calendar do proprio titular. POST (emite token de
+	// uso unico) — RequireOrigin protege contra CSRF.
+	mux.Handle(s.route("/api/v1/me/google/connect-url"),
+		s.CORS(s.RequireOrigin(s.RequireAuth(http.HandlerFunc(s.handleMeGoogleConnect)))))
 
 	// Family — colecao.
 	mux.Handle(s.route("/api/v1/family/dependents"),
@@ -188,6 +198,12 @@ func (s *Server) handleDependentResource(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		s.handleResendWelcome(w, r, depID)
+	case "google":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
+			return
+		}
+		s.handleDependentGoogleConnect(w, r, depID)
 	default:
 		writeError(w, http.StatusNotFound, CodeNotFound, "Rota não encontrada.")
 	}
