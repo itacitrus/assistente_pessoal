@@ -3,8 +3,9 @@ import {
   Pill,
   MessageCircleHeart,
   ShieldCheck,
-  Check,
   CheckCheck,
+  EyeOff,
+  Lock,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -235,7 +236,7 @@ function HowItWorks() {
   const steps = [
     {
       title: "Voce cria a conta",
-      body: "Cadastra seu WhatsApp e o da pessoa que vai receber o cuidado. Leva uns minutos.",
+      body: "Cadastra seu WhatsApp e o da pessoa que vai receber o cuidado.",
     },
     {
       title: "Chega o link no WhatsApp",
@@ -286,34 +287,63 @@ function HowItWorks() {
 /* ------------------------------------------------------------ Privacidade */
 
 function Privacy() {
-  const points = [
-    "A familia ve sinais de bem-estar, nunca o conteudo das conversas.",
-    "Tudo o que e do idoso, fica com o idoso. Sempre.",
-    "Dados protegidos e em conformidade com a LGPD.",
+  const pillars = [
+    {
+      icon: EyeOff,
+      title: "Sinais, nunca conversas",
+      body: "A familia acompanha o bem-estar — humor, remedios, atividade. Mas nunca le o que foi dito. Nem uma linha.",
+    },
+    {
+      icon: Lock,
+      title: "O que e do idoso, fica com ele",
+      body: "As conversas pertencem a quem as teve. O Zello so compartilha o que ajuda a cuidar — o resto permanece privado.",
+    },
+    {
+      icon: ShieldCheck,
+      title: "Em conformidade com a LGPD",
+      body: "Dados criptografados e tratados conforme a lei. E o direito de apagar tudo, a qualquer momento.",
+    },
   ];
 
   return (
     <section className="container py-16 md:py-24">
-      <div className="mx-auto grid max-w-5xl items-center gap-10 rounded-[1.75rem] border border-border bg-card p-8 shadow-warm md:grid-cols-[auto_1fr] md:p-12">
-        <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-[--zello-emerald]/10 text-[--zello-emerald]">
-          <ShieldCheck className="h-10 w-10" />
+      <div className="relative overflow-hidden rounded-[2rem] border border-[--zello-emerald]/15 bg-[--zello-emerald]/[0.06] px-6 py-12 shadow-warm md:px-12 md:py-16">
+        <div aria-hidden className="pointer-events-none absolute inset-0">
+          <div className="absolute -right-20 -top-24 h-72 w-72 rounded-full bg-[--zello-emerald]/10 blur-3xl" />
+          <div className="absolute inset-0 bg-noise opacity-30 mix-blend-multiply" />
         </div>
-        <div>
-          <h2 className="text-balance text-2xl font-semibold tracking-tight sm:text-3xl">
+
+        <div className="relative mx-auto max-w-2xl text-center">
+          <span className="inline-flex items-center gap-2 rounded-full border border-[--zello-emerald]/20 bg-[--zello-cream] px-3 py-1 text-xs font-semibold uppercase tracking-wide text-[--zello-emerald]">
+            <ShieldCheck className="h-3.5 w-3.5" />
+            Privacidade
+          </span>
+          <h2 className="mt-4 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
             Cuidado nao e vigilancia
           </h2>
-          <p className="mt-3 text-balance leading-relaxed text-muted-foreground">
-            Acompanhar quem amamos exige confianca. Por isso o Zello mostra a voce
-            o que importa — sem nunca expor o que foi dito.
+          <p className="mt-3 text-balance text-lg leading-relaxed text-muted-foreground">
+            Acompanhar quem amamos exige confianca. Por isso o Zello mostra a
+            voce o que importa — sem nunca expor o que foi dito.
           </p>
-          <ul className="mt-6 space-y-3">
-            {points.map((p) => (
-              <li key={p} className="flex items-start gap-3 text-sm">
-                <Check className="mt-0.5 h-5 w-5 shrink-0 text-[--zello-emerald]" />
-                <span className="text-foreground/90">{p}</span>
-              </li>
-            ))}
-          </ul>
+        </div>
+
+        <div className="relative mx-auto mt-10 grid max-w-5xl gap-5 md:grid-cols-3">
+          {pillars.map(({ icon: Icon, title, body }) => (
+            <div
+              key={title}
+              className="rounded-[1.5rem] border border-border bg-card p-6 shadow-warm transition-transform duration-200 hover:-translate-y-1"
+            >
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[--zello-emerald]/10 text-[--zello-emerald]">
+                <Icon className="h-6 w-6" />
+              </div>
+              <h3 className="mt-4 text-lg font-semibold tracking-tight">
+                {title}
+              </h3>
+              <p className="mt-2 leading-relaxed text-muted-foreground">
+                {body}
+              </p>
+            </div>
+          ))}
         </div>
       </div>
     </section>
@@ -335,7 +365,7 @@ function FinalCta() {
           <h2 className="text-balance text-3xl font-semibold tracking-tight text-[--zello-cream] sm:text-4xl">
             Comece a cuidar melhor hoje.
           </h2>
-          <p className="mt-4 text-balance text-lg text-[--zello-cream]/80">
+          <p className="mt-4 text-balance text-lg text-white">
             Crie sua conta gratuitamente e deixe o Zello acompanhar quem voce
             ama, com carinho e tranquilidade.
           </p>
