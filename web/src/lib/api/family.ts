@@ -97,7 +97,9 @@ export async function getDependentStatus(
   );
   return {
     ...raw,
-    snapshots: raw.snapshots.map(normalizeSnapshot),
+    // Backend Go pode mandar slice nil como `null` — guarda antes do .map.
+    alerts_open: raw.alerts_open ?? [],
+    snapshots: (raw.snapshots ?? []).map(normalizeSnapshot),
   };
 }
 
@@ -118,7 +120,7 @@ export async function getDependentTimeline(
   );
   return {
     ...raw,
-    snapshots: raw.snapshots.map(normalizeSnapshot),
+    snapshots: (raw.snapshots ?? []).map(normalizeSnapshot),
   };
 }
 
