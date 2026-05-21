@@ -56,7 +56,7 @@ export function SignupForm() {
         <AlertDescription>
           Pronto! Se este numero ja esta cadastrado, voce vai receber um link
           no WhatsApp em alguns segundos. Vale por 15 minutos. Se nada chegar,
-          envie qualquer mensagem para o assistente no WhatsApp para criar a
+          envie qualquer mensagem para o Zello no WhatsApp para criar a
           conta.
         </AlertDescription>
       </Alert>
@@ -66,8 +66,8 @@ export function SignupForm() {
   return (
     <form onSubmit={handleSubmit} className="space-y-6" noValidate>
       <p className="text-sm text-muted-foreground">
-        Para criar a conta, mande qualquer mensagem para o assistente no
-        WhatsApp. Depois volte aqui para fazer login com seu numero.
+        Para criar a conta, mande qualquer mensagem para o Zello no WhatsApp.
+        Depois volte aqui para fazer login com seu numero.
       </p>
 
       <div className="space-y-2">

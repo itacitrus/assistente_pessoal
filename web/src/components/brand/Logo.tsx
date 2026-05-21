@@ -1,0 +1,53 @@
+import { cn } from "@/lib/utils";
+
+/**
+ * Marca Zello: balao de fala (conversa) com um coracao (cuidado).
+ * O balao usa `currentColor` — defina a cor verde no elemento pai.
+ * O coracao e em creme para contrastar dentro do balao.
+ */
+export function LogoMark({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 40 40"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden="true"
+    >
+      <path
+        d="M11 4h18a7 7 0 0 1 7 7v10a7 7 0 0 1-7 7H19l-7.5 6.2A1.2 1.2 0 0 1 9.6 33.3L10 28h-1a7 7 0 0 1-7-7V11a7 7 0 0 1 7-7h2Z"
+        fill="currentColor"
+      />
+      <path
+        d="M20 24.2l-6.1-6.05a3.8 3.8 0 0 1 5.4-5.32l.7.66.7-.66a3.8 3.8 0 0 1 5.4 5.32L20 24.2Z"
+        fill="#FAF6EE"
+      />
+    </svg>
+  );
+}
+
+export function Wordmark({
+  className,
+  markClassName,
+  textClassName,
+}: {
+  className?: string;
+  markClassName?: string;
+  textClassName?: string;
+}) {
+  return (
+    <span className={cn("inline-flex items-center gap-2", className)}>
+      <LogoMark
+        className={cn("h-7 w-7 text-[--zello-emerald]", markClassName)}
+      />
+      <span
+        className={cn(
+          "font-display text-xl font-semibold tracking-tight text-foreground",
+          textClassName,
+        )}
+      >
+        Zello
+      </span>
+    </span>
+  );
+}

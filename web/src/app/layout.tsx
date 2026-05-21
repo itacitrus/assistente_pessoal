@@ -1,17 +1,25 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Fraunces, Hanken_Grotesk } from "next/font/google";
 
 import "./globals.css";
 
-const inter = Inter({
+const hanken = Hanken_Grotesk({
   subsets: ["latin"],
   variable: "--font-sans",
+  display: "swap",
+});
+
+const fraunces = Fraunces({
+  subsets: ["latin"],
+  variable: "--font-display",
+  display: "swap",
+  axes: ["opsz", "SOFT"],
 });
 
 export const metadata: Metadata = {
-  title: "Assistente — sua agenda em boas maos",
+  title: "Zello — cuidar de quem voce ama, sem complicacao",
   description:
-    "Acompanhamento de agenda, medicacoes e cuidado familiar pelo WhatsApp.",
+    "Zello e o assistente no WhatsApp que cuida da agenda, lembra dos remedios, faz companhia ao idoso e mantem a familia tranquila.",
 };
 
 export default function RootLayout({
@@ -21,7 +29,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-BR">
-      <body className={`${inter.variable} font-sans antialiased`}>
+      <body
+        className={`${hanken.variable} ${fraunces.variable} font-sans antialiased`}
+      >
         {children}
       </body>
     </html>

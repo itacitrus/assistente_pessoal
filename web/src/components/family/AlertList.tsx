@@ -32,7 +32,7 @@ export function AlertList({ alerts }: AlertListProps) {
       <CardHeader>
         <CardTitle className="text-base">Alertas em aberto</CardTitle>
         <CardDescription>
-          Sinalizacoes que o assistente identificou.
+          Sinalizacoes que o Zello identificou.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">

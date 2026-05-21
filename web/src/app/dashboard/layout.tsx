@@ -5,6 +5,7 @@ import { ApiError } from "@/lib/api";
 import { getMe } from "@/lib/api/auth";
 import { logoutAction } from "@/app/dashboard/actions";
 import { getSessionCookieHeader } from "@/lib/server-cookie";
+import { Wordmark } from "@/components/brand/Logo";
 
 export default async function DashboardLayout({
   children,
@@ -29,10 +30,13 @@ export default async function DashboardLayout({
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="border-b">
+      <header className="sticky top-0 z-40 border-b border-border/70 bg-[--zello-cream]/80 backdrop-blur-md">
         <div className="container flex h-16 items-center justify-between">
-          <Link href="/dashboard" className="text-lg font-semibold">
-            Assistente
+          <Link
+            href="/dashboard"
+            className="rounded-md ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            <Wordmark />
           </Link>
           <nav className="flex items-center gap-4 text-sm">
             <Link

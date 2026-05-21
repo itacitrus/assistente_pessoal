@@ -16,7 +16,18 @@ const config: Config = {
       },
     },
     extend: {
+      fontFamily: {
+        sans: ["var(--font-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
+        display: ["var(--font-display)", "ui-serif", "Georgia", "serif"],
+      },
       colors: {
+        zello: {
+          cream: "var(--zello-cream)",
+          emerald: "var(--zello-emerald)",
+          "emerald-deep": "var(--zello-emerald-deep)",
+          amber: "var(--zello-amber)",
+          ink: "var(--zello-ink)",
+        },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

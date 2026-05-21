@@ -1,29 +1,25 @@
 import Link from "next/link";
 
 import { LoginForm } from "@/components/forms/LoginForm";
+import { AuthShell } from "@/components/site/AuthShell";
 
 export const metadata = {
-  title: "Entrar — Assistente",
+  title: "Entrar — Zello",
 };
 
 export default function LoginPage() {
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="border-b">
-        <div className="container flex h-16 items-center justify-between">
-          <Link href="/" className="text-lg font-semibold">
-            Assistente
-          </Link>
-        </div>
-      </header>
-      <main className="flex flex-1 items-center justify-center p-4">
-        <div className="w-full max-w-md">
-          <h1 className="mb-6 text-3xl font-semibold tracking-tight">
-            Entrar
-          </h1>
-          <LoginForm />
-        </div>
-      </main>
-    </div>
+    <AuthShell
+      title="Bem-vindo de volta"
+      subtitle="Entre para acompanhar o cuidado de quem voce ama."
+    >
+      <LoginForm />
+      <p className="mt-6 text-center text-sm text-muted-foreground">
+        Ainda nao tem conta?{" "}
+        <Link href="/signup" className="font-medium text-primary hover:underline">
+          Criar conta
+        </Link>
+      </p>
+    </AuthShell>
   );
 }

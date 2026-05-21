@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Wordmark } from "@/components/brand/Logo";
 import { ApiError } from "@/lib/api";
 import { verifyToken } from "@/lib/api/auth";
 
@@ -13,11 +14,19 @@ type Status = "loading" | "success" | "missing" | "expired" | "used" | "error";
 
 export default function VerifyPage() {
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="border-b">
+    <div className="relative flex min-h-screen flex-col overflow-hidden">
+      <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
+        <div className="absolute -left-32 -top-24 h-[26rem] w-[26rem] rounded-full bg-[--zello-emerald]/12 blur-3xl" />
+        <div className="absolute -right-24 bottom-0 h-80 w-80 rounded-full bg-[--zello-amber]/20 blur-3xl" />
+        <div className="absolute inset-0 bg-noise opacity-40 mix-blend-multiply" />
+      </div>
+      <header className="border-b border-border/70 bg-[--zello-cream]/70 backdrop-blur-md">
         <div className="container flex h-16 items-center">
-          <Link href="/" className="text-lg font-semibold">
-            Assistente
+          <Link
+            href="/"
+            className="rounded-md ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            <Wordmark />
           </Link>
         </div>
       </header>

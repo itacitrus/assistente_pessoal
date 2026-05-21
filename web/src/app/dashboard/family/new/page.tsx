@@ -1,7 +1,7 @@
 import { DependentForm } from "@/components/forms/DependentForm";
 
 export const metadata = {
-  title: "Adicionar pessoa — Assistente",
+  title: "Adicionar pessoa — Zello",
 };
 
 export default function NewDependentPage() {
@@ -12,8 +12,8 @@ export default function NewDependentPage() {
           Adicionar pessoa que voce cuida
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          O assistente vai conversar com essa pessoa pelo WhatsApp e voce
-          recebe sinteses periodicas.
+          O Zello vai conversar com essa pessoa pelo WhatsApp e voce recebe
+          sinteses periodicas.
         </p>
       </header>
       <DependentForm />

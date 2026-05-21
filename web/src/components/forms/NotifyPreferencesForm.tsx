@@ -66,7 +66,7 @@ export function NotifyPreferencesForm({ link }: NotifyPreferencesFormProps) {
       />
       <ToggleRow
         id="notify-severe"
-        label="Avisar quando o assistente identificar um sinal preocupante"
+        label="Avisar quando o Zello identificar um sinal preocupante"
         checked={severeSignal}
         onChange={setSevereSignal}
       />
