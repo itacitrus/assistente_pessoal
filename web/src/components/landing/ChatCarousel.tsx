@@ -33,12 +33,17 @@ const SCENARIOS: Scenario[] = [
       {
         who: "zello",
         time: "08:03",
-        text: "Que ótimo! Hoje tem a consulta da tarde, lembra? Te aviso 1h antes. 😊",
+        text: "Que ótimo! Hoje tem a consulta com o Dr. Fernando 10h, lembra? Te aviso novamente 1h antes. 😊",
       },
-      { who: "me", time: "08:04", text: "Ah, ainda bem que você lembra ❤️" },
+      { who: "me", time: "08:04", text: "Ah, ainda bem que você lembrou, vou me arrumar aqui ❤️" },
       {
         who: "system",
         text: "Família avisada: “tudo bem hoje — remédio tomado, bom humor.”",
+      },
+      {
+        who: "zello",
+        time: "08:05",
+        text: "Estou à disposição!",
       },
     ],
   },
@@ -58,9 +63,9 @@ const SCENARIOS: Scenario[] = [
       {
         who: "zello",
         time: "09:12",
-        text: "Vi. Só uma coisa — você tem dentista quinta às 15h. Posso (1) reagendar o dentista pra sexta de manhã, ou (2) sugerir pro Bruno mover o workshop pra outro horário. Qual prefere?",
+        text: "Agora mesmo! Só uma coisa, você tem dentista quinta às 15h. Devo reagendar o dentista pra sexta de manhã, ou você prefere mover o workshop pra outro horário?",
       },
-      { who: "me", time: "09:13", text: "1. Reagenda o dentista." },
+      { who: "me", time: "09:13", text: "Reagenda o dentista pra sexta 9h." },
       {
         who: "zello",
         time: "09:13",
