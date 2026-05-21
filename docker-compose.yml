@@ -36,3 +36,21 @@ services:
         max-size: "10m"
         max-file: "5"
 
+  # Painel Zello (Next.js standalone). Self-host no EC2; o ALB roteia
+  # zello.chat -> este container (:3001 no host). NEXT_PUBLIC_API_BASE_URL e
+  # build-arg (embutido no bundle) — aponta pra api.zello.chat (-> bot:8080).
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${WEB_API_BASE_URL:-https://api.zello.chat}
+    container_name: zello-web
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:3001:3000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
