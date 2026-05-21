@@ -66,6 +66,12 @@ export default async function DashboardHome() {
     safeDependents(() => listDependents(cookieHeader)),
   ]);
 
+  // Backend Go pode serializar slice nil como `null` no JSON (resposta de
+  // sucesso, fora do alcance do safe()). Normaliza pra [] antes de renderizar.
+  agenda.upcoming = agenda.upcoming ?? [];
+  agenda.recent_activity = agenda.recent_activity ?? [];
+  insights.insights = insights.insights ?? [];
+
   const contextLine = buildContextLine(agenda, dependents.length);
 
   return (

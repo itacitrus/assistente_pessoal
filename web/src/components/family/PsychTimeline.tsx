@@ -78,7 +78,7 @@ function SingleChart({
   cfg: ChartConfig;
   snapshots: SnapshotPoint[];
 }) {
-  const data: ChartPoint[] = snapshots.map((s) => ({
+  const data: ChartPoint[] = (snapshots ?? []).map((s) => ({
     date: s.date,
     dateLabel: new Date(s.date).toLocaleDateString("pt-BR", {
       day: "2-digit",

@@ -15,7 +15,9 @@ export interface AlertListProps {
 }
 
 export function AlertList({ alerts }: AlertListProps) {
-  if (alerts.length === 0) {
+  // Backend Go pode mandar slice nil como `null` no JSON — guarda defensiva.
+  const list = alerts ?? [];
+  if (list.length === 0) {
     return (
       <Card>
         <CardHeader>
@@ -36,7 +38,7 @@ export function AlertList({ alerts }: AlertListProps) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {alerts.map((a) => (
+        {list.map((a) => (
           <AlertRow key={a.id} alert={a} />
         ))}
       </CardContent>

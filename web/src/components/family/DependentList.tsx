@@ -17,7 +17,7 @@ export interface DependentListProps {
 export function DependentList({ dependents }: DependentListProps) {
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {dependents.map((d) => (
+      {(dependents ?? []).map((d) => (
         <DependentCard key={d.user.id} entry={d} />
       ))}
       <Card className="flex flex-col items-center justify-center border-dashed bg-muted/30 p-6 text-center">
