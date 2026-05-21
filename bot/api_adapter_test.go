@@ -22,7 +22,7 @@ func mkAdapter(t *testing.T) (*apiAdapter, *DB, *[]string) {
 		sent = append(sent, phone+"::"+msg)
 		return nil
 	}
-	return newAPIAdapter(db, audit, nil /*report*/, send), db, &sent
+	return newAPIAdapter(db, audit, nil /*report*/, nil /*cal*/, "" /*encKey*/, send), db, &sent
 }
 
 // =========================================================================
@@ -356,7 +356,7 @@ func TestAdapter_SendMagicLink_DelegatesToCallback(t *testing.T) {
 
 func TestAdapter_SendMagicLink_NoCallbackErr(t *testing.T) {
 	db := setupTestDB(t)
-	a := newAPIAdapter(db, NewAuditLog(db), nil, nil)
+	a := newAPIAdapter(db, NewAuditLog(db), nil, nil, "", nil)
 	err := a.SendMagicLink(context.Background(), "x", "y")
 	if err == nil {
 		t.Fatal("err nil sem callback configurado")
@@ -366,6 +366,6 @@ func TestAdapter_SendMagicLink_NoCallbackErr(t *testing.T) {
 // Audit nao panica quando AuditLog eh nil (defensivo).
 func TestAdapter_AuditNilSafe(t *testing.T) {
 	db := setupTestDB(t)
-	a := newAPIAdapter(db, nil, nil, nil)
+	a := newAPIAdapter(db, nil, nil, nil, "", nil)
 	a.Audit(context.Background(), 1, "noop", "", "")
 }

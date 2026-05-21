@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/giovannirambo/assistente_pessoal/bot/synthesis"
 )
 
 // Server eh o handler container do /api/v1/*. Mount() registra todas as
@@ -20,6 +22,8 @@ type Server struct {
 	allowedOrigins []string
 	cookieSecure   bool
 	statusCache    *statusCache
+	insightsCache  *insightsCache
+	reportClient   synthesis.ReportClient
 }
 
 // route prefixa um pattern de rota com o pathPrefix configurado. Em dev
@@ -32,11 +36,17 @@ func (s *Server) route(p string) string { return s.pathPrefix + p }
 // como struct pra evitar argumento posicional gigante em NewServer.
 type Config struct {
 	Store          Store
-	WebBaseURL     string   // ex: "https://app.lurch.com.br" — usado no link do magic
-	PathPrefix     string   // ex: "/assistente" em prod (ALB). "" em dev local.
-	AllowedOrigins []string // CORS allowlist. Ex: ["https://app.lurch.com.br"]
-	CookieSecure   bool     // true em prod (https). false em dev local (http://localhost:3000)
+	WebBaseURL     string        // ex: "https://app.lurch.com.br" — usado no link do magic
+	PathPrefix     string        // ex: "/assistente" em prod (ALB). "" em dev local.
+	AllowedOrigins []string      // CORS allowlist. Ex: ["https://app.lurch.com.br"]
+	CookieSecure   bool          // true em prod (https). false em dev local (http://localhost:3000)
 	StatusCacheTTL time.Duration // default 60s; aceita 0 = usa default
+	// InsightsCacheTTL eh o TTL do cache de GET /me/insights. Default 6h;
+	// aceita 0 = usa default. Insights via Sonnet sao caros e mudam devagar.
+	InsightsCacheTTL time.Duration
+	// ReportClient eh o provider Sonnet usado pelo sub-agente de insights de
+	// agenda. Pode ser nil — handler trata como "insights indisponiveis".
+	ReportClient synthesis.ReportClient
 }
 
 // NewServer constroi com defaults ajuiziados. Caller eh responsavel pelo
@@ -44,6 +54,9 @@ type Config struct {
 func NewServer(cfg Config) *Server {
 	if cfg.StatusCacheTTL <= 0 {
 		cfg.StatusCacheTTL = 60 * time.Second
+	}
+	if cfg.InsightsCacheTTL <= 0 {
+		cfg.InsightsCacheTTL = 6 * time.Hour
 	}
 	if len(cfg.AllowedOrigins) == 0 {
 		cfg.AllowedOrigins = []string{"http://localhost:3000"}
@@ -60,6 +73,8 @@ func NewServer(cfg Config) *Server {
 		allowedOrigins: cfg.AllowedOrigins,
 		cookieSecure:   cfg.CookieSecure,
 		statusCache:    newStatusCache(cfg.StatusCacheTTL),
+		insightsCache:  newInsightsCache(cfg.InsightsCacheTTL),
+		reportClient:   cfg.ReportClient,
 	}
 }
 
@@ -84,6 +99,13 @@ func (s *Server) Mount(mux *http.ServeMux) {
 		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMe))))
 	mux.Handle(s.route("/api/v1/users/me"),
 		s.CORS(s.RequireOrigin(s.RequireAuth(http.HandlerFunc(s.handleUpdateMe)))))
+
+	// Me / agenda + insights (GET, auth). Leitura — sem RequireOrigin
+	// (segue o padrao de /api/v1/me, que tambem eh GET autenticado).
+	mux.Handle(s.route("/api/v1/me/agenda"),
+		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMeAgenda))))
+	mux.Handle(s.route("/api/v1/me/insights"),
+		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMeInsights))))
 
 	// Family — colecao.
 	mux.Handle(s.route("/api/v1/family/dependents"),

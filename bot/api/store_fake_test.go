@@ -6,6 +6,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/giovannirambo/assistente_pessoal/bot/llm"
+	"github.com/giovannirambo/assistente_pessoal/bot/synthesis"
 )
 
 // fakeStore eh in-memory mock pra testar handlers sem subir SQLite. Mantemos
@@ -13,18 +16,18 @@ import (
 type fakeStore struct {
 	mu sync.Mutex
 
-	users       map[int64]*User      // id -> user
-	usersByPh   map[string]int64     // phone -> id
-	nextUserID  int64
+	users      map[int64]*User  // id -> user
+	usersByPh  map[string]int64 // phone -> id
+	nextUserID int64
 
-	sessions    map[int64]*fakeSession  // id -> session
-	sessByHash  map[string]int64        // hash (== plaintext em fake) -> id
-	nextSessID  int64
+	sessions   map[int64]*fakeSession // id -> session
+	sessByHash map[string]int64       // hash (== plaintext em fake) -> id
+	nextSessID int64
 
 	loginAttempts []fakeAttempt
 
-	links     map[int64]*FamilyLink
-	linksByGD map[string]int64 // "guardian-dependent" -> id
+	links      map[int64]*FamilyLink
+	linksByGD  map[string]int64 // "guardian-dependent" -> id
 	nextLinkID int64
 
 	consents map[string]string // "guardian-dependent" -> active|revoked
@@ -40,8 +43,16 @@ type fakeStore struct {
 	// Synthesize counter — proves cache works.
 	synthesizeCalls atomic.Int64
 
+	// Me / agenda + insights fixtures.
+	upcoming     map[int64][]AgendaEvent
+	activity     map[int64][]ActivityItem
+	insightsData map[int64]synthesis.AgendaInsightsInput
+
 	// Optional overrides for failure modes.
 	sendMagicLinkErr error
+	upcomingErr      error
+	activityErr      error
+	insightsDataErr  error
 }
 
 type fakeSession struct {
@@ -72,16 +83,41 @@ type magicLink struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		users:      map[int64]*User{},
-		usersByPh:  map[string]int64{},
-		sessions:   map[int64]*fakeSession{},
-		sessByHash: map[string]int64{},
-		links:      map[int64]*FamilyLink{},
-		linksByGD:  map[string]int64{},
-		consents:   map[string]string{},
-		snapshots:  map[int64][]SnapshotPoint{},
+		users:        map[int64]*User{},
+		usersByPh:    map[string]int64{},
+		sessions:     map[int64]*fakeSession{},
+		sessByHash:   map[string]int64{},
+		links:        map[int64]*FamilyLink{},
+		linksByGD:    map[string]int64{},
+		consents:     map[string]string{},
+		snapshots:    map[int64][]SnapshotPoint{},
+		upcoming:     map[int64][]AgendaEvent{},
+		activity:     map[int64][]ActivityItem{},
+		insightsData: map[int64]synthesis.AgendaInsightsInput{},
 	}
 }
+
+// fakeReport eh um synthesis.ReportClient fake com contador de chamadas —
+// prova que o cache de insights evita re-geracao. Retorna um JSON valido por
+// default; out/err configuraveis pra simular falha/validacao.
+type fakeReport struct {
+	calls atomic.Int64
+	resp  llm.ReportResponse
+	err   error
+}
+
+func (f *fakeReport) Synthesize(_ context.Context, _ llm.ReportRequest) (llm.ReportResponse, error) {
+	f.calls.Add(1)
+	if f.err != nil {
+		return llm.ReportResponse{}, f.err
+	}
+	if f.resp.Text == "" {
+		return llm.ReportResponse{Text: `{"summary":"Voce concentra compromissos nas tardes.","insights":[{"title":"Tardes movimentadas","detail":"A maioria dos seus compromissos cai entre 14h e 18h.","kind":"pattern"}]}`}, nil
+	}
+	return f.resp, nil
+}
+
+func (f *fakeReport) Name() string { return "fake-report" }
 
 // addUser eh helper de bootstrap pra testes.
 func (s *fakeStore) addUser(name, phone string) *User {
@@ -452,6 +488,43 @@ func (s *fakeStore) GetTimeline(_ context.Context, dependentID int64, days int) 
 	out := make([]SnapshotPoint, len(pts))
 	copy(out, pts)
 	return out, nil
+}
+
+func (s *fakeStore) UpcomingEvents(_ context.Context, userID int64) ([]AgendaEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.upcomingErr != nil {
+		return nil, s.upcomingErr
+	}
+	out := make([]AgendaEvent, len(s.upcoming[userID]))
+	copy(out, s.upcoming[userID])
+	return out, nil
+}
+
+func (s *fakeStore) RecentActivity(_ context.Context, userID int64, limit int) ([]ActivityItem, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activityErr != nil {
+		return nil, s.activityErr
+	}
+	items := s.activity[userID]
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+	out := make([]ActivityItem, len(items))
+	copy(out, items)
+	return out, nil
+}
+
+func (s *fakeStore) AgendaInsightsData(_ context.Context, userID int64, days int) (synthesis.AgendaInsightsInput, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.insightsDataErr != nil {
+		return synthesis.AgendaInsightsInput{}, s.insightsDataErr
+	}
+	in := s.insightsData[userID]
+	in.PeriodDays = days
+	return in, nil
 }
 
 func (s *fakeStore) Audit(_ context.Context, userID int64, action, target, details string) {

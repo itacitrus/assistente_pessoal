@@ -234,6 +234,74 @@ export interface DependentTimeline {
   snapshots: SnapshotPoint[];
 }
 
+// ---- Painel "me" (agenda + insights) ----
+
+/**
+ * Espelha api.AgendaEvent — evento futuro vindo do Google Calendar do usuario.
+ * `end` e `null` para eventos sem hora de termino; `all_day` marca eventos de
+ * dia inteiro (onde a hora deve ser ignorada na renderizacao).
+ */
+export interface AgendaEvent {
+  id: string;
+  title: string;
+  start: string; // ISO8601
+  end: string | null; // ISO8601 ou null
+  all_day: boolean;
+  location: string;
+}
+
+/**
+ * Espelha api.ActivityItem — item do feed de atividade recente. `action` e o
+ * identificador da acao (ex: "criar_evento"); `label` e o texto ja pronto pra
+ * exibicao; `at` e o instante ISO8601 da acao.
+ */
+export interface ActivityItem {
+  action: string;
+  label: string;
+  at: string; // ISO8601
+}
+
+/**
+ * Espelha api.AgendaResponse — GET /api/v1/me/agenda.
+ * Quando `google_connected` e false, `upcoming` vem vazio.
+ */
+export interface AgendaResponse {
+  google_connected: boolean;
+  upcoming: AgendaEvent[];
+  recent_activity: ActivityItem[];
+}
+
+/** Tipo de insight — define o icone e o tom do card de insight. */
+export type InsightKind =
+  | "pattern"
+  | "health"
+  | "social"
+  | "productivity"
+  | "other";
+
+/**
+ * Espelha api.Insight — observacao individual gerada por IA sobre o padrao
+ * de uso do usuario.
+ */
+export interface Insight {
+  title: string;
+  detail: string;
+  kind: InsightKind;
+}
+
+/**
+ * Espelha api.InsightsResponse — GET /api/v1/me/insights?days=30.
+ * Quando `available` e false, `summary`/`insights` podem vir vazios e a UI
+ * mostra um estado calmo de "ainda aprendendo".
+ */
+export interface InsightsResponse {
+  generated_at: string; // ISO8601
+  period_days: number;
+  available: boolean;
+  summary: string;
+  insights: Insight[];
+}
+
 // ---- Bodies dos requests ----
 
 /** Body de POST /api/v1/auth/request-link. */

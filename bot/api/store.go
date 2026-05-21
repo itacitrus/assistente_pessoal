@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/giovannirambo/assistente_pessoal/bot/synthesis"
 )
 
 // Store eh a fronteira de persistencia que o api package precisa. O main
@@ -50,6 +52,18 @@ type Store interface {
 	BuildDependentStatus(ctx context.Context, guardianID, dependentID int64, days int) (*StatusResponse, error)
 	GetTimeline(ctx context.Context, dependentID int64, days int) ([]SnapshotPoint, error)
 
+	// Me / agenda ----------------------------------------------------------
+	// UpcomingEvents le o Google Calendar do proprio usuario (proximos 14d,
+	// ordenado por start asc). Retorna lista vazia se o usuario nao tem
+	// Google conectado — nunca erro por isso.
+	UpcomingEvents(ctx context.Context, userID int64) ([]AgendaEvent, error)
+	// RecentActivity le as ultimas `limit` entradas do action_log do usuario,
+	// mais recentes primeiro.
+	RecentActivity(ctx context.Context, userID int64, limit int) ([]ActivityItem, error)
+	// AgendaInsightsData monta o input do sub-agente de insights lendo
+	// calendar (passado + futuro) + action_log agregado por tipo de acao.
+	AgendaInsightsData(ctx context.Context, userID int64, days int) (synthesis.AgendaInsightsInput, error)
+
 	// Audit ---------------------------------------------------------------
 	Audit(ctx context.Context, userID int64, action, target, details string)
 
@@ -61,10 +75,10 @@ type Store interface {
 
 // Store-level sentinels. Adapter mapeia erros internos de *DB pra estes.
 var (
-	ErrNotFound        = errors.New("api: not found")
-	ErrConflict        = errors.New("api: conflict")
-	ErrSessionInvalid  = errors.New("api: session invalid")
-	ErrSessionExpired  = errors.New("api: session expired")
-	ErrConsentRevoked  = errors.New("api: consent revoked")
-	ErrValidation      = errors.New("api: validation failed")
+	ErrNotFound       = errors.New("api: not found")
+	ErrConflict       = errors.New("api: conflict")
+	ErrSessionInvalid = errors.New("api: session invalid")
+	ErrSessionExpired = errors.New("api: session expired")
+	ErrConsentRevoked = errors.New("api: consent revoked")
+	ErrValidation     = errors.New("api: validation failed")
 )

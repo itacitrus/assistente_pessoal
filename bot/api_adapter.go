@@ -10,6 +10,7 @@ import (
 
 	"github.com/giovannirambo/assistente_pessoal/bot/api"
 	"github.com/giovannirambo/assistente_pessoal/bot/llm"
+	"github.com/giovannirambo/assistente_pessoal/bot/synthesis"
 )
 
 // =========================================================================
@@ -24,20 +25,33 @@ import (
 // Reuso: BuildDependentStatus eh a mesma funcao usada pelo chat (tools_family.go).
 // O adapter chama-a, depois converte DependentStatusReport -> api.StatusResponse.
 
+// calendarReader eh o subset de CalendarClient que o adapter precisa pra
+// ler a agenda do proprio usuario. Mantido como interface (nao *CalendarClient
+// concreto) pra permitir fake em testes sem OAuth real. *CalendarClient
+// satisfaz isto.
+type calendarReader interface {
+	ListEvents(ctx context.Context, refreshToken, calendarID string, start, end time.Time) ([]CalendarEvent, error)
+}
+
 type apiAdapter struct {
-	db         *DB
-	audit      *AuditLog
-	report     llm.ReportProvider
-	sendMsg    func(phone, text string) error
+	db      *DB
+	audit   *AuditLog
+	report  llm.ReportProvider
+	cal     calendarReader
+	encKey  string
+	sendMsg func(phone, text string) error
 }
 
 // newAPIAdapter constroi o adapter. Mantido pequeno — main.go cria, monta
-// e injeta no NewServer.
-func newAPIAdapter(db *DB, audit *AuditLog, report llm.ReportProvider, sendMsg func(phone, text string) error) *apiAdapter {
+// e injeta no NewServer. cal + encKey habilitam leitura do Google Calendar
+// do proprio usuario (GET /me/agenda, /me/insights).
+func newAPIAdapter(db *DB, audit *AuditLog, report llm.ReportProvider, cal calendarReader, encKey string, sendMsg func(phone, text string) error) *apiAdapter {
 	return &apiAdapter{
 		db:      db,
 		audit:   audit,
 		report:  report,
+		cal:     cal,
+		encKey:  encKey,
 		sendMsg: sendMsg,
 	}
 }
@@ -482,6 +496,218 @@ func (a *apiAdapter) GetTimeline(ctx context.Context, dependentID int64, days in
 		})
 	}
 	return out, nil
+}
+
+// =========================================================================
+// Me / agenda + insights (Fase 6 web/UI — visao do proprio usuario)
+// =========================================================================
+
+// agendaWindowDays eh a janela futura de UpcomingEvents (proximos N dias).
+const agendaWindowDays = 14
+
+// agendaUpcomingMax eh o teto de eventos retornados em /me/agenda.upcoming.
+const agendaUpcomingMax = 10
+
+// UpcomingEvents le o Google Calendar do proprio usuario (proximos
+// agendaWindowDays, ordenado por start asc, no maximo agendaUpcomingMax).
+// Se o usuario nao tem Google conectado, retorna lista vazia (nao eh erro —
+// o handler ja sinaliza google_connected via user.GoogleConnected).
+func (a *apiAdapter) UpcomingEvents(ctx context.Context, userID int64) ([]api.AgendaEvent, error) {
+	user, err := a.db.GetUserByID(userID)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return nil, api.ErrNotFound
+		}
+		return nil, err
+	}
+	if user.GoogleCredentials == "" {
+		return []api.AgendaEvent{}, nil
+	}
+	refreshToken, err := Decrypt(user.GoogleCredentials, a.encKey)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt credentials: %w", err)
+	}
+	now := time.Now()
+	end := now.Add(agendaWindowDays * 24 * time.Hour)
+	events, err := a.cal.ListEvents(ctx, refreshToken, user.GoogleCalendarID, now, end)
+	if err != nil {
+		return nil, fmt.Errorf("list events: %w", err)
+	}
+	out := agendaEventsToAPI(events)
+	if len(out) > agendaUpcomingMax {
+		out = out[:agendaUpcomingMax]
+	}
+	return out, nil
+}
+
+// agendaEventsToAPI converte CalendarEvent -> api.AgendaEvent. ListEvents ja
+// devolve ordenado por startTime asc (OrderBy("startTime")). Detecta all-day
+// pela ausencia de hora (meia-noite BRT) — heuristica consistente com como
+// parseEventTimes preenche eventos de Date puro.
+func agendaEventsToAPI(events []CalendarEvent) []api.AgendaEvent {
+	out := make([]api.AgendaEvent, 0, len(events))
+	for _, ev := range events {
+		item := api.AgendaEvent{
+			ID:       ev.ID,
+			Title:    ev.Title,
+			Start:    ev.Start,
+			AllDay:   isAllDayEvent(ev),
+			Location: ev.Location,
+		}
+		if !ev.End.IsZero() {
+			endCopy := ev.End
+			item.End = &endCopy
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+// isAllDayEvent detecta eventos de dia inteiro. Google retorna esses com o
+// campo Date (sem hora); parseEventTimes os carrega como meia-noite na BRT.
+// Aniversarios (eventType="birthday") tambem sao all-day por construcao.
+func isAllDayEvent(ev CalendarEvent) bool {
+	if ev.EventType == "birthday" {
+		return true
+	}
+	if ev.Start.IsZero() {
+		return false
+	}
+	local := ev.Start.In(BRT())
+	return local.Hour() == 0 && local.Minute() == 0 && local.Second() == 0
+}
+
+// RecentActivity le as ultimas `limit` entradas do action_log do usuario,
+// mais recentes primeiro, com label PT-BR amigavel (reusa actionLabelsPT).
+func (a *apiAdapter) RecentActivity(ctx context.Context, userID int64, limit int) ([]api.ActivityItem, error) {
+	if limit <= 0 {
+		limit = 8
+	}
+	rows, err := a.db.conn.QueryContext(ctx, `
+		SELECT action, created_at
+		  FROM action_log
+		 WHERE user_id = ?
+		 ORDER BY created_at DESC, id DESC
+		 LIMIT ?`, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query recent activity: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]api.ActivityItem, 0, limit)
+	for rows.Next() {
+		var action string
+		var at time.Time
+		if err := rows.Scan(&action, &at); err != nil {
+			return nil, fmt.Errorf("scan recent activity: %w", err)
+		}
+		out = append(out, api.ActivityItem{
+			Action: action,
+			Label:  activityLabelPT(action),
+			At:     at.UTC(),
+		})
+	}
+	return out, rows.Err()
+}
+
+// activityLabelPT mapeia action -> descricao PT-BR amigavel. Reusa
+// actionLabelsPT (audit.go); fallback eh a propria action quando nao mapeada.
+func activityLabelPT(action string) string {
+	if label := actionLabelsPT[action]; label != "" {
+		return label
+	}
+	return action
+}
+
+// AgendaInsightsData monta o input do sub-agente de insights: eventos do
+// periodo retroativo (`days`) + proximos agendaWindowDays + contagem de
+// atividade por tipo de acao no periodo. Tolera ausencia de Google — nesse
+// caso so popula activity_counts (HasEnoughData decide se vale gerar).
+func (a *apiAdapter) AgendaInsightsData(ctx context.Context, userID int64, days int) (synthesis.AgendaInsightsInput, error) {
+	if days <= 0 {
+		days = 30
+	}
+	user, err := a.db.GetUserByID(userID)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return synthesis.AgendaInsightsInput{}, api.ErrNotFound
+		}
+		return synthesis.AgendaInsightsInput{}, err
+	}
+
+	in := synthesis.AgendaInsightsInput{
+		UserName:        firstName(user.Name),
+		PeriodDays:      days,
+		GoogleConnected: user.GoogleCredentials != "",
+	}
+
+	now := time.Now()
+	if in.GoogleConnected {
+		refreshToken, derr := Decrypt(user.GoogleCredentials, a.encKey)
+		if derr != nil {
+			return synthesis.AgendaInsightsInput{}, fmt.Errorf("decrypt credentials: %w", derr)
+		}
+		pastStart := now.Add(-time.Duration(days) * 24 * time.Hour)
+		past, perr := a.cal.ListEvents(ctx, refreshToken, user.GoogleCalendarID, pastStart, now)
+		if perr != nil {
+			return synthesis.AgendaInsightsInput{}, fmt.Errorf("list past events: %w", perr)
+		}
+		future, ferr := a.cal.ListEvents(ctx, refreshToken, user.GoogleCalendarID, now, now.Add(agendaWindowDays*24*time.Hour))
+		if ferr != nil {
+			return synthesis.AgendaInsightsInput{}, fmt.Errorf("list future events: %w", ferr)
+		}
+		in.PastEvents = eventsToLite(past)
+		in.UpcomingEvents = eventsToLite(future)
+	}
+
+	counts, err := a.activityCounts(ctx, userID, now.Add(-time.Duration(days)*24*time.Hour), now)
+	if err != nil {
+		return synthesis.AgendaInsightsInput{}, err
+	}
+	in.ActivityCounts = counts
+	return in, nil
+}
+
+// firstName (medication.go) extrai o primeiro nome — reusado aqui pra montar
+// o user_name do input de insights sem expor nome completo ao modelo.
+
+// eventsToLite converte CalendarEvent -> synthesis.AgendaEventLite (so
+// title/start/all_day — sem location/attendees pra reduzir superficie).
+func eventsToLite(events []CalendarEvent) []synthesis.AgendaEventLite {
+	out := make([]synthesis.AgendaEventLite, 0, len(events))
+	for _, ev := range events {
+		out = append(out, synthesis.AgendaEventLite{
+			Title:  ev.Title,
+			Start:  ev.Start,
+			AllDay: isAllDayEvent(ev),
+		})
+	}
+	return out
+}
+
+// activityCounts agrega action_log do usuario por tipo de acao no intervalo.
+func (a *apiAdapter) activityCounts(ctx context.Context, userID int64, from, to time.Time) ([]synthesis.ActivityCount, error) {
+	rows, err := a.db.conn.QueryContext(ctx, `
+		SELECT action, COUNT(*) AS n
+		  FROM action_log
+		 WHERE user_id = ? AND created_at BETWEEN ? AND ?
+		 GROUP BY action
+		 ORDER BY n DESC`, userID, from.UTC(), to.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("query activity counts: %w", err)
+	}
+	defer rows.Close()
+
+	var out []synthesis.ActivityCount
+	for rows.Next() {
+		var action string
+		var n int
+		if err := rows.Scan(&action, &n); err != nil {
+			return nil, fmt.Errorf("scan activity count: %w", err)
+		}
+		out = append(out, synthesis.ActivityCount{Action: action, Count: n})
+	}
+	return out, rows.Err()
 }
 
 // Audit eh thin wrapper — preserva contract de "fire and forget" (api package

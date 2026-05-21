@@ -39,13 +39,13 @@ type User struct {
 // FamilyLink reflete a tabela family_links. As prefs vivem aninhadas em
 // `notify` pra alinhar com o codigo Go existente.
 type FamilyLink struct {
-	ID                int64     `json:"id"`
-	GuardianID        int64     `json:"guardian_id"`
-	DependentID       int64     `json:"dependent_id"`
-	Relationship      string    `json:"relationship"`
-	Notify            Notify    `json:"notify"`
-	ConsentStatus     string    `json:"consent_status"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID            int64     `json:"id"`
+	GuardianID    int64     `json:"guardian_id"`
+	DependentID   int64     `json:"dependent_id"`
+	Relationship  string    `json:"relationship"`
+	Notify        Notify    `json:"notify"`
+	ConsentStatus string    `json:"consent_status"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // Notify eh subset das flags por canal.
@@ -63,7 +63,7 @@ type DependentSummary struct {
 
 // PreferencesPatch eh o body de `PATCH /users/me`. Ponteiros distinguem
 // "campo ausente no JSON" (nil) de "campo presente com valor" (set). Sem
-// isso, nao da pra "deixar como esta" vs "passou ''" — campo nao opcional.
+// isso, nao da pra "deixar como esta" vs "passou ”" — campo nao opcional.
 type PreferencesPatch struct {
 	Name                     *string `json:"name,omitempty"`
 	DailySummaryTime         *string `json:"daily_summary_time,omitempty"`
@@ -180,4 +180,58 @@ type SynthesisSummary struct {
 	Comparacao              string   `json:"comparacao,omitempty"`
 	PontoDeAtencao          string   `json:"ponto_de_atencao,omitempty"`
 	RecomendacoesCarinhosas []string `json:"recomendacoes_carinhosas,omitempty"`
+}
+
+// =========================================================================
+// Me / agenda (GET /api/v1/me/agenda)
+// =========================================================================
+
+// AgendaResponse eh o payload de GET /api/v1/me/agenda. Visao factual da
+// agenda do proprio usuario logado. CONTRATO ESPELHADO 1:1 PELO FRONTEND —
+// nao renomear campos.
+type AgendaResponse struct {
+	GoogleConnected bool           `json:"google_connected"`
+	Upcoming        []AgendaEvent  `json:"upcoming"`
+	RecentActivity  []ActivityItem `json:"recent_activity"`
+}
+
+// AgendaEvent eh um evento futuro do calendario do usuario. End pode ser nil
+// (evento sem fim explicito). AllDay marca eventos de dia inteiro.
+type AgendaEvent struct {
+	ID       string     `json:"id"`
+	Title    string     `json:"title"`
+	Start    time.Time  `json:"start"`
+	End      *time.Time `json:"end"`
+	AllDay   bool       `json:"all_day"`
+	Location string     `json:"location"`
+}
+
+// ActivityItem eh uma entrada recente do action_log do usuario. Label eh a
+// descricao PT-BR amigavel da acao.
+type ActivityItem struct {
+	Action string    `json:"action"`
+	Label  string    `json:"label"`
+	At     time.Time `json:"at"`
+}
+
+// =========================================================================
+// Me / insights (GET /api/v1/me/insights)
+// =========================================================================
+
+// InsightsResponse eh o payload de GET /api/v1/me/insights. Insights de IA
+// sobre o uso da agenda do proprio usuario. CONTRATO ESPELHADO 1:1 PELO
+// FRONTEND — nao renomear campos.
+type InsightsResponse struct {
+	GeneratedAt time.Time     `json:"generated_at"`
+	PeriodDays  int           `json:"period_days"`
+	Available   bool          `json:"available"`
+	Summary     string        `json:"summary"`
+	Insights    []InsightItem `json:"insights"`
+}
+
+// InsightItem eh um insight individual. Kind ∈ pattern|health|social|productivity|other.
+type InsightItem struct {
+	Title  string `json:"title"`
+	Detail string `json:"detail"`
+	Kind   string `json:"kind"`
 }

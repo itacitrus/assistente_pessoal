@@ -243,13 +243,14 @@ func runBot() {
 	// Fase 2 (web/UI): API REST do painel sobe no mesmo http.Server. Adapter
 	// implementa api.Store delegando pra db/audit/report/sendMsg. Origens
 	// e base URL controlam CORS e o link do magic.
-	apiAdapter := newAPIAdapter(db, agent.audit, report, handler.SendTextToPhone)
+	apiAdapter := newAPIAdapter(db, agent.audit, report, cal, cfg.EncryptionKey, handler.SendTextToPhone)
 	apiServer := api.NewServer(api.Config{
 		Store:          apiAdapter,
 		WebBaseURL:     resolveWebBaseURL(),
 		PathPrefix:     resolveAPIPathPrefix(),
 		AllowedOrigins: resolveWebOrigins(),
 		CookieSecure:   resolveCookieSecure(),
+		ReportClient:   report,
 	})
 
 	go startHTTPServer(cal, db, cfg, apiServer)

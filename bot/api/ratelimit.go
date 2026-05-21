@@ -66,3 +66,46 @@ func (c *statusCache) Set(key string, value *StatusResponse) {
 func (c *statusCache) Invalidate(key string) {
 	c.m.Delete(key)
 }
+
+// insightsCache eh um cache em memoria com TTL pra GET /api/v1/me/insights.
+// Mesma estrategia do statusCache (lazy GC via expiry no Get), mas com TTL
+// bem maior (~6h): insights via Sonnet sao caros e padroes de agenda mudam
+// devagar. Regenera apos restart (aceitavel — sem persistencia). Key = userID.
+type insightsCache struct {
+	m   sync.Map // key string -> insightsEntry
+	ttl time.Duration
+}
+
+type insightsEntry struct {
+	value  *InsightsResponse
+	expiry time.Time
+}
+
+func newInsightsCache(ttl time.Duration) *insightsCache {
+	return &insightsCache{ttl: ttl}
+}
+
+// Get retorna o valor se ainda valido. Lazy GC: expirado eh removido aqui.
+func (c *insightsCache) Get(key string) (*InsightsResponse, bool) {
+	v, ok := c.m.Load(key)
+	if !ok {
+		return nil, false
+	}
+	e, ok := v.(insightsEntry)
+	if !ok {
+		return nil, false
+	}
+	if time.Now().UTC().After(e.expiry) {
+		c.m.Delete(key)
+		return nil, false
+	}
+	return e.value, true
+}
+
+// Set sobrescreve o valor com expiry now+ttl.
+func (c *insightsCache) Set(key string, value *InsightsResponse) {
+	c.m.Store(key, insightsEntry{
+		value:  value,
+		expiry: time.Now().UTC().Add(c.ttl),
+	})
+}
