@@ -85,6 +85,9 @@ func (s *Scheduler) Start() {
 	// snapshot psicologico (cron 1-hora, gating 60min).
 	s.cron.AddFunc("* * * * *", s.checkInactivityEscalation)
 	s.cron.AddFunc("@every 1h", s.runDailyPsychSnapshotCatchup)
+	// Refresh diario da sintese longitudinal (Sonnet) — rede de seguranca pra
+	// quem ninguem abriu no painel. Meia-noite local; cooldown interno 23h.
+	s.cron.AddFunc("0 0 * * *", s.runDailySynthesisRefresh)
 
 	s.cron.Start()
 	log.Println("Scheduler started")

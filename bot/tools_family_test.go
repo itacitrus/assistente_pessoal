@@ -178,7 +178,47 @@ func TestStatusDependente_DependentNotFound(t *testing.T) {
 	}
 }
 
-func TestBuildDependentStatus_DegradesWhenSynthesizeFails(t *testing.T) {
+// BuildDependentStatus agora LE a sintese persistida em vez de gerar on-demand
+// (a geracao foi movida pra RegenerateDependentSynthesis). Sem sintese
+// persistida, devolve placeholder + SynthesisStale=true (pro caller regerar).
+func TestBuildDependentStatus_ReadsPersistedSynthesis(t *testing.T) {
+	db := setupTestDB(t)
+	guardian := makeGuardian(t, db, "Caio", "111")
+	elder := makeElder(t, db, "Antonia", "222")
+	if _, err := db.LinkFamily(guardian.ID, elder.ID, "filho_de"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sem persistida -> placeholder + stale.
+	rep, err := BuildDependentStatus(context.Background(), db, nil, elder, 14)
+	if err != nil {
+		t.Fatalf("expected nil err, got %v", err)
+	}
+	if rep.SynthesisAvailable {
+		t.Error("expected SynthesisAvailable=false quando nao ha persistida")
+	}
+	if !rep.SynthesisStale {
+		t.Error("expected SynthesisStale=true quando nao ha persistida")
+	}
+
+	// Com persistida -> serve ela, available=true.
+	want := synthesis.ReportOutput{Tendencia: "estavel", NivelPreocupacao: "tranquilo", Resumo: "Tudo certo."}
+	if err := db.UpsertDependentSynthesis(elder.ID, 14, want, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	rep, err = BuildDependentStatus(context.Background(), db, nil, elder, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.SynthesisAvailable {
+		t.Error("expected SynthesisAvailable=true com persistida")
+	}
+	if rep.Synthesis.Tendencia != "estavel" {
+		t.Errorf("expected tendencia persistida, got %s", rep.Synthesis.Tendencia)
+	}
+}
+
+func TestRegenerateDependentSynthesis_DegradesWhenSynthesizeFails(t *testing.T) {
 	db := setupTestDB(t)
 	guardian := makeGuardian(t, db, "Caio", "111")
 	elder := makeElder(t, db, "Antonia", "222")
@@ -186,34 +226,22 @@ func TestBuildDependentStatus_DegradesWhenSynthesizeFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	rp := &fakeReportProvider{err: errors.New("api boom")}
-	rep, err := BuildDependentStatus(context.Background(), db, rp, elder, 14)
-	if err != nil {
-		t.Fatalf("expected nil err (degraded), got %v", err)
+	err := RegenerateDependentSynthesis(context.Background(), db, rp, elder, 14)
+	if err == nil {
+		t.Fatal("expected error when Sonnet fails")
 	}
-	if rep.Synthesis.Tendencia != "indeterminado" {
-		t.Errorf("expected degraded indeterminado, got %s", rep.Synthesis.Tendencia)
-	}
-	if rep.Synthesis.NivelPreocupacao != "indeterminado" {
-		t.Errorf("expected degraded nivel, got %s", rep.Synthesis.NivelPreocupacao)
-	}
-	// Audit log deve ter rodado synthesis_failed.
-	entries, _ := db.conn.Query(`SELECT action FROM action_log WHERE user_id = ?`, elder.ID)
-	defer entries.Close()
-	found := false
-	for entries.Next() {
-		var act string
-		entries.Scan(&act)
-		if act == "synthesis_failed" {
-			found = true
-			break
-		}
-	}
-	if !found {
+	// Audit synthesis_failed registrado e NADA persistido.
+	var n int
+	db.conn.QueryRow(`SELECT COUNT(*) FROM action_log WHERE user_id = ? AND action = 'synthesis_failed'`, elder.ID).Scan(&n)
+	if n == 0 {
 		t.Error("expected synthesis_failed in audit_log")
+	}
+	if _, gErr := db.GetDependentSynthesis(elder.ID); !errors.Is(gErr, ErrSynthesisNotFound) {
+		t.Errorf("nao deveria persistir em falha, got %v", gErr)
 	}
 }
 
-func TestBuildDependentStatus_AuditsSuccess(t *testing.T) {
+func TestRegenerateDependentSynthesis_PersistsAndAudits(t *testing.T) {
 	db := setupTestDB(t)
 	guardian := makeGuardian(t, db, "Caio", "111")
 	elder := makeElder(t, db, "Antonia", "222")
@@ -223,8 +251,15 @@ func TestBuildDependentStatus_AuditsSuccess(t *testing.T) {
 		NivelPreocupacao: "tranquilo",
 		Resumo:           "Tudo certo.",
 	}}
-	if _, err := BuildDependentStatus(context.Background(), db, rp, elder, 14); err != nil {
+	if err := RegenerateDependentSynthesis(context.Background(), db, rp, elder, 14); err != nil {
 		t.Fatal(err)
+	}
+	stored, err := db.GetDependentSynthesis(elder.ID)
+	if err != nil {
+		t.Fatalf("expected persisted synthesis, got %v", err)
+	}
+	if stored.Report.Tendencia != "estavel" {
+		t.Errorf("persisted tendencia = %s", stored.Report.Tendencia)
 	}
 	entries, _ := db.conn.Query(`SELECT action FROM action_log WHERE user_id = ? AND action = 'synthesis_executed'`, elder.ID)
 	defer entries.Close()

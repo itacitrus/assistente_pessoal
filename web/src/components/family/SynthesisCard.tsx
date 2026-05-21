@@ -9,9 +9,31 @@ import type { NivelPreocupacao, SynthesisSummary } from "@/types/api";
 
 export interface SynthesisCardProps {
   synthesis: SynthesisSummary;
+  /** false quando a síntese ainda não foi gerada (idoso novo). A geração roda
+   * em background; a página se atualiza sozinha em instantes. */
+  available?: boolean;
 }
 
-export function SynthesisCard({ synthesis }: SynthesisCardProps) {
+export function SynthesisCard({
+  synthesis,
+  available = true,
+}: SynthesisCardProps) {
+  // Síntese ainda não gerada (persistida ausente). A geração acontece fora do
+  // request (assíncrona) — mostramos um estado "preparando" em vez de travar a
+  // página. Um auto-refresh leve no page recarrega quando ficar pronta.
+  if (!available) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Síntese recente</CardTitle>
+          <CardDescription>
+            Estamos preparando a síntese — ela aparece sozinha em instantes.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
+
   // Backend sempre retorna sintese — quando nao ha dados suficientes,
   // tendencia="indeterminado" e nivel_preocupacao="indeterminado".
   const isIndeterminate =

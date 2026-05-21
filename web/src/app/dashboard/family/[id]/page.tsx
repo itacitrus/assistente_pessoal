@@ -5,6 +5,7 @@ import { AlertList } from "@/components/family/AlertList";
 import { DependentDataForm } from "@/components/family/DependentDataForm";
 import { MetricCard } from "@/components/family/MetricCard";
 import { StatusHeader } from "@/components/family/StatusHeader";
+import { SynthesisAutoRefresh } from "@/components/family/SynthesisAutoRefresh";
 import { SynthesisCard } from "@/components/family/SynthesisCard";
 import { Pill } from "lucide-react";
 
@@ -74,8 +75,12 @@ export default async function DependentDetailPage({ params }: PageProps) {
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <MetricCard data={status.medication} days={status.days} />
-        <SynthesisCard synthesis={status.synthesis} />
+        <SynthesisCard
+          synthesis={status.synthesis}
+          available={status.synthesis_available !== false}
+        />
       </div>
+      <SynthesisAutoRefresh pending={status.synthesis_available === false} />
 
       <AlertList alerts={status.alerts_open} />
 

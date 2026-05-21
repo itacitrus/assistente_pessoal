@@ -57,6 +57,14 @@ type DependentStatusReport struct {
 	AlertsOpen        []FamilyAlert
 	Snapshots         []synthesis.DailySnapshot
 	Synthesis         synthesis.ReportOutput
+	// SynthesisAvailable=false quando ainda nao ha sintese persistida (idoso
+	// novo, sem geracao). O caller mostra "sendo preparada" e dispara regen.
+	SynthesisAvailable bool
+	// SynthesisStale=true quando a sintese persistida foi gerada antes do
+	// snapshot mais recente (dado novo desde a ultima geracao). O caller serve
+	// a persistida e dispara regen assincrono — nunca bloqueia.
+	SynthesisStale     bool
+	SynthesisGeneratedAt time.Time
 }
 
 func handleStatusDependente(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
@@ -103,6 +111,20 @@ func handleStatusDependente(ctx context.Context, agent *Agent, user *User, param
 		return fmt.Sprintf("Tive um problema buscando o status de %s. Posso tentar de novo daqui a pouco?", dep.Name), nil
 	}
 
+	// Diferente do painel web (instantaneo, regen assincrono), o canal de chat
+	// eh assincrono por natureza: o responsavel pediu e pode esperar alguns
+	// segundos por uma sintese fresca. Entao, quando a persistida esta ausente
+	// ou desatualizada, geramos na hora e usamos o resultado.
+	if report.SynthesisStale && agent.report != nil {
+		if regErr := RegenerateDependentSynthesis(ctx, agent.db, agent.report, dep, p.Days); regErr == nil {
+			if stored, gErr := agent.db.GetDependentSynthesis(dep.ID); gErr == nil {
+				report.Synthesis = stored.Report
+				report.SynthesisAvailable = true
+				report.SynthesisStale = false
+			}
+		}
+	}
+
 	if agent.audit != nil {
 		adherencePct := 0
 		if report.Medication.Scheduled > 0 {
@@ -131,7 +153,11 @@ func handleStatusDependente(ctx context.Context, agent *Agent, user *User, param
 //
 // Falhas no Synthesize NAO falham a funcao — degrada elegantemente para
 // ReportOutput{Tendencia: "indeterminado", ...}. Audit log captura ambas.
-func BuildDependentStatus(ctx context.Context, db *DB, report llm.ReportProvider, dep *User, days int) (*DependentStatusReport, error) {
+// BuildDependentStatus monta o status do dependente para exibicao (painel/chat).
+// NAO gera sintese — le a persistida (rapido). O parametro report fica por
+// compatibilidade de assinatura com os call sites; a geracao mora em
+// RegenerateDependentSynthesis. Mantido pra nao quebrar callers/testes.
+func BuildDependentStatus(ctx context.Context, db *DB, _ llm.ReportProvider, dep *User, days int) (*DependentStatusReport, error) {
 	if db == nil {
 		return nil, errors.New("BuildDependentStatus: db nil")
 	}
@@ -178,45 +204,93 @@ func BuildDependentStatus(ctx context.Context, db *DB, report llm.ReportProvider
 	}
 	rep.Snapshots = snaps
 
-	// Roda synthesis (Sonnet) — degrada a indeterminado se falha.
+	// Sintese (Sonnet) NAO roda no caminho da requisicao — eh cara e fazia a
+	// pagina do dependente demorar segundos. Servimos a ultima sintese
+	// persistida (instantanea). A geracao acontece fora do request:
+	//   - regen assincrono quando fica "stale" (decidido pelo caller)
+	//   - refresh diario pelo scheduler
+	// Se ainda nao ha nenhuma (idoso novo), devolvemos placeholder e marcamos
+	// SynthesisAvailable=false pro caller mostrar "sendo preparada".
+	stored, sErr := db.GetDependentSynthesis(dep.ID)
+	if sErr != nil {
+		if !errors.Is(sErr, ErrSynthesisNotFound) {
+			return nil, fmt.Errorf("get stored synthesis: %w", sErr)
+		}
+		rep.SynthesisAvailable = false
+		rep.SynthesisStale = true // sem sintese -> precisa gerar
+		rep.Synthesis = synthesis.ReportOutput{
+			Tendencia:        "indeterminado",
+			Resumo:           "Estamos preparando a primeira síntese — atualize em instantes.",
+			NivelPreocupacao: "indeterminado",
+		}
+		return rep, nil
+	}
+
+	rep.Synthesis = stored.Report
+	rep.SynthesisAvailable = true
+	rep.SynthesisGeneratedAt = stored.GeneratedAt
+	// Stale se surgiu snapshot novo depois da ultima geracao.
+	if latest, ok, lErr := db.GetLatestSnapshotInferredAt(dep.ID); lErr == nil && ok {
+		rep.SynthesisStale = stored.GeneratedAt.Before(latest)
+	}
+	return rep, nil
+}
+
+// RegenerateDependentSynthesis roda a sintese (Sonnet) e persiste o resultado.
+// Roda FORA do caminho de request — pelo regen assincrono (read stale) e pelo
+// refresh diario do scheduler. Best-effort: em falha de Sonnet, audita
+// synthesis_failed e NAO sobrescreve a sintese anterior (mantem a ultima boa).
+func RegenerateDependentSynthesis(ctx context.Context, db *DB, report llm.ReportProvider, dep *User, days int) error {
+	if db == nil || dep == nil {
+		return errors.New("RegenerateDependentSynthesis: db/dep nil")
+	}
+	if report == nil {
+		return errors.New("RegenerateDependentSynthesis: report nil")
+	}
+	if days <= 0 {
+		days = 14
+	}
+	now := time.Now().UTC()
+	weekAgo := now.Add(-7 * 24 * time.Hour)
+	windowStart := now.Add(-time.Duration(days) * 24 * time.Hour)
+
+	medStats, err := db.GetMedicationStats7d(dep.ID, weekAgo, now)
+	if err != nil {
+		return fmt.Errorf("med stats: %w", err)
+	}
+	alerts, err := db.GetOpenAlertsForUser(dep.ID)
+	if err != nil {
+		return fmt.Errorf("alerts: %w", err)
+	}
+	snaps, err := db.GetSnapshotsForUserDateRange(dep.ID, windowStart, now)
+	if err != nil {
+		return fmt.Errorf("snapshots: %w", err)
+	}
+	var lastMsg sql.NullTime
+	if dep.LastUserMessageAt != nil {
+		lastMsg = sql.NullTime{Time: *dep.LastUserMessageAt, Valid: true}
+	}
+
 	synthIn := synthesis.ReportInput{
-		Dependent: synthesis.User{
-			ID:   dep.ID,
-			Name: dep.Name,
-		},
+		Dependent:         synthesis.User{ID: dep.ID, Name: dep.Name},
 		Days:              days,
 		Snapshots:         snaps,
 		MedicationStats:   medStats,
 		OpenAlerts:        toSynthesisAlerts(alerts),
-		LastUserMessageAt: rep.LastUserMessageAt,
+		LastUserMessageAt: lastMsg,
 	}
-
-	if report != nil {
-		out, sErr := synthesis.Synthesize(ctx, report, synthIn)
-		if sErr != nil {
-			rep.Synthesis = synthesis.ReportOutput{
-				Tendencia:        "indeterminado",
-				Resumo:           "Não foi possível gerar síntese agora.",
-				NivelPreocupacao: "indeterminado",
-			}
-			// Caller registra synthesis_failed se tiver auditor.
-			NewAuditLog(db).Log(dep.ID, "synthesis_failed", "", sanitizeAuditReason(sErr.Error()))
-		} else {
-			rep.Synthesis = out
-			NewAuditLog(db).Log(dep.ID, "synthesis_executed", "",
-				fmt.Sprintf("tendencia=%s|nivel=%s|n_snapshots=%d",
-					out.Tendencia, out.NivelPreocupacao, len(snaps)))
-		}
-	} else {
-		// Sem report client (testes) — fallback explicito.
-		rep.Synthesis = synthesis.ReportOutput{
-			Tendencia:        "indeterminado",
-			Resumo:           "Não foi possível gerar síntese (provider não configurado).",
-			NivelPreocupacao: "indeterminado",
-		}
+	out, sErr := synthesis.Synthesize(ctx, report, synthIn)
+	if sErr != nil {
+		NewAuditLog(db).Log(dep.ID, "synthesis_failed", "", sanitizeAuditReason(sErr.Error()))
+		return fmt.Errorf("synthesize: %w", sErr)
 	}
-
-	return rep, nil
+	if err := db.UpsertDependentSynthesis(dep.ID, days, out, time.Now().UTC()); err != nil {
+		return fmt.Errorf("persist synthesis: %w", err)
+	}
+	NewAuditLog(db).Log(dep.ID, "synthesis_executed", "",
+		fmt.Sprintf("tendencia=%s|nivel=%s|n_snapshots=%d|persisted=true",
+			out.Tendencia, out.NivelPreocupacao, len(snaps)))
+	return nil
 }
 
 // resolveDependent procura o User a partir dos identificadores. Prioridade:

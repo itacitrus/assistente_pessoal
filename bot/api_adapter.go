@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/giovannirambo/assistente_pessoal/bot/api"
@@ -40,6 +41,9 @@ type apiAdapter struct {
 	cal     calendarReader
 	encKey  string
 	sendMsg func(phone, text string) error
+	// synthInFlight deduplica regen assincrono de sintese por dependente —
+	// varios page loads simultaneos disparam no maximo um Sonnet por vez.
+	synthInFlight sync.Map // map[int64]struct{}
 }
 
 // newAPIAdapter constroi o adapter. Mantido pequeno — main.go cria, monta
@@ -496,7 +500,35 @@ func (a *apiAdapter) BuildDependentStatus(ctx context.Context, guardianID, depen
 			Confidence:    snap.Confidence,
 		})
 	}
+
+	resp.SynthesisAvailable = report.SynthesisAvailable
+	if !report.SynthesisGeneratedAt.IsZero() {
+		t := report.SynthesisGeneratedAt
+		resp.SynthesisGeneratedAt = &t
+	}
+	// Sintese desatualizada (ou inexistente) -> regenera em background, sem
+	// bloquear a resposta. Deduplicado por dependente.
+	if report.SynthesisStale && a.report != nil {
+		a.triggerSynthesisRegen(dep, days)
+	}
 	return resp, nil
+}
+
+// triggerSynthesisRegen dispara a regeneracao da sintese em background, no
+// maximo uma por dependente de cada vez (dedup via synthInFlight). Best-effort:
+// erros sao logados, nao afetam a resposta jah enviada.
+func (a *apiAdapter) triggerSynthesisRegen(dep *User, days int) {
+	if _, busy := a.synthInFlight.LoadOrStore(dep.ID, struct{}{}); busy {
+		return // jah ha uma regen em andamento pra esse dependente
+	}
+	go func() {
+		defer a.synthInFlight.Delete(dep.ID)
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		if err := RegenerateDependentSynthesis(ctx, a.db, a.report, dep, days); err != nil {
+			log.Printf("api adapter: regen synthesis dep=%d: %v", dep.ID, err)
+		}
+	}()
 }
 
 // GetTimeline retorna pontos da timeline. Inclui confidence < 3 — UI decide

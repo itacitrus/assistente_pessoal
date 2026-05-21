@@ -202,6 +202,13 @@ func runBot() {
 	agent.WithSnapshotWriter(snapshotWriter)
 	SetSnapshotWriterForCatchup(snapshotWriter)
 
+	// Sintese longitudinal: a geracao (Sonnet) roda fora do request — regen
+	// assincrono no read-stale (adapter) e refresh diario (scheduler). Injeta
+	// o gerador que carrega o report client.
+	SetSynthesisGeneratorForSchedule(func(ctx context.Context, dep *User, days int) error {
+		return RegenerateDependentSynthesis(ctx, db, report, dep, days)
+	})
+
 	if waClient.Store.ID == nil {
 		qrChan, _ := waClient.GetQRChannel(context.Background())
 		err = waClient.Connect()

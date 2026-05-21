@@ -200,6 +200,8 @@ export interface DependentStatusRaw {
   alerts_open: AlertSummary[];
   snapshots: SnapshotPointRaw[];
   synthesis: SynthesisSummary;
+  synthesis_available?: boolean;
+  synthesis_generated_at?: string;
 }
 
 /**
@@ -216,6 +218,10 @@ export interface DependentStatus {
   alerts_open: AlertSummary[];
   snapshots: SnapshotPoint[];
   synthesis: SynthesisSummary;
+  /** false quando a síntese ainda está sendo gerada (idoso novo). */
+  synthesis_available?: boolean;
+  /** ISO de quando a síntese servida foi gerada. */
+  synthesis_generated_at?: string;
 }
 
 /**

@@ -402,6 +402,19 @@ func (db *DB) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_psych_state_user_date
 			ON psych_state_daily(user_id, snapshot_date DESC)`,
 
+		// Fase 5 (idosos): sintese longitudinal (Sonnet) PERSISTIDA. Uma linha
+		// por dependente. Servida instantaneamente na pagina do dependente —
+		// a geracao (cara) acontece fora do request: regen assincrono quando
+		// fica "stale" (generated_at < snapshot mais recente) e refresh diario.
+		// payload eh o JSON de synthesis.ReportOutput. days registra a janela
+		// usada na ultima geracao.
+		`CREATE TABLE IF NOT EXISTS dependent_synthesis (
+			dependent_id INTEGER PRIMARY KEY REFERENCES users(id),
+			days         INTEGER NOT NULL,
+			payload      TEXT NOT NULL,
+			generated_at DATETIME NOT NULL
+		)`,
+
 		// Fase 2 (web/UI): sessoes do painel web. Token plaintext nunca eh
 		// gravado — apenas sha256(token) em token_hash. status segue o ciclo
 		// pending -> active -> revoked|expired. expires_at carrega:

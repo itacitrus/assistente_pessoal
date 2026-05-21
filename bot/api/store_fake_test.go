@@ -494,8 +494,9 @@ func (s *fakeStore) BuildDependentStatus(_ context.Context, guardianID, dependen
 		return nil, ErrNotFound
 	}
 	return &StatusResponse{
-		Dependent: DependentRef{ID: dep.ID, Name: dep.Name},
-		Days:      days,
+		Dependent:          DependentRef{ID: dep.ID, Name: dep.Name},
+		Days:               days,
+		SynthesisAvailable: true, // sintese persistida presente -> handler cacheia
 		Synthesis: SynthesisSummary{
 			Tendencia:        "estavel",
 			Resumo:           "Tudo bem",

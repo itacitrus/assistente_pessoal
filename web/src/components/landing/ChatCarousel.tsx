@@ -37,13 +37,12 @@ const SCENARIOS: Scenario[] = [
       },
       { who: "me", time: "08:04", text: "Ah, ainda bem que você lembrou, vou me arrumar aqui ❤️" },
       {
-        who: "system",
-        text: "Família avisada: “tudo bem hoje — remédio tomado, bom humor.”",
-      },
-      {
         who: "zello",
         time: "08:05",
         text: "Estou à disposição!",
+      }, {
+        who: "system",
+        text: "Família avisada: “tudo bem hoje — remédio tomado, bom humor.”",
       },
     ],
   },

@@ -41,7 +41,16 @@ type phase5State struct {
 	// possa rodar o snapshot writer real (Haiku). Se nil, catchup skipa
 	// — defesa em profundidade pra ambientes sem LLM.
 	snapshotWriterFn SnapshotWriter
+	// synthesisGenFn regenera+persiste a sintese (Sonnet) de um dependente.
+	// Injetado por main.go (o scheduler nao tem o report client). Se nil, o
+	// refresh diario skipa.
+	synthesisGenFn SynthesisGenerator
 }
+
+// SynthesisGenerator regenera e persiste a sintese longitudinal de um
+// dependente. Abstrai RegenerateDependentSynthesis pra o scheduler nao
+// precisar carregar o report client.
+type SynthesisGenerator func(ctx context.Context, dep *User, days int) error
 
 // p5State eh a instancia singleton. Uso intencional de package var pra
 // evitar adicionar campos em Scheduler — o Scheduler ja eh grande, e a
@@ -54,6 +63,14 @@ func SetSnapshotWriterForCatchup(w SnapshotWriter) {
 	p5State.mu.Lock()
 	defer p5State.mu.Unlock()
 	p5State.snapshotWriterFn = w
+}
+
+// SetSynthesisGeneratorForSchedule injeta o gerador de sintese pro refresh
+// diario. Chamado por main.go apos construir o report client.
+func SetSynthesisGeneratorForSchedule(g SynthesisGenerator) {
+	p5State.mu.Lock()
+	defer p5State.mu.Unlock()
+	p5State.synthesisGenFn = g
 }
 
 // shouldRunPhase5 retorna true se o cooldown da chave passou. Cooldown
@@ -276,6 +293,59 @@ func (s *Scheduler) runDailyPsychSnapshotCatchup() {
 	}
 	for i := range elders {
 		s.catchupSnapshotForElder(writer, &elders[i], yesterday)
+	}
+}
+
+// =========================================================================
+// runDailySynthesisRefresh — rede de seguranca diaria da sintese persistida
+// =========================================================================
+
+// synthesisRefreshWindowDays eh a janela ("ultimos N dias") usada no refresh
+// diario — espelha o default do painel (handleDependentStatus usa 14).
+const synthesisRefreshWindowDays = 14
+
+// runDailySynthesisRefresh regenera a sintese longitudinal de todos os idosos
+// uma vez por dia. A geracao on-demand foi removida do request (deixava a
+// pagina lenta); a frescura no dia-a-dia vem do regen assincrono no read-stale,
+// e ESTE job eh a rede de seguranca: garante que a janela role e que a sintese
+// fique fresca mesmo pra quem ninguem abriu no painel. Cooldown 23h evita
+// rodar duas vezes no mesmo dia apos restart.
+func (s *Scheduler) runDailySynthesisRefresh() {
+	if !shouldRunPhase5("synthesis_daily_refresh", 23*time.Hour) {
+		return
+	}
+	p5State.mu.Lock()
+	gen := p5State.synthesisGenFn
+	p5State.mu.Unlock()
+	if gen == nil {
+		log.Printf("Scheduler[synthesis_refresh]: generator nao injetado — skip")
+		return
+	}
+	elders, err := s.db.ListUsersByType(UserTypeIdoso)
+	if err != nil {
+		log.Printf("Scheduler[synthesis_refresh]: list elders: %v", err)
+		return
+	}
+	for i := range elders {
+		s.refreshSynthesisForElder(gen, &elders[i])
+	}
+}
+
+// refreshSynthesisForElder regenera a sintese de 1 idoso. Skipa quem ainda nao
+// tem snapshot (nada a sintetizar) e quem teve consentimento revogado por todos
+// os responsaveis (privacidade).
+func (s *Scheduler) refreshSynthesisForElder(gen SynthesisGenerator, elder *User) {
+	if _, ok, err := s.db.GetLatestSnapshotInferredAt(elder.ID); err != nil || !ok {
+		return
+	}
+	guardians, _ := s.db.GetGuardians(elder.ID)
+	if len(guardians) > 0 && allGuardiansConsentRevoked(s.db, guardians) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	if err := gen(ctx, elder, synthesisRefreshWindowDays); err != nil {
+		log.Printf("Scheduler[synthesis_refresh] %s: %v", elder.Name, err)
 	}
 }
 

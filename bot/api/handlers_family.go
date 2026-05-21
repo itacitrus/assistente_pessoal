@@ -295,7 +295,12 @@ func (s *Server) handleDependentStatus(w http.ResponseWriter, r *http.Request, d
 		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao gerar status.")
 		return
 	}
-	s.statusCache.Set(cacheKey, resp)
+	// Nao cacheia o placeholder "sendo preparada" — a regen assincrona popula a
+	// sintese em segundos, e o cache de 60s faria o usuario ver "preparando"
+	// por tempo demais. Status com sintese ja disponivel cacheia normalmente.
+	if resp.SynthesisAvailable {
+		s.statusCache.Set(cacheKey, resp)
+	}
 	s.store.Audit(r.Context(), user.ID, "status_dependente_consulted", "",
 		fmt.Sprintf("dependent_id=%d|days=%d|cache=miss", depID, days))
 	writeJSON(w, http.StatusOK, resp)
