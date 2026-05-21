@@ -136,7 +136,7 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setSessionCookie(w, body.Token, s.cookieSecure)
+	setSessionCookie(w, body.Token, s.cookieSecure, s.cookieDomain)
 	s.store.Audit(ctx, user.ID, "web_login_succeeded", user.PhoneNumber,
 		fmt.Sprintf("session_id=%d", sessID))
 	writeJSON(w, http.StatusOK, map[string]any{"user": user})
@@ -153,7 +153,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		s.store.Audit(r.Context(), user.ID, "web_session_revoked", user.PhoneNumber,
 			fmt.Sprintf("session_id=%d", sessID))
 	}
-	clearSessionCookie(w, s.cookieSecure)
+	clearSessionCookie(w, s.cookieSecure, s.cookieDomain)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
