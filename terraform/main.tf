@@ -292,3 +292,29 @@ resource "aws_lb_listener_rule" "bot_oauth" {
     Name = "assistente-bot-oauth"
   }
 }
+
+# Painel web (Fase 2 — assistente de idosos). O ALB compartilhado roteia por
+# default tudo pro serviço Sankhya; esta regra (prioridade 90, mais específica
+# que a default e abaixo da regra OAuth) manda /assistente/api/v1/* pro bot.
+# O bot monta a API REST sob esse prefixo via env API_PATH_PREFIX=/assistente.
+# Criada manualmente via CLI em 2026-05-20 e codificada aqui pra eliminar drift
+# (terraform import: aws_lb_listener_rule.bot_api <rule-arn>).
+resource "aws_lb_listener_rule" "bot_api" {
+  listener_arn = data.aws_lb_listener.api_https.arn
+  priority     = 90
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.bot.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/assistente/api/v1/*"]
+    }
+  }
+
+  tags = {
+    Name = "assistente-bot-api"
+  }
+}
