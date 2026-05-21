@@ -10,6 +10,7 @@ import {
   Lock,
   MessageCircleHeart,
   Pill,
+  Plane,
   ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
@@ -132,9 +133,9 @@ function TwoWorlds() {
           body: "Alertas no momento que faz sentido pra você. Quantos quiser, do jeito que precisar.",
         },
         {
-          icon: Feather,
-          title: "Protege o que importa",
-          body: "Saída pra buscar a filha, almoço com alguém, bloco de foco — fica no calendário, e ninguém pisa em cima.",
+          icon: Plane,
+          title: "Viaja com você",
+          body: "Avisou que vai pra outro fuso e o Zello ajusta a agenda sozinho — lembretes e compromissos sempre no horário local certo, sem você recalcular nada.",
         },
       ],
     },
