@@ -234,13 +234,10 @@ func runBot() {
 	log.Println("WhatsApp connected")
 
 	// Fase 3 (idosos): notifier abstrai canal de envio para escalacao;
-	// engine de escalacao decide quando insistir/avisar familia.
-	// PersistingNotifier embrulha o canal para que todo envio proativo
-	// (lembrete de medicacao, escalacao) entre em conversation_history como
-	// turno do assistente — sem isso o LLM perde o contexto da propria fala
-	// quando o usuario responde ao lembrete.
-	var notifier Notifier = NewWhatsAppNotifier(handler.SendTextToPhone)
-	notifier = NewPersistingNotifier(notifier, db)
+	// engine de escalacao decide quando insistir/avisar familia. Toda mensagem
+	// enviada entra em conversation_history pelo transporte (handler.SendTextToPhone
+	// -> persistOutbound), entao o notifier nao precisa persistir nada.
+	notifier := NewWhatsAppNotifier(handler.SendTextToPhone)
 	escEng := NewEscalationEngine(db, notifier)
 
 	scheduler := NewScheduler(db, cal, cfg, handler.SendTextToPhone, notifier, escEng)

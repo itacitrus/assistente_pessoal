@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { Pill } from "lucide-react";
 
 import { MedicationCard } from "@/components/family/MedicationCard";
@@ -11,65 +10,44 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { ApiError } from "@/lib/api";
-import { getDependentMedications, listDependents } from "@/lib/api/family";
+import { getMyMedications } from "@/lib/api/me";
 import { getSessionCookieHeader } from "@/lib/server-cookie";
 import type { MedicationItem } from "@/types/api";
 
 export const dynamic = "force-dynamic";
 
-interface PageProps {
-  params: { id: string };
-}
-
-export default async function MedicamentosPage({ params }: PageProps) {
-  const id = parseInt(params.id, 10);
-  if (Number.isNaN(id)) notFound();
-
+export default async function MeusRemediosPage() {
   const cookieHeader = getSessionCookieHeader();
 
-  // Lista de remedios + nome do dependente (pra contextualizar o titulo).
-  // O endpoint de medicamentos nao reexpoe o nome; lemos a lista de
-  // dependentes (barata, cacheada no backend) em paralelo.
   let medications: MedicationItem[] = [];
-  let dependentName = "essa pessoa";
   try {
-    const [meds, deps] = await Promise.all([
-      getDependentMedications(id, cookieHeader),
-      listDependents(cookieHeader),
-    ]);
-    medications = meds.medications ?? [];
-    const found = (deps.dependents ?? []).find((d) => d.user.id === id);
-    if (found) dependentName = found.user.name;
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) {
-      notFound();
-    }
-    throw err;
+    const res = await getMyMedications(cookieHeader);
+    medications = res.medications ?? [];
+  } catch {
+    // Falha de leitura não derruba a página — mostra vazio e o form pra cadastrar.
+    medications = [];
   }
 
   return (
     <div className="mx-auto max-w-2xl space-y-8">
       <Link
-        href={`/dashboard/family/${id}`}
+        href="/dashboard"
         className="text-sm text-muted-foreground hover:text-foreground"
       >
-        ← Voltar para detalhes
+        ← Voltar ao painel
       </Link>
 
       <header className="animate-rise">
         <div className="flex items-center gap-2">
           <Pill className="h-5 w-5 text-[--zello-emerald]" aria-hidden />
-          <p className="text-sm font-medium text-[--zello-emerald]">
-            Remédios
-          </p>
+          <p className="text-sm font-medium text-[--zello-emerald]">Remédios</p>
         </div>
         <h1 className="mt-1 font-display text-3xl font-semibold tracking-tight">
-          Remédios de {dependentName}
+          Meus remédios
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Cadastre os remédios para o Zello lembrar na hora certa, todos os
-          dias.
+          Cadastre os seus remédios para o Zello lembrar você na hora certa —
+          contínuos ou por um período.
         </p>
       </header>
 
@@ -91,8 +69,8 @@ export default async function MedicamentosPage({ params }: PageProps) {
                 <Pill className="h-6 w-6" aria-hidden />
               </div>
               <p className="max-w-md text-base text-muted-foreground">
-                Nenhum remédio cadastrado ainda. Cadastre o primeiro pra o Zello
-                lembrar na hora certa.
+                Você ainda não cadastrou nenhum remédio. Cadastre o primeiro pra
+                o Zello lembrar na hora certa.
               </p>
             </CardContent>
           </Card>
@@ -101,7 +79,7 @@ export default async function MedicamentosPage({ params }: PageProps) {
             {medications.map((m) => (
               <MedicationCard
                 key={m.id}
-                target={{ kind: "dependent", dependentId: id }}
+                target={{ kind: "self" }}
                 medication={m}
               />
             ))}
@@ -120,11 +98,12 @@ export default async function MedicamentosPage({ params }: PageProps) {
               Adicionar remédio
             </CardTitle>
             <CardDescription>
-              Nome, dose, horários e em quais dias o Zello deve lembrar.
+              Nome, dose, horários, frequência e por quanto tempo o Zello deve
+              lembrar.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <MedicationForm target={{ kind: "dependent", dependentId: id }} />
+            <MedicationForm target={{ kind: "self" }} />
           </CardContent>
         </Card>
       </section>

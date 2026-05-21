@@ -114,6 +114,76 @@ func ExpandOccurrences(sched *MedicationSchedule, start, end time.Time, loc *tim
 	return occs, nil
 }
 
+// shiftRRULEHours desloca todos os horarios (BYHOUR/BYMINUTE) de uma RRULE por
+// delta, preservando frequencia, intervalo e dias da semana. Usado pela
+// politica take_recalculate: o idoso tomou atrasado e os horarios passam a
+// ancorar no novo horario, mantendo o espacamento entre doses.
+//
+// Como BYMINUTE eh unico (cf. buildMedicationRRULE) e delta eh constante, todos
+// os horarios deslocam de forma uniforme — o minuto resultante eh o mesmo pra
+// todos. Horarios que passam de 24h fazem wrap (mod 24h); para atrasos tipicos
+// (minutos/poucas horas) isso so afeta doses ja tarde da noite.
+func shiftRRULEHours(rruleStr string, delta time.Duration) (string, error) {
+	raw := strings.TrimPrefix(strings.TrimSpace(rruleStr), "RRULE:")
+	opts, err := rrule.StrToROption(raw)
+	if err != nil {
+		return "", fmt.Errorf("rrule parse: %w", err)
+	}
+	if len(opts.Byhour) == 0 {
+		return "", fmt.Errorf("rrule sem BYHOUR")
+	}
+	minute := 0
+	if len(opts.Byminute) > 0 {
+		minute = opts.Byminute[0]
+	}
+	deltaMin := int(delta.Round(time.Minute) / time.Minute)
+	const dayMin = 24 * 60
+	newHours := make([]int, 0, len(opts.Byhour))
+	newMinute := minute
+	for i, h := range opts.Byhour {
+		total := (((h*60+minute+deltaMin)%dayMin)+dayMin)%dayMin
+		newHours = append(newHours, total/60)
+		if i == 0 {
+			newMinute = total % 60
+		}
+	}
+	sort.Ints(newHours)
+
+	var sb strings.Builder
+	switch opts.Freq {
+	case rrule.DAILY:
+		sb.WriteString("FREQ=DAILY")
+	case rrule.WEEKLY:
+		sb.WriteString("FREQ=WEEKLY")
+	case rrule.MONTHLY:
+		sb.WriteString("FREQ=MONTHLY")
+	default:
+		return "", fmt.Errorf("frequencia nao suportada para recalculo")
+	}
+	if opts.Interval > 1 {
+		fmt.Fprintf(&sb, ";INTERVAL=%d", opts.Interval)
+	}
+	if len(opts.Byweekday) > 0 {
+		days := make([]string, 0, len(opts.Byweekday))
+		for _, d := range opts.Byweekday {
+			days = append(days, weekdayICAL(d))
+		}
+		sb.WriteString(";BYDAY=" + strings.Join(days, ","))
+	}
+	hourStrs := make([]string, 0, len(newHours))
+	for _, h := range newHours {
+		hourStrs = append(hourStrs, fmt.Sprintf("%d", h))
+	}
+	sb.WriteString(";BYHOUR=" + strings.Join(hourStrs, ","))
+	fmt.Fprintf(&sb, ";BYMINUTE=%d", newMinute)
+	return sb.String(), nil
+}
+
+// weekdayICAL mapeia rrule.Weekday (0=MO..6=SU) para o codigo iCal BYDAY.
+func weekdayICAL(d rrule.Weekday) string {
+	return [...]string{"MO", "TU", "WE", "TH", "FR", "SA", "SU"}[d.Day()]
+}
+
 // DescribeRRULE retorna texto natural em PT-BR. Best-effort — fallback para
 // a string crua se o caso nao for coberto. Usado em mensagens ao usuario
 // pra confirmacao de cadastro ("vou cadastrar X, todos os dias as 8h").

@@ -378,7 +378,24 @@ export interface MedicationItem {
   instructions: string;
   schedule: string;
   active: boolean;
+  /** Data de término (YYYY-MM-DD) quando temporário; ausente = contínuo. */
+  ends_at?: string;
+  /** Carência (min) após o horário antes de avisar a família em segredo. */
+  tolerance_minutes: number;
+  /** Orientação para dose atrasada, definida pelo responsável. */
+  late_dose_policy: LateDosePolicy;
 }
+
+/**
+ * Orientação do responsável para quando o idoso passa do horário. O bot relata
+ * ao idoso deixando claro que é recomendação do responsável, não médica.
+ * Espelha bot.LateDosePolicy.
+ */
+export type LateDosePolicy =
+  | "consult_doctor"
+  | "skip"
+  | "take_keep_next"
+  | "take_recalculate";
 
 /** Espelha o envelope de GET .../medications. */
 export interface MedicationsResponse {
@@ -413,6 +430,28 @@ export interface CreateMedicationBody {
   times: string[]; // "HH:MM", 1-6 itens
   frequency: MedicationFrequency;
   days?: MedicationWeekDay[]; // obrigatorio se weekly
+  /** Duração do tratamento. Ausente/continuous = contínuo (sem término). */
+  duration?: MedicationDuration;
+  /** Carência (min) antes de avisar a família. Omitido = 30 (default backend). */
+  tolerance_minutes?: number;
+  /** Orientação para dose atrasada. Omitido = consult_doctor. */
+  late_dose_policy?: LateDosePolicy;
+}
+
+/** Unidade do período relativo de um tratamento temporário. */
+export type MedicationDurationUnit = "days" | "weeks" | "months";
+
+/**
+ * Espelha api.MedicationDuration. O backend resolve isto numa data de término:
+ * - kind="continuous": sem término.
+ * - kind="period": hoje + count*unit (ex: 3 semanas).
+ * - kind="until": termina na data `until` (YYYY-MM-DD).
+ */
+export interface MedicationDuration {
+  kind: "continuous" | "period" | "until";
+  count?: number;
+  unit?: MedicationDurationUnit;
+  until?: string; // "YYYY-MM-DD"
 }
 
 // ---- Bodies dos requests ----

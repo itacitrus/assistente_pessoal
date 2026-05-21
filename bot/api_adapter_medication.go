@@ -29,41 +29,82 @@ func (a *apiAdapter) ListDependentMedications(ctx context.Context, guardianID, d
 	if !ok {
 		return nil, api.ErrNotFound
 	}
-	meds, err := a.db.ListActiveMedications(dependentID)
+	return a.listMedicationsForOwner(dependentID)
+}
+
+// ListMyMedications lista os medicamentos ativos do proprio usuario logado.
+func (a *apiAdapter) ListMyMedications(ctx context.Context, userID int64) ([]api.MedicationItem, error) {
+	return a.listMedicationsForOwner(userID)
+}
+
+// listMedicationsForOwner eh o caminho comum de listagem — autorizacao fica a
+// cargo do caller (guardiao validado, ou proprio usuario).
+func (a *apiAdapter) listMedicationsForOwner(ownerID int64) ([]api.MedicationItem, error) {
+	meds, err := a.db.ListActiveMedications(ownerID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]api.MedicationItem, 0, len(meds))
-	for _, m := range meds {
-		out = append(out, api.MedicationItem{
-			ID:           m.ID,
-			Name:         m.Name,
-			Dose:         m.Dose,
-			Instructions: m.Instructions,
-			Schedule:     a.describeMedicationSchedule(m.ID),
-			Active:       m.Active,
-		})
+	for i := range meds {
+		out = append(out, a.buildMedicationItem(&meds[i]))
 	}
 	return out, nil
 }
 
-// describeMedicationSchedule monta o texto humano juntando todos os schedules
-// do medicamento (best-effort — fallback pra string vazia se nao ha schedule).
-func (a *apiAdapter) describeMedicationSchedule(medID int64) string {
-	scheds, err := a.db.ListSchedulesForMedication(medID)
-	if err != nil || len(scheds) == 0 {
-		return ""
+// buildMedicationItem monta a forma publica do medicamento, lendo os schedules
+// pra compor o texto humano e a data de termino (quando temporario).
+func (a *apiAdapter) buildMedicationItem(m *Medication) api.MedicationItem {
+	scheds, err := a.db.ListSchedulesForMedication(m.ID)
+	if err != nil {
+		scheds = nil
+	}
+	text, endsAt := summarizeSchedules(scheds)
+	return api.MedicationItem{
+		ID:               m.ID,
+		Name:             m.Name,
+		Dose:             m.Dose,
+		Instructions:     m.Instructions,
+		Schedule:         text,
+		Active:           m.Active,
+		EndsAt:           endsAt,
+		ToleranceMinutes: m.ToleranceMinutes,
+		LateDosePolicy:   string(m.LateDosePolicy),
+	}
+}
+
+// summarizeSchedules junta os schedules num texto PT-BR e calcula a data de
+// termino do tratamento. Se QUALQUER schedule eh continuo (sem end_date), o
+// medicamento eh tratado como continuo (sem ends_at) — o termino so existe
+// quando todos os schedules terminam. ends_at usa a maior data (YYYY-MM-DD).
+func summarizeSchedules(scheds []MedicationSchedule) (text string, endsAt *string) {
+	if len(scheds) == 0 {
+		return "", nil
 	}
 	parts := make([]string, 0, len(scheds))
+	var maxEnd *time.Time
+	anyContinuous := false
 	for _, s := range scheds {
 		parts = append(parts, capitalizeFirst(DescribeRRULE(s.RRULE)))
+		if s.EndDate == nil {
+			anyContinuous = true
+			continue
+		}
+		if maxEnd == nil || s.EndDate.After(*maxEnd) {
+			e := *s.EndDate
+			maxEnd = &e
+		}
 	}
-	return strings.Join(parts, "; ")
+	text = strings.Join(parts, "; ")
+	if !anyContinuous && maxEnd != nil {
+		iso := maxEnd.Format("2006-01-02")
+		endsAt = &iso
+		text = fmt.Sprintf("%s · até %s", text, maxEnd.Format("02/01/2006"))
+	}
+	return text, endsAt
 }
 
 // CreateDependentMedication cria o medicamento (dono=dependente, criado pelo
-// guardiao) + 1 schedule com a RRULE montada a partir de times/frequency/days.
-// Audita medication_created no contexto do guardiao.
+// guardiao) + 1 schedule. Audita medication_created no contexto do guardiao.
 func (a *apiAdapter) CreateDependentMedication(ctx context.Context, guardianID, dependentID int64, in api.CreateMedicationRequest) (*api.MedicationItem, error) {
 	ok, err := a.db.IsGuardianOf(guardianID, dependentID)
 	if err != nil {
@@ -72,18 +113,58 @@ func (a *apiAdapter) CreateDependentMedication(ctx context.Context, guardianID, 
 	if !ok {
 		return nil, api.ErrNotFound
 	}
+	item, err := a.createMedicationForOwner(dependentID, guardianID, in)
+	if err != nil {
+		return nil, err
+	}
+	if a.audit != nil {
+		_ = a.audit.Log(guardianID, "medication_created", item.Name,
+			fmt.Sprintf("dependent_id=%d|medication_id=%d", dependentID, item.ID))
+	}
+	return item, nil
+}
 
+// CreateMyMedication cria um medicamento do proprio usuario logado (dono ==
+// criador). Mesmo motor de lembrete/escalacao dos dependentes — sem guardiao,
+// a escalacao apenas insiste e marca missed (vide escalateToFamily).
+func (a *apiAdapter) CreateMyMedication(ctx context.Context, userID int64, in api.CreateMedicationRequest) (*api.MedicationItem, error) {
+	item, err := a.createMedicationForOwner(userID, userID, in)
+	if err != nil {
+		return nil, err
+	}
+	if a.audit != nil {
+		_ = a.audit.Log(userID, "medication_created", item.Name,
+			fmt.Sprintf("self=true|medication_id=%d", item.ID))
+	}
+	return item, nil
+}
+
+// createMedicationForOwner eh o caminho comum: monta a RRULE + resolve a data
+// de termino (duracao) + persiste medicamento e schedule. Autorizacao fica a
+// cargo do caller. start = agora no fuso BRT (dia de inicio do tratamento).
+func (a *apiAdapter) createMedicationForOwner(ownerID, createdByID int64, in api.CreateMedicationRequest) (*api.MedicationItem, error) {
 	rrule, err := buildMedicationRRULE(in.Times, in.Frequency, in.Days)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", api.ErrValidation, err)
 	}
+	start := time.Now().In(BRT())
+	endDate, err := resolveMedicationEndDate(start, in.Duration)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", api.ErrValidation, err)
+	}
 
+	policy, err := ValidateLateDosePolicy(strings.TrimSpace(in.LateDosePolicy))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", api.ErrValidation, err)
+	}
 	med := &Medication{
-		UserID:          dependentID,
-		Name:            strings.TrimSpace(in.Name),
-		Dose:            strings.TrimSpace(in.Dose),
-		Instructions:    strings.TrimSpace(in.Instructions),
-		CreatedByUserID: guardianID,
+		UserID:           ownerID,
+		Name:             strings.TrimSpace(in.Name),
+		Dose:             strings.TrimSpace(in.Dose),
+		Instructions:     strings.TrimSpace(in.Instructions),
+		CreatedByUserID:  createdByID,
+		ToleranceMinutes: in.ToleranceMinutes,
+		LateDosePolicy:   policy,
 	}
 	if err := a.db.CreateMedication(med); err != nil {
 		return nil, fmt.Errorf("create medication: %w", err)
@@ -91,25 +172,68 @@ func (a *apiAdapter) CreateDependentMedication(ctx context.Context, guardianID, 
 	sched := &MedicationSchedule{
 		MedicationID: med.ID,
 		RRULE:        rrule,
-		StartDate:    time.Now().In(BRT()),
+		StartDate:    start,
+		EndDate:      endDate,
 	}
 	if err := a.db.CreateMedicationSchedule(sched); err != nil {
 		return nil, fmt.Errorf("create medication schedule: %w", err)
 	}
+	med.Active = true
+	item := a.buildMedicationItem(med)
+	return &item, nil
+}
 
-	if a.audit != nil {
-		_ = a.audit.Log(guardianID, "medication_created", med.Name,
-			fmt.Sprintf("dependent_id=%d|medication_id=%d|rrule=%s", dependentID, med.ID, rrule))
+// resolveMedicationEndDate converte a duracao informada na data de termino
+// (end_date do schedule). nil = tratamento continuo. As semanticas de periodo
+// sao INCLUSIVAS: "por 3 dias" cobre hoje + 2 dias; o ExpandOccurrences soma
+// 24h ao end_date pra incluir o ultimo dia inteiro.
+func resolveMedicationEndDate(start time.Time, d *api.MedicationDuration) (*time.Time, error) {
+	if d == nil {
+		return nil, nil
 	}
+	loc := start.Location()
+	startDay := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, loc)
 
-	return &api.MedicationItem{
-		ID:           med.ID,
-		Name:         med.Name,
-		Dose:         med.Dose,
-		Instructions: med.Instructions,
-		Schedule:     capitalizeFirst(DescribeRRULE(rrule)),
-		Active:       true,
-	}, nil
+	switch strings.ToLower(strings.TrimSpace(d.Kind)) {
+	case "", "continuous":
+		return nil, nil
+	case "period":
+		if d.Count < 1 {
+			return nil, fmt.Errorf("informe um número de dias/semanas/meses maior que zero")
+		}
+		var end time.Time
+		switch strings.ToLower(strings.TrimSpace(d.Unit)) {
+		case "days":
+			if d.Count > 365 {
+				return nil, fmt.Errorf("duração máxima de 365 dias")
+			}
+			end = startDay.AddDate(0, 0, d.Count-1)
+		case "weeks":
+			if d.Count > 52 {
+				return nil, fmt.Errorf("duração máxima de 52 semanas")
+			}
+			end = startDay.AddDate(0, 0, d.Count*7-1)
+		case "months":
+			if d.Count > 24 {
+				return nil, fmt.Errorf("duração máxima de 24 meses")
+			}
+			end = startDay.AddDate(0, d.Count, 0).AddDate(0, 0, -1)
+		default:
+			return nil, fmt.Errorf("unidade de duração inválida: use days, weeks ou months")
+		}
+		return &end, nil
+	case "until":
+		end, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(d.Until), loc)
+		if err != nil {
+			return nil, fmt.Errorf("data de término inválida (use AAAA-MM-DD)")
+		}
+		if end.Before(startDay) {
+			return nil, fmt.Errorf("a data de término precisa ser hoje ou no futuro")
+		}
+		return &end, nil
+	default:
+		return nil, fmt.Errorf("tipo de duração inválido")
+	}
 }
 
 // DeactivateDependentMedication faz soft-delete do medicamento, validando que
@@ -136,6 +260,27 @@ func (a *apiAdapter) DeactivateDependentMedication(ctx context.Context, guardian
 	if a.audit != nil {
 		_ = a.audit.Log(guardianID, "medication_canceled", med.Name,
 			fmt.Sprintf("dependent_id=%d|medication_id=%d", dependentID, medID))
+	}
+	return nil
+}
+
+// DeactivateMyMedication faz soft-delete de um medicamento do proprio usuario,
+// validando que o medicamento pertence a ele (nao vaza existencia de remedio
+// alheio).
+func (a *apiAdapter) DeactivateMyMedication(ctx context.Context, userID, medID int64) error {
+	med, err := a.db.GetMedicationByID(medID)
+	if err != nil {
+		return api.ErrNotFound
+	}
+	if med.UserID != userID {
+		return api.ErrNotFound
+	}
+	if err := a.db.DeactivateMedication(medID); err != nil {
+		return err
+	}
+	if a.audit != nil {
+		_ = a.audit.Log(userID, "medication_canceled", med.Name,
+			fmt.Sprintf("self=true|medication_id=%d", medID))
 	}
 	return nil
 }

@@ -698,6 +698,54 @@ func (s *fakeStore) DeactivateDependentMedication(_ context.Context, guardianID,
 	return ErrNotFound
 }
 
+func (s *fakeStore) ListMyMedications(_ context.Context, userID int64) ([]MedicationItem, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]MedicationItem, len(s.dependentMeds[userID]))
+	copy(out, s.dependentMeds[userID])
+	return out, nil
+}
+
+func (s *fakeStore) CreateMyMedication(_ context.Context, userID int64, in CreateMedicationRequest) (*MedicationItem, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.createMedErr != nil {
+		return nil, s.createMedErr
+	}
+	if _, ok := s.users[userID]; !ok {
+		return nil, ErrNotFound
+	}
+	var endsAt *string
+	if in.Duration != nil && in.Duration.Kind == "until" && in.Duration.Until != "" {
+		u := in.Duration.Until
+		endsAt = &u
+	}
+	item := MedicationItem{
+		ID:           int64(len(s.dependentMeds[userID]) + 1),
+		Name:         in.Name,
+		Dose:         in.Dose,
+		Instructions: in.Instructions,
+		Schedule:     "Todos os dias",
+		Active:       true,
+		EndsAt:       endsAt,
+	}
+	s.dependentMeds[userID] = append(s.dependentMeds[userID], item)
+	return &item, nil
+}
+
+func (s *fakeStore) DeactivateMyMedication(_ context.Context, userID, medID int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	meds := s.dependentMeds[userID]
+	for i := range meds {
+		if meds[i].ID == medID {
+			s.dependentMeds[userID] = append(meds[:i], meds[i+1:]...)
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
 // helpers ---
 
 // joinGDKey eh chave para mapas (guardian, dependent).

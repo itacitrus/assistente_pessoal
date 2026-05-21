@@ -12,129 +12,88 @@ import (
 // EscalationEngine (Fase 3)
 // =========================================================================
 //
-// PRINCIPIO DE SEGURANCA FARMACOLOGICA (regra dura — vide plano §9):
+// PRINCIPIO DE SEGURANCA FARMACOLOGICA:
 //
-// O bot NUNCA recomenda tomar a dose atrasada nem "compensar" doses perdidas.
-// A decisao de tomar uma dose fora do horario cabe ao medico (ou em segunda
-// instancia a familia que pode contata-lo) — nunca ao bot. Algumas drogas
-// tem janela curta de seguranca (paracetamol+ibuprofeno, anticoagulantes,
-// anti-hipertensivos como Losartana, hipoglicemiantes); dose dupla acidental
-// pode causar dano serio.
+// Por padrao (late_dose_policy='consult_doctor') o bot NAO recomenda tomar a
+// dose atrasada nem "compensar" — a decisao cabe ao medico. Algumas drogas tem
+// janela curta de seguranca (paracetamol+ibuprofeno, anticoagulantes,
+// anti-hipertensivos, hipoglicemiantes) e dose dupla acidental pode dar dano.
 //
-// Consequencias praticas — todas codificadas em insistMsg/finalFamilyMsg:
+// EXCECAO (Fase 3.1): quando o RESPONSAVEL configura uma late_dose_policy
+// explicita no medicamento, o bot RELATA essa orientacao ao idoso deixando
+// claro que eh "recomendacao do responsavel, nao orientacao medica". O bot
+// nunca age sozinho — quem decide tomar/pular eh sempre o idoso. Essa parte
+// vive no chat livre (system prompt da persona) e nas tools, NAO neste motor.
 //
-//   1. Mensagens de escalacao NAO contem "ainda da tempo", "tome agora",
-//      "compense a dose", "nao esqueca de tomar". Tom neutro/cuidadoso.
-//   2. Mensagem final (attempt = MaxAttempts) explicita "vou anotar como
-//      nao tomada" e encaminha pra medico/familia.
-//   3. Mensagem ao guardian explicita "anotei como dose nao tomada" e diz
-//      textualmente que o bot "nao oriento" sobre compensacao.
-//   4. Quando idoso responde "tomei agora, atrasado" (cf. tool
-//      marcar_remedio_tomado), o bot registra `taken` mas resposta eh
-//      neutra — "anotado" — sem reforco positivo. Vive no system prompt
-//      da persona companion (Fase 4) para o caso conversacional.
+// Este motor (escalacao automatica) segue regras de comunicacao:
+//   1. Mensagens ao idoso NUNCA contem "ainda da tempo", "tome agora",
+//      "compense a dose". Tom neutro/cuidadoso. (TestEscalationMessages_*)
+//   2. Cadencia dirigida pela TOLERANCIA do medicamento: deadline =
+//      scheduled_at + tolerance_minutes. Antes do deadline, no maximo UM
+//      lembrete gentil (no horario que o idoso disse, se adiou; senao no meio
+//      da janela). Sem cobranca repetida — evita parecer ansioso.
+//   3. A familia eh avisada EM SEGREDO no deadline. As mensagens ao idoso
+//      NUNCA mencionam que a familia sera/foi avisada (nada de "ameaca").
+//   4. A mensagem ao guardian eh VERDADEIRA: reflete se o idoso adiou (e pra
+//      quando) em vez de afirmar falsamente "nao respondeu".
 //
-// Como adicionar politica nova:
-//   1. Adicione entrada em escalationPolicies (map abaixo).
-//   2. Defina MaxAttempts/Interval/EscalateTo/EscalationMsg.
-//   3. Reuse insistMsg/finalFamilyMsg ou escreva novas, respeitando o
-//      principio acima (regex de TestEscalationMessages_DoNotPushLateDose
-//      vai pegar mensagem que viole).
-//
-// Engine eh stateless: toda decisao deriva de estado em DB. Restart no
-// meio do fluxo retoma do attempt persistido em pending_confirmations.
+// Engine eh stateless: toda decisao deriva de estado em DB. Restart no meio
+// do fluxo retoma do estado persistido em pending_confirmations.
 
 // escalationPolicies eh o registry global. Politica como dado: chave =
-// nome usado em pending_confirmations.escalation_policy.
+// nome usado em pending_confirmations.escalation_policy. EscalateTo define
+// quem recebe ao expirar a tolerancia.
 var escalationPolicies = map[string]EscalationPolicy{
 	"medication_default": {
 		Name:        "medication_default",
-		MaxAttempts: 3,
+		MaxAttempts: 1,
 		Interval:    5 * time.Minute,
 		EscalateTo:  EscalateToFamily,
-		EscalationMsg: func(ec EscalationContext) string {
-			if ec.IsFinalEscalation {
-				return finalFamilyMsg(ec)
-			}
-			// Ultima tentativa ao proprio user antes da escalacao a familia:
-			// mensagem "vou anotar". Como MaxAttempts varia por politica, usamos
-			// AttemptNumber pra detectar (vide note no engine — o engine passa
-			// AttemptNumber == MaxAttempts no ultimo handle do usuario).
-			if ec.AttemptNumber >= 3 {
-				return lastUserMsg(ec)
-			}
-			return insistMsg(ec)
-		},
 	},
 	"medication_critical": {
 		Name:        "medication_critical",
-		MaxAttempts: 5,
+		MaxAttempts: 1,
 		Interval:    3 * time.Minute,
 		EscalateTo:  EscalateToFamily,
-		EscalationMsg: func(ec EscalationContext) string {
-			if ec.IsFinalEscalation {
-				return finalFamilyMsg(ec)
-			}
-			if ec.AttemptNumber >= 5 {
-				return lastUserMsg(ec)
-			}
-			return insistMsg(ec)
-		},
 	},
 }
 
-// insistMsg gera tom progressivamente mais cuidadoso conforme attempt sobe.
-// Vide regra dura no topo do arquivo: NUNCA orientar dose tardia.
-//
-// Esta funcao trata as tentativas 1..N-1 (intermediarias). A ultima tentativa
-// (attempt==MaxAttempts) usa lastUserMsg (com "vou anotar"). A mensagem ao
-// guardian pos-escalacao usa finalFamilyMsg.
-func insistMsg(ec EscalationContext) string {
+// gentleNudgeMsg eh o UNICO lembrete gentil dentro da janela de tolerancia.
+// Tom leve, sem pressa, sem mencionar familia, sem orientar dose atrasada.
+func gentleNudgeMsg(ec EscalationContext) string {
 	name := firstName(ec.User.Name)
 	medName := "o remédio"
 	if ec.Medication != nil {
 		medName = ec.Medication.Name
 	}
-	switch ec.AttemptNumber {
-	case 1:
-		return fmt.Sprintf("Hora do %s, %s. Me avisa quando tomar, sem pressa.", medName, name)
-	case 2:
-		return fmt.Sprintf("%s, tudo bem por aí? Me avisa quando puder.", name)
-	case 3:
-		return fmt.Sprintf("%s, ainda não tive notícia sobre o %s. Aconteceu alguma coisa? Estou aqui.", name, medName)
-	case 4:
-		return fmt.Sprintf("%s, fiquei pensando em você. Me avisa quando puder, mesmo que só um \"oi\".", name)
-	}
-	return fmt.Sprintf("%s, está tudo bem por aí?", name)
+	return fmt.Sprintf("%s, passando pra lembrar do %s. Sem pressa — me avisa quando tomar.", name, medName)
 }
 
-// lastUserMsg eh enviada no AttemptNumber == MaxAttempts: avisa que vai
-// anotar como nao tomada e — explicitamente — NAO orienta tomar atrasado.
-// Usada por todas as politicas que marcam essa mesma fronteira.
-func lastUserMsg(ec EscalationContext) string {
-	name := firstName(ec.User.Name)
-	return fmt.Sprintf(
-		"%s, vou anotar essa dose como não tomada e avisar a família. "+
-			"Por segurança, não oriento sobre dose atrasada — se for o caso, fale com seu médico ou família antes.",
-		name,
-	)
-}
-
-// finalFamilyMsg eh a mensagem ao guardian quando escala. Tom sobrio,
-// factual; deixa a decisao clinica com a familia/medico, nao sugere acao
-// especifica.
-func finalFamilyMsg(ec EscalationContext) string {
+// familyMissMsg eh a mensagem SECRETA ao guardian quando a tolerancia expira
+// sem confirmacao. Verdadeira: reflete se o idoso adiou (e pra quando). Tom
+// sobrio; deixa a decisao clinica com a familia/medico. NUNCA afirma "nao
+// respondeu" — so afirma o que sabemos: nao houve confirmacao da toma.
+func familyMissMsg(ec EscalationContext) string {
 	elderName := firstName(ec.User.Name)
 	medName := "o remédio"
 	if ec.Medication != nil {
 		medName = ec.Medication.Name
 	}
 	timeStr := ec.ScheduledAt.In(BRT()).Format("15h")
+	if ec.DeferredUntil != nil {
+		deferStr := ec.DeferredUntil.In(BRT()).Format("15h04")
+		return fmt.Sprintf(
+			"Oi. %s disse que tomaria %s das %s mais tarde (por volta das %s), mas até agora não confirmei a toma. "+
+				"Anotei como não confirmada. Se achar melhor, vale dar uma olhada e, se precisar, conferir com o médico — "+
+				"eu não oriento sobre dose atrasada por segurança.",
+			elderName, medName, timeStr, deferStr,
+		)
+	}
 	return fmt.Sprintf(
-		"Oi. %s não confirmou que tomou %s das %s e não respondeu após várias tentativas. "+
-			"Anotei como dose não tomada. Vale falar com %s e, se necessário, conferir com o médico "+
-			"se essa dose deve ou não ser compensada — eu não oriento isso por segurança.",
-		elderName, medName, timeStr, elderName,
+		"Oi. Ainda não confirmei que %s tomou %s das %s. Anotei como não confirmada. "+
+			"Se achar melhor, vale dar uma olhada e, se precisar, conferir com o médico — "+
+			"eu não oriento sobre dose atrasada por segurança.",
+		elderName, medName, timeStr,
 	)
 }
 
@@ -175,11 +134,6 @@ func (e *EscalationEngine) HandlePending(now time.Time, pc *PendingConfirmation)
 		return
 	}
 
-	// Janela de intervalo: ja tentamos? esperou tempo suficiente?
-	if pc.LastAttemptAt != nil && now.Sub(*pc.LastAttemptAt) < pol.Interval {
-		return
-	}
-
 	user, err := e.db.GetUserByID(pc.UserID)
 	if err != nil {
 		log.Printf("escalation pc %d: user lookup: %v", pc.ID, err)
@@ -197,45 +151,59 @@ func (e *EscalationEngine) HandlePending(now time.Time, pc *PendingConfirmation)
 		}
 	}
 
-	nextAttempt := pc.AttemptNumber + 1
-	exhausted := nextAttempt > pol.MaxAttempts
+	scheduledAt := medScheduledAt(pc)
+	tolerance := DefaultToleranceMinutes
+	if med != nil && med.ToleranceMinutes > 0 {
+		tolerance = med.ToleranceMinutes
+	}
+	deadline := scheduledAt.Add(time.Duration(tolerance) * time.Minute)
 
-	if exhausted {
+	// Deadline da tolerancia: a familia eh avisada em segredo, e a dose vai
+	// pra 'nao confirmada'. A familia NUNCA eh avisada antes disto.
+	if !now.Before(deadline) {
 		switch pol.EscalateTo {
 		case EscalateToFamily:
-			e.escalateToFamily(now, pc, user, med, pol)
+			e.escalateToFamily(now, pc, user, med)
 		default:
-			// EscalateToSelfOnly ou EscalateToNone e atingiu o teto.
 			e.markMissedAndResolve(pc)
 		}
 		return
 	}
 
-	// Insistencia ao proprio user.
-	ec := EscalationContext{
-		User:          user,
-		Medication:    med,
-		ScheduledAt:   medScheduledAt(pc),
-		AttemptNumber: nextAttempt,
-		Recipient:     user,
+	// Dentro da janela de tolerancia: no maximo UM lembrete gentil.
+	if pc.AttemptNumber >= 1 {
+		return // ja cutucamos uma vez; silencio ate o deadline
 	}
-	msg := pol.EscalationMsg(ec)
 
-	if err := e.notifier.Send(context.Background(), user, msg); err != nil {
-		log.Printf("escalation pc %d: notifier failed: %v", pc.ID, err)
-		// Nao bumpa attempt — proxima rodada tenta de novo. Permite
-		// recovery em queda momentanea do canal de envio.
+	// Quando cutucar: no horario que o idoso disse (se adiou), senao no meio
+	// da janela de tolerancia. Evita cobrar logo de cara e parecer ansioso.
+	nudgeAt := scheduledAt.Add(time.Duration(tolerance) * time.Minute / 2)
+	if pc.DeferredUntil != nil {
+		nudgeAt = *pc.DeferredUntil
+	}
+	if now.Before(nudgeAt) {
 		return
 	}
 
-	if err := e.db.RecordEscalationAttempt(pc.ID, pol.Name, nextAttempt, user.ID, e.notifier.Channel(), now); err != nil {
-		// UNIQUE = ja registrou, ok. Outros = log e segue (nao reverte
-		// envio, ja foi).
+	ec := EscalationContext{
+		User:          user,
+		Medication:    med,
+		ScheduledAt:   scheduledAt,
+		Recipient:     user,
+		DeferredUntil: pc.DeferredUntil,
+	}
+	if err := e.notifier.Send(context.Background(), user, gentleNudgeMsg(ec)); err != nil {
+		log.Printf("escalation pc %d: notifier failed: %v", pc.ID, err)
+		// Nao bumpa attempt — proxima rodada tenta de novo. Recovery em
+		// queda momentanea do canal de envio.
+		return
+	}
+	if err := e.db.RecordEscalationAttempt(pc.ID, pol.Name, 1, user.ID, e.notifier.Channel(), now); err != nil {
 		if !errors.Is(err, ErrIntakeLogDuplicate) {
 			log.Printf("escalation pc %d: record attempt: %v", pc.ID, err)
 		}
 	}
-	if err := e.db.UpdatePendingAttempt(pc.ID, nextAttempt, now); err != nil {
+	if err := e.db.UpdatePendingAttempt(pc.ID, 1, now); err != nil {
 		log.Printf("escalation pc %d: update pending: %v", pc.ID, err)
 	}
 }
@@ -248,7 +216,7 @@ func (e *EscalationEngine) HandlePending(now time.Time, pc *PendingConfirmation)
 //
 // Cada guardian eh uma row separada em escalations (UNIQUE pega duplicidade).
 // Falha de envio individual nao impede tentativa pra outros guardians.
-func (e *EscalationEngine) escalateToFamily(now time.Time, pc *PendingConfirmation, user *User, med *Medication, pol EscalationPolicy) {
+func (e *EscalationEngine) escalateToFamily(now time.Time, pc *PendingConfirmation, user *User, med *Medication) {
 	guardians, err := e.db.ListGuardiansForUser(user.ID, "notify_on_medication_miss")
 	if err != nil {
 		log.Printf("escalation pc %d: list guardians: %v", pc.ID, err)
@@ -261,23 +229,26 @@ func (e *EscalationEngine) escalateToFamily(now time.Time, pc *PendingConfirmati
 	}
 
 	scheduledAt := medScheduledAt(pc)
-	finalAttempt := pc.AttemptNumber + 1
+	const familyAttempt = 2 // 1 = lembrete gentil ao idoso; 2 = aviso a familia
+	policyName := "medication_default"
+	if pc.EscalationPolicy != nil {
+		policyName = *pc.EscalationPolicy
+	}
 	for i := range guardians {
 		g := guardians[i]
 		ec := EscalationContext{
-			User:              user,
-			Medication:        med,
-			ScheduledAt:       scheduledAt,
-			AttemptNumber:     finalAttempt,
-			Recipient:         &g,
-			IsFinalEscalation: true,
+			User:          user,
+			Medication:    med,
+			ScheduledAt:   scheduledAt,
+			Recipient:     &g,
+			DeferredUntil: pc.DeferredUntil,
 		}
-		msg := pol.EscalationMsg(ec)
+		msg := familyMissMsg(ec)
 		if err := e.notifier.Send(context.Background(), &g, msg); err != nil {
 			log.Printf("escalation pc %d: notify guardian %d: %v", pc.ID, g.ID, err)
 			continue
 		}
-		if err := e.db.RecordEscalationAttempt(pc.ID, pol.Name, finalAttempt, g.ID, e.notifier.Channel(), now); err != nil {
+		if err := e.db.RecordEscalationAttempt(pc.ID, policyName, familyAttempt, g.ID, e.notifier.Channel(), now); err != nil {
 			if !errors.Is(err, ErrIntakeLogDuplicate) {
 				log.Printf("escalation pc %d: record family attempt: %v", pc.ID, err)
 			}

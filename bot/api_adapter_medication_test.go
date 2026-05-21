@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/giovannirambo/assistente_pessoal/bot/api"
 )
@@ -204,5 +205,128 @@ func TestActivityHistory_FiltersAndOrders(t *testing.T) {
 	}
 	if items[0].Action != "medication_taken" {
 		t.Fatalf("first = %q, want medication_taken (desc)", items[0].Action)
+	}
+}
+
+// startFixed eh um dia de inicio estavel em BRT pra deterministica.
+func startFixedMed() time.Time {
+	return time.Date(2026, 6, 1, 9, 0, 0, 0, BRT()) // 01/06/2026 09:00
+}
+
+func TestResolveMedicationEndDate_Continuous(t *testing.T) {
+	for i, d := range []*api.MedicationDuration{nil, {Kind: "continuous"}, {Kind: ""}} {
+		got, err := resolveMedicationEndDate(startFixedMed(), d)
+		if err != nil {
+			t.Fatalf("case %d: unexpected err: %v", i, err)
+		}
+		if got != nil {
+			t.Fatalf("case %d: expected nil end (continuous), got %v", i, got)
+		}
+	}
+}
+
+func TestResolveMedicationEndDate_Period(t *testing.T) {
+	tests := []struct {
+		name, unit, want string
+		count            int
+	}{
+		{"3 dias", "days", "2026-06-03", 3},
+		{"1 dia", "days", "2026-06-01", 1},
+		{"3 semanas", "weeks", "2026-06-21", 3},
+		{"1 mes", "months", "2026-06-30", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveMedicationEndDate(startFixedMed(), &api.MedicationDuration{
+				Kind: "period", Count: tt.count, Unit: tt.unit,
+			})
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			if got == nil || got.Format("2006-01-02") != tt.want {
+				t.Fatalf("end = %v, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveMedicationEndDate_Invalid(t *testing.T) {
+	bad := []*api.MedicationDuration{
+		{Kind: "period", Count: 0, Unit: "days"},
+		{Kind: "period", Count: 3, Unit: "anos"},
+		{Kind: "period", Count: 400, Unit: "days"},
+		{Kind: "until", Until: "2026-05-30"}, // passado
+		{Kind: "until", Until: "xx"},         // formato invalido
+		{Kind: "qualquer"},                   // kind desconhecido
+	}
+	for i, d := range bad {
+		if _, err := resolveMedicationEndDate(startFixedMed(), d); err == nil {
+			t.Fatalf("case %d: expected error, got nil", i)
+		}
+	}
+}
+
+func TestCreateAndListMyMedication_Temporary(t *testing.T) {
+	a, db, _ := mkAdapter(t)
+	u := mkUsers(t, db, "Giovanni")[0]
+
+	// Tratamento por 3 semanas a partir de hoje.
+	item, err := a.CreateMyMedication(context.Background(), u.ID, api.CreateMedicationRequest{
+		Name: "Amoxicilina", Dose: "500mg", Times: []string{"08:00", "20:00"},
+		Frequency: "daily",
+		Duration:  &api.MedicationDuration{Kind: "period", Count: 3, Unit: "weeks"},
+	})
+	if err != nil {
+		t.Fatalf("CreateMyMedication: %v", err)
+	}
+	if item.EndsAt == nil {
+		t.Fatalf("expected ends_at on temporary medication, got nil")
+	}
+	if !strings.Contains(item.Schedule, "até") {
+		t.Fatalf("schedule should mention término: %q", item.Schedule)
+	}
+
+	// Continuo: sem ends_at.
+	cont, err := a.CreateMyMedication(context.Background(), u.ID, api.CreateMedicationRequest{
+		Name: "Losartana", Dose: "50mg", Times: []string{"08:00"}, Frequency: "daily",
+	})
+	if err != nil {
+		t.Fatalf("create continuous: %v", err)
+	}
+	if cont.EndsAt != nil {
+		t.Fatalf("continuous med should have nil ends_at, got %v", *cont.EndsAt)
+	}
+
+	list, err := a.ListMyMedications(context.Background(), u.ID)
+	if err != nil {
+		t.Fatalf("ListMyMedications: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected 2 meds, got %d", len(list))
+	}
+}
+
+func TestDeactivateMyMedication_OnlyOwner(t *testing.T) {
+	a, db, _ := mkAdapter(t)
+	users := mkUsers(t, db, "Dono", "Outro")
+	owner, other := users[0], users[1]
+
+	item, err := a.CreateMyMedication(context.Background(), owner.ID, api.CreateMedicationRequest{
+		Name: "X", Times: []string{"08:00"}, Frequency: "daily",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Outro usuario nao pode desativar o remedio do dono.
+	if err := a.DeactivateMyMedication(context.Background(), other.ID, item.ID); !errors.Is(err, api.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for non-owner, got %v", err)
+	}
+	// Dono desativa normalmente.
+	if err := a.DeactivateMyMedication(context.Background(), owner.ID, item.ID); err != nil {
+		t.Fatalf("owner deactivate: %v", err)
+	}
+	list, _ := a.ListMyMedications(context.Background(), owner.ID)
+	if len(list) != 0 {
+		t.Fatalf("expected 0 active after deactivate, got %d", len(list))
 	}
 }

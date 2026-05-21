@@ -36,13 +36,15 @@ type IntentData struct {
 //   2. Lembrete da hora:   Reminder=true. Campos MedicationID/ScheduledAt.
 type MedicationIntent struct {
 	// Para "criar cadastro de medicacao" pendente de confirmacao:
-	Name          string `json:"name,omitempty"`
-	Dose          string `json:"dose,omitempty"`
-	Instructions  string `json:"instructions,omitempty"`
-	ScheduleRRULE string `json:"schedule_rrule,omitempty"`
-	StartDate     string `json:"start_date,omitempty"`
-	EndDate       string `json:"end_date,omitempty"`
-	Critical      bool   `json:"critical,omitempty"`
+	Name             string `json:"name,omitempty"`
+	Dose             string `json:"dose,omitempty"`
+	Instructions     string `json:"instructions,omitempty"`
+	ScheduleRRULE    string `json:"schedule_rrule,omitempty"`
+	StartDate        string `json:"start_date,omitempty"`
+	EndDate          string `json:"end_date,omitempty"`
+	Critical         bool   `json:"critical,omitempty"`
+	ToleranceMinutes int    `json:"tolerance_minutes,omitempty"`
+	LateDosePolicy   string `json:"late_dose_policy,omitempty"`
 
 	// Para "lembrete de tomada" pendente de confirmacao:
 	MedicationID int64     `json:"medication_id,omitempty"`

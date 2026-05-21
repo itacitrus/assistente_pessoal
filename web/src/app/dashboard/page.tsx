@@ -116,6 +116,8 @@ export default async function DashboardHome() {
 
       <AgendaSection agenda={agenda} />
 
+      <MyMedicationsLink />
+
       <InsightsSection insights={insights} />
 
       <ProfileFactsSection facts={facts} />
@@ -607,6 +609,29 @@ function FamilyEmptyState() {
 }
 
 /* ---------------------------------------------------------------- footer */
+
+function MyMedicationsLink() {
+  return (
+    <Link
+      href="/dashboard/medicamentos"
+      className="flex items-center gap-3 rounded-lg border bg-card p-4 shadow-warm transition-shadow hover:shadow-warm-lg animate-rise"
+      style={{ animationDelay: "90ms" }}
+    >
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[--zello-emerald]/10 text-[--zello-emerald]">
+        <Pill className="h-5 w-5" aria-hidden />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="font-medium text-foreground">Meus remédios</p>
+        <p className="text-sm text-muted-foreground">
+          Cadastre seus remédios pro Zello te lembrar na hora certa.
+        </p>
+      </div>
+      <span className="text-sm text-muted-foreground" aria-hidden>
+        →
+      </span>
+    </Link>
+  );
+}
 
 function FooterLinks() {
   return (

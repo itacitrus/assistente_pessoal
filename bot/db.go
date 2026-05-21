@@ -71,6 +71,11 @@ type PendingConfirmation struct {
 	// AttemptNumber: contador (0..MaxAttempts). Decisao final (escalar pra
 	// familia) acontece quando next > MaxAttempts.
 	AttemptNumber int
+
+	// DeferredUntil: horario que o idoso disse que vai tomar ("vou tomar mais
+	// tarde, la pelas 18h40"). Usado para UM lembrete gentil naquele horario.
+	// NAO move o deadline de tolerancia. NULL = sem adiamento registrado.
+	DeferredUntil *time.Time
 }
 
 // validKinds limita os valores aceitos em pending_confirmations.kind.
@@ -489,6 +494,23 @@ func (db *DB) migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_oauth_states_expires
 			ON oauth_states(expires_at)`,
+
+		// Fase 3.1 (idosos): tolerancia e politica de dose atrasada, configuradas
+		// pelo responsavel. tolerance_minutes = janela de carencia apos o horario
+		// agendado antes de marcar "nao confirmada" e avisar a familia (em segredo).
+		// late_dose_policy = orientacao (NAO acao automatica) que o bot passa ao
+		// idoso sobre o que fazer se passar do horario. Valores validados em Go
+		// (ValidateLateDosePolicy): 'consult_doctor' (default seguro = decisao do
+		// medico), 'skip', 'take_keep_next', 'take_recalculate'.
+		`ALTER TABLE medications ADD COLUMN tolerance_minutes INTEGER NOT NULL DEFAULT 30`,
+		`ALTER TABLE medications ADD COLUMN late_dose_policy TEXT NOT NULL DEFAULT 'consult_doctor'`,
+
+		// Fase 3.1 (idosos): horario que o idoso disse que vai tomar ("vou tomar
+		// mais tarde, la pelas 18h40"). Usado para UM unico lembrete gentil no
+		// horario dito (sem cobranca repetida). NAO move o deadline de tolerancia
+		// — a familia continua sendo avisada em scheduled_at + tolerance_minutes
+		// se nao houver confirmacao. NULL = sem adiamento registrado.
+		`ALTER TABLE pending_confirmations ADD COLUMN deferred_until DATETIME`,
 	}
 	for _, stmt := range additive {
 		if _, err := db.conn.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
@@ -803,26 +825,27 @@ func (db *DB) GetPendingConfirmation(userID int64) (*PendingConfirmation, error)
 	var policy sql.NullString
 	var lastAttempt sql.NullTime
 	var attempt sql.NullInt64
+	var deferred sql.NullTime
 	err := db.conn.QueryRow(
 		`SELECT id, user_id, event_data, status, created_at,
-		        kind, escalation_policy, last_attempt_at, attempt_number
+		        kind, escalation_policy, last_attempt_at, attempt_number, deferred_until
 		 FROM pending_confirmations WHERE user_id = ? AND status = 'pending'
 		 ORDER BY created_at DESC LIMIT 1`, userID,
 	).Scan(&pc.ID, &pc.UserID, &pc.EventData, &pc.Status, &pc.CreatedAt,
-		&kind, &policy, &lastAttempt, &attempt)
+		&kind, &policy, &lastAttempt, &attempt, &deferred)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoPendingConfirmation
 	}
 	if err == nil {
-		fillPendingExtras(pc, kind, policy, lastAttempt, attempt)
+		fillPendingExtras(pc, kind, policy, lastAttempt, attempt, deferred)
 	}
 	return pc, err
 }
 
 // fillPendingExtras hidrata os campos da Fase 3 que vivem em colunas adicionais.
 // Mantido em helper pra evitar duplicacao em getters multiplos.
-func fillPendingExtras(pc *PendingConfirmation, kind, policy sql.NullString, lastAttempt sql.NullTime, attempt sql.NullInt64) {
+func fillPendingExtras(pc *PendingConfirmation, kind, policy sql.NullString, lastAttempt sql.NullTime, attempt sql.NullInt64, deferred sql.NullTime) {
 	if kind.Valid && kind.String != "" {
 		pc.Kind = kind.String
 	} else {
@@ -839,6 +862,10 @@ func fillPendingExtras(pc *PendingConfirmation, kind, policy sql.NullString, las
 	if attempt.Valid {
 		pc.AttemptNumber = int(attempt.Int64)
 	}
+	if deferred.Valid {
+		t := deferred.Time
+		pc.DeferredUntil = &t
+	}
 }
 
 func (db *DB) ResolvePendingConfirmation(id int64, status string) error {
@@ -853,7 +880,7 @@ func (db *DB) GetExpiredPendingConfirmations(userID int64, timeout time.Duration
 	// de escalacao proprio (nao auto-confirm via timeout).
 	rows, err := db.conn.Query(
 		`SELECT pc.id, pc.user_id, pc.event_data, pc.status, pc.created_at,
-		        pc.kind, pc.escalation_policy, pc.last_attempt_at, pc.attempt_number,
+		        pc.kind, pc.escalation_policy, pc.last_attempt_at, pc.attempt_number, pc.deferred_until,
 		        u.phone_number, u.name
 		 FROM pending_confirmations pc
 		 JOIN users u ON u.id = pc.user_id
@@ -871,12 +898,13 @@ func (db *DB) GetExpiredPendingConfirmations(userID int64, timeout time.Duration
 		var policy sql.NullString
 		var lastAttempt sql.NullTime
 		var attempt sql.NullInt64
+		var deferred sql.NullTime
 		if err := rows.Scan(&pc.ID, &pc.UserID, &pc.EventData, &pc.Status, &pc.CreatedAt,
-			&kind, &policy, &lastAttempt, &attempt,
+			&kind, &policy, &lastAttempt, &attempt, &deferred,
 			&pc.PhoneNumber, &pc.UserName); err != nil {
 			return nil, err
 		}
-		fillPendingExtras(&pc, kind, policy, lastAttempt, attempt)
+		fillPendingExtras(&pc, kind, policy, lastAttempt, attempt, deferred)
 		results = append(results, pc)
 	}
 	return results, rows.Err()

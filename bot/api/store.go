@@ -68,6 +68,13 @@ type Store interface {
 	CreateDependentMedication(ctx context.Context, guardianID, dependentID int64, in CreateMedicationRequest) (*MedicationItem, error)
 	DeactivateDependentMedication(ctx context.Context, guardianID, dependentID, medID int64) error
 
+	// Medicacao do proprio usuario (titular). Mesmo motor de lembrete/escalacao
+	// dos dependentes; dono == criador. Sem checagem de guardiao — eh o proprio
+	// usuario gerenciando os remedios dele.
+	ListMyMedications(ctx context.Context, userID int64) ([]MedicationItem, error)
+	CreateMyMedication(ctx context.Context, userID int64, in CreateMedicationRequest) (*MedicationItem, error)
+	DeactivateMyMedication(ctx context.Context, userID, medID int64) error
+
 	// Me / agenda ----------------------------------------------------------
 	// UpcomingEvents le o Google Calendar do proprio usuario (proximos 14d,
 	// ordenado por start asc). Retorna lista vazia se o usuario nao tem

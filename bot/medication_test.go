@@ -223,7 +223,7 @@ func TestUpdateMedicationFields(t *testing.T) {
 
 	newDose := "100mg"
 	newInstr := "com agua"
-	if err := db.UpdateMedicationFields(m.ID, nil, &newDose, &newInstr); err != nil {
+	if err := db.UpdateMedicationFields(m.ID, nil, &newDose, &newInstr, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := db.GetMedicationByID(m.ID)
@@ -232,6 +232,17 @@ func TestUpdateMedicationFields(t *testing.T) {
 	}
 	if got.Name != "X" {
 		t.Fatalf("name should not change when nil pointer")
+	}
+
+	// Atualiza tolerancia + politica.
+	newTol := 45
+	newPol := LatePolicyTakeKeepNext
+	if err := db.UpdateMedicationFields(m.ID, nil, nil, nil, &newTol, &newPol); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = db.GetMedicationByID(m.ID)
+	if got.ToleranceMinutes != 45 || got.LateDosePolicy != LatePolicyTakeKeepNext {
+		t.Fatalf("tolerance/policy update mismatch: %+v", got)
 	}
 }
 

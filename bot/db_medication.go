@@ -25,36 +25,58 @@ func (db *DB) CreateMedication(m *Medication) error {
 	if createdBy == 0 {
 		createdBy = m.UserID
 	}
+	tolerance := m.ToleranceMinutes
+	if tolerance <= 0 {
+		tolerance = DefaultToleranceMinutes
+	}
+	policy, err := ValidateLateDosePolicy(string(m.LateDosePolicy))
+	if err != nil {
+		return err
+	}
 	res, err := db.conn.Exec(
-		`INSERT INTO medications (user_id, name, dose, instructions, active, created_by_user_id)
-		 VALUES (?, ?, ?, ?, 1, ?)`,
-		m.UserID, m.Name, m.Dose, m.Instructions, createdBy)
+		`INSERT INTO medications (user_id, name, dose, instructions, active, created_by_user_id, tolerance_minutes, late_dose_policy)
+		 VALUES (?, ?, ?, ?, 1, ?, ?, ?)`,
+		m.UserID, m.Name, m.Dose, m.Instructions, createdBy, tolerance, string(policy))
 	if err != nil {
 		return fmt.Errorf("insert medication: %w", err)
 	}
 	m.ID, _ = res.LastInsertId()
 	m.Active = true
 	m.CreatedByUserID = createdBy
+	m.ToleranceMinutes = tolerance
+	m.LateDosePolicy = policy
 	return nil
 }
+
+// scanMedicationRow centraliza o scan de uma row de medications na ordem
+// canonica das colunas. Mantem GetMedicationByID e ListActiveMedications em
+// sincronia quando colunas sao adicionadas.
+func scanMedicationRow(s interface{ Scan(...any) error }, m *Medication) error {
+	var active int
+	var policy string
+	if err := s.Scan(&m.ID, &m.UserID, &m.Name, &m.Dose, &m.Instructions, &active,
+		&m.CreatedByUserID, &m.ToleranceMinutes, &policy, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		return err
+	}
+	m.Active = active != 0
+	m.LateDosePolicy = LateDosePolicy(policy)
+	return nil
+}
+
+const medicationColumns = `id, user_id, name, dose, instructions, active, created_by_user_id, tolerance_minutes, late_dose_policy, created_at, updated_at`
 
 // GetMedicationByID busca uma medicacao por id. ErrMedicationNotFound se
 // nao existe (independente de active).
 func (db *DB) GetMedicationByID(id int64) (*Medication, error) {
 	m := &Medication{}
-	var active int
-	err := db.conn.QueryRow(
-		`SELECT id, user_id, name, dose, instructions, active, created_by_user_id, created_at, updated_at
-		 FROM medications WHERE id = ?`, id,
-	).Scan(&m.ID, &m.UserID, &m.Name, &m.Dose, &m.Instructions, &active,
-		&m.CreatedByUserID, &m.CreatedAt, &m.UpdatedAt)
+	err := scanMedicationRow(db.conn.QueryRow(
+		`SELECT `+medicationColumns+` FROM medications WHERE id = ?`, id), m)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrMedicationNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get medication: %w", err)
 	}
-	m.Active = active != 0
 	return m, nil
 }
 
@@ -62,7 +84,7 @@ func (db *DB) GetMedicationByID(id int64) (*Medication, error) {
 // Ordena por nome pra UX previsivel.
 func (db *DB) ListActiveMedications(userID int64) ([]Medication, error) {
 	rows, err := db.conn.Query(
-		`SELECT id, user_id, name, dose, instructions, active, created_by_user_id, created_at, updated_at
+		`SELECT `+medicationColumns+`
 		 FROM medications WHERE user_id = ? AND active = 1
 		 ORDER BY LOWER(name) ASC`, userID)
 	if err != nil {
@@ -73,12 +95,9 @@ func (db *DB) ListActiveMedications(userID int64) ([]Medication, error) {
 	var meds []Medication
 	for rows.Next() {
 		var m Medication
-		var active int
-		if err := rows.Scan(&m.ID, &m.UserID, &m.Name, &m.Dose, &m.Instructions, &active,
-			&m.CreatedByUserID, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		if err := scanMedicationRow(rows, &m); err != nil {
 			return nil, err
 		}
-		m.Active = active != 0
 		meds = append(meds, m)
 	}
 	return meds, rows.Err()
@@ -88,7 +107,7 @@ func (db *DB) ListActiveMedications(userID int64) ([]Medication, error) {
 // ou zero (numero/bool zerado) NAO sobrescreve — caller usa apenas os campos
 // que quer mudar. Atualiza updated_at sempre. Retorna ErrMedicationNotFound
 // se id nao existe.
-func (db *DB) UpdateMedicationFields(id int64, newName, newDose, newInstructions *string) error {
+func (db *DB) UpdateMedicationFields(id int64, newName, newDose, newInstructions *string, newTolerance *int, newPolicy *LateDosePolicy) error {
 	sets := []string{"updated_at = CURRENT_TIMESTAMP"}
 	args := []any{}
 	if newName != nil {
@@ -102,6 +121,22 @@ func (db *DB) UpdateMedicationFields(id int64, newName, newDose, newInstructions
 	if newInstructions != nil {
 		sets = append(sets, "instructions = ?")
 		args = append(args, *newInstructions)
+	}
+	if newTolerance != nil {
+		t := *newTolerance
+		if t <= 0 {
+			t = DefaultToleranceMinutes
+		}
+		sets = append(sets, "tolerance_minutes = ?")
+		args = append(args, t)
+	}
+	if newPolicy != nil {
+		p, err := ValidateLateDosePolicy(string(*newPolicy))
+		if err != nil {
+			return err
+		}
+		sets = append(sets, "late_dose_policy = ?")
+		args = append(args, string(p))
 	}
 	if len(sets) == 1 {
 		// nada pra mudar — protecao contra UPDATE no-op acidental
@@ -229,6 +264,32 @@ func (db *DB) DeleteSchedulesForMedication(medID int64) error {
 	return nil
 }
 
+// RescheduleMedicationByDelta desloca os horarios de TODOS os schedules de um
+// medication por delta, permanentemente (politica take_recalculate). Preserva
+// frequencia, intervalo e dias. Retorna a descricao PT-BR do novo horario do
+// primeiro schedule (para a mensagem ao titular), ou "" se nao houver schedule.
+func (db *DB) RescheduleMedicationByDelta(medID int64, delta time.Duration) (string, error) {
+	scheds, err := db.ListSchedulesForMedication(medID)
+	if err != nil {
+		return "", err
+	}
+	var firstDesc string
+	for _, s := range scheds {
+		shifted, err := shiftRRULEHours(s.RRULE, delta)
+		if err != nil {
+			return "", fmt.Errorf("shift rrule sched %d: %w", s.ID, err)
+		}
+		if _, err := db.conn.Exec(
+			`UPDATE medication_schedules SET rrule = ? WHERE id = ?`, shifted, s.ID); err != nil {
+			return "", fmt.Errorf("update schedule rrule: %w", err)
+		}
+		if firstDesc == "" {
+			firstDesc = DescribeRRULE(shifted)
+		}
+	}
+	return firstDesc, nil
+}
+
 // =========================================================================
 // CRUD MedicationIntakeLog
 // =========================================================================
@@ -348,7 +409,7 @@ func (db *DB) ListIntakeLogsForMedication(medID int64, limit int) ([]MedicationI
 func (db *DB) GetActiveMedicationPendings() ([]PendingConfirmation, error) {
 	rows, err := db.conn.Query(
 		`SELECT pc.id, pc.user_id, pc.event_data, pc.status, pc.created_at,
-		        pc.kind, pc.escalation_policy, pc.last_attempt_at, pc.attempt_number,
+		        pc.kind, pc.escalation_policy, pc.last_attempt_at, pc.attempt_number, pc.deferred_until,
 		        u.phone_number, u.name
 		 FROM pending_confirmations pc
 		 JOIN users u ON u.id = pc.user_id
@@ -365,12 +426,13 @@ func (db *DB) GetActiveMedicationPendings() ([]PendingConfirmation, error) {
 		var policy sql.NullString
 		var lastAttempt sql.NullTime
 		var attempt sql.NullInt64
+		var deferred sql.NullTime
 		if err := rows.Scan(&pc.ID, &pc.UserID, &pc.EventData, &pc.Status, &pc.CreatedAt,
-			&kind, &policy, &lastAttempt, &attempt,
+			&kind, &policy, &lastAttempt, &attempt, &deferred,
 			&pc.PhoneNumber, &pc.UserName); err != nil {
 			return nil, err
 		}
-		fillPendingExtras(&pc, kind, policy, lastAttempt, attempt)
+		fillPendingExtras(&pc, kind, policy, lastAttempt, attempt, deferred)
 		out = append(out, pc)
 	}
 	return out, rows.Err()
@@ -383,7 +445,7 @@ func (db *DB) GetActiveMedicationPendings() ([]PendingConfirmation, error) {
 func (db *DB) GetActivePendingForUserAndMedication(userID, medID int64) (*PendingConfirmation, error) {
 	rows, err := db.conn.Query(
 		`SELECT pc.id, pc.user_id, pc.event_data, pc.status, pc.created_at,
-		        pc.kind, pc.escalation_policy, pc.last_attempt_at, pc.attempt_number
+		        pc.kind, pc.escalation_policy, pc.last_attempt_at, pc.attempt_number, pc.deferred_until
 		 FROM pending_confirmations pc
 		 WHERE pc.user_id = ? AND pc.status = 'pending' AND pc.kind = 'medication'
 		 ORDER BY pc.created_at DESC`, userID)
@@ -398,11 +460,12 @@ func (db *DB) GetActivePendingForUserAndMedication(userID, medID int64) (*Pendin
 		var policy sql.NullString
 		var lastAttempt sql.NullTime
 		var attempt sql.NullInt64
+		var deferred sql.NullTime
 		if err := rows.Scan(&pc.ID, &pc.UserID, &pc.EventData, &pc.Status, &pc.CreatedAt,
-			&kind, &policy, &lastAttempt, &attempt); err != nil {
+			&kind, &policy, &lastAttempt, &attempt, &deferred); err != nil {
 			return nil, err
 		}
-		fillPendingExtras(&pc, kind, policy, lastAttempt, attempt)
+		fillPendingExtras(&pc, kind, policy, lastAttempt, attempt, deferred)
 		// Filtra por medID olhando dentro do payload. Caller pediu "qual o
 		// pending pra esse medID" — varremos os mais recentes ate achar.
 		if medID == 0 || medMedicationID(&pc) == medID {
@@ -410,6 +473,23 @@ func (db *DB) GetActivePendingForUserAndMedication(userID, medID int64) (*Pendin
 		}
 	}
 	return nil, nil
+}
+
+// SetPendingDeferredUntil grava o horario que o idoso disse que vai tomar.
+// Usado pela tool adiar_remedio. Passar zero-time limpa o adiamento (NULL).
+func (db *DB) SetPendingDeferredUntil(pcID int64, until time.Time) error {
+	var arg any
+	if until.IsZero() {
+		arg = nil
+	} else {
+		arg = until.UTC()
+	}
+	_, err := db.conn.Exec(
+		`UPDATE pending_confirmations SET deferred_until = ? WHERE id = ?`, arg, pcID)
+	if err != nil {
+		return fmt.Errorf("set pending deferred_until: %w", err)
+	}
+	return nil
 }
 
 // UpdatePendingAttempt atualiza attempt_number e last_attempt_at. Usado pelo

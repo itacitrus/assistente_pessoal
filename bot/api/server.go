@@ -124,6 +124,14 @@ func (s *Server) Mount(mux *http.ServeMux) {
 	mux.Handle(s.route("/api/v1/me/google/connect-url"),
 		s.CORS(s.RequireOrigin(s.RequireAuth(http.HandlerFunc(s.handleMeGoogleConnect)))))
 
+	// Medicacao do proprio titular. Colecao (GET list, POST create) + recurso
+	// por id (DELETE). RequireOrigin nas mutacoes (POST/DELETE) — o GET tambem
+	// passa, sem custo (origin so eh exigido em metodos mutativos).
+	mux.Handle(s.route("/api/v1/me/medications"),
+		s.CORS(s.RequireOrigin(s.RequireAuth(http.HandlerFunc(s.handleMyMedicationsCollection)))))
+	mux.Handle(s.route("/api/v1/me/medications/"),
+		s.CORS(s.RequireOrigin(s.RequireAuth(http.HandlerFunc(s.handleMyMedicationResource)))))
+
 	// Family — colecao.
 	mux.Handle(s.route("/api/v1/family/dependents"),
 		s.CORS(s.RequireOrigin(s.RequireAuth(http.HandlerFunc(s.handleDependentsCollection)))))

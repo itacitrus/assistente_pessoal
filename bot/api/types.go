@@ -121,6 +121,15 @@ type MedicationItem struct {
 	Instructions string `json:"instructions"`
 	Schedule     string `json:"schedule"`
 	Active       bool   `json:"active"`
+	// EndsAt eh a data (YYYY-MM-DD) em que o tratamento termina, quando
+	// temporario. nil/omitido = tratamento continuo (sem data de termino).
+	// O frontend usa pra mostrar "até DD/MM" e o selo de temporario.
+	EndsAt *string `json:"ends_at,omitempty"`
+	// ToleranceMinutes: carencia apos o horario antes de avisar a familia.
+	ToleranceMinutes int `json:"tolerance_minutes"`
+	// LateDosePolicy: orientacao para dose atrasada. Um de: consult_doctor
+	// (padrao), skip, take_keep_next, take_recalculate.
+	LateDosePolicy string `json:"late_dose_policy"`
 }
 
 // MedicationsResponse eh o payload de GET /family/dependents/{id}/medications.
@@ -138,6 +147,29 @@ type CreateMedicationRequest struct {
 	Times        []string `json:"times"`
 	Frequency    string   `json:"frequency"`
 	Days         []string `json:"days,omitempty"`
+	// Duration eh opcional. nil = tratamento continuo (sem data de termino).
+	Duration *MedicationDuration `json:"duration,omitempty"`
+	// ToleranceMinutes: carencia (min) apos o horario antes de avisar a
+	// familia. 0/omitido = default do backend (30). Configurado pelo responsavel.
+	ToleranceMinutes int `json:"tolerance_minutes,omitempty"`
+	// LateDosePolicy: orientacao para dose atrasada. Vazio = consult_doctor.
+	// Aceita: consult_doctor, skip, take_keep_next, take_recalculate.
+	LateDosePolicy string `json:"late_dose_policy,omitempty"`
+}
+
+// MedicationDuration descreve por quanto tempo o tratamento dura. O backend
+// resolve isto numa data de termino (end_date do schedule):
+//   - kind="continuous": sem termino (Count/Unit/Until ignorados).
+//   - kind="period":     termina em hoje + Count*Unit (unit: days|weeks|months).
+//   - kind="until":      termina na data Until (YYYY-MM-DD).
+//
+// Coletar tanto periodo relativo ("por 3 semanas") quanto data absoluta
+// ("até 15/06") cobre as duas formas naturais de prescricao temporaria.
+type MedicationDuration struct {
+	Kind  string `json:"kind"`
+	Count int    `json:"count,omitempty"`
+	Unit  string `json:"unit,omitempty"`
+	Until string `json:"until,omitempty"`
 }
 
 // SnapshotPoint eh um ponto da timeline. Confidence < 3 ainda eh retornado

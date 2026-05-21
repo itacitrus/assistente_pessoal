@@ -9,17 +9,16 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ApiError } from "@/lib/api";
 import { deleteDependentMedication } from "@/lib/api/family";
+import { deleteMyMedication } from "@/lib/api/me";
+import type { MedicationTarget } from "@/components/forms/MedicationForm";
 import type { MedicationItem } from "@/types/api";
 
 export interface MedicationCardProps {
-  dependentId: number;
+  target: MedicationTarget;
   medication: MedicationItem;
 }
 
-export function MedicationCard({
-  dependentId,
-  medication,
-}: MedicationCardProps) {
+export function MedicationCard({ target, medication }: MedicationCardProps) {
   const router = useRouter();
   const [removing, setRemoving] = React.useState(false);
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
@@ -32,7 +31,11 @@ export function MedicationCard({
     setRemoving(true);
     setErrorMsg(null);
     try {
-      await deleteDependentMedication(dependentId, medication.id);
+      if (target.kind === "self") {
+        await deleteMyMedication(medication.id);
+      } else {
+        await deleteDependentMedication(target.dependentId, medication.id);
+      }
       router.refresh();
     } catch (err) {
       setRemoving(false);
@@ -62,6 +65,10 @@ export function MedicationCard({
               {!medication.active ? (
                 <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                   pausado
+                </span>
+              ) : medication.ends_at ? (
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                  temporário
                 </span>
               ) : null}
             </div>

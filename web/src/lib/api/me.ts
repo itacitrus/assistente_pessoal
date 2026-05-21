@@ -2,7 +2,10 @@ import { ApiError, fetchApi } from "@/lib/api";
 import type {
   ActivityResponse,
   AgendaResponse,
+  CreateMedicationBody,
   InsightsResponse,
+  MedicationItem,
+  MedicationsResponse,
   ProfileFacts,
 } from "@/types/api";
 
@@ -90,6 +93,47 @@ export async function getMyActivity(
     }
     throw err;
   }
+}
+
+/**
+ * GET /api/v1/me/medications
+ * Lista os remédios do próprio titular. `schedule` já vem como texto humano;
+ * `ends_at` presente indica tratamento temporário. Normaliza array nil -> [].
+ */
+export async function getMyMedications(
+  cookieHeader?: string,
+): Promise<MedicationsResponse> {
+  const res = await fetchApi<MedicationsResponse>("/api/v1/me/medications", {
+    method: "GET",
+    cookie: cookieHeader,
+  });
+  return { medications: res.medications ?? [] };
+}
+
+/**
+ * POST /api/v1/me/medications
+ * Cadastra um remédio do próprio titular. Mesmo body do dependente (inclui a
+ * duração opcional). Devolve 201 com o MedicationItem criado.
+ */
+export async function createMyMedication(
+  body: CreateMedicationBody,
+): Promise<MedicationItem> {
+  return fetchApi<MedicationItem>("/api/v1/me/medications", {
+    method: "POST",
+    json: body,
+  });
+}
+
+/**
+ * DELETE /api/v1/me/medications/{id}
+ * Remove (soft-delete) um remédio do próprio titular. Devolve `{ ok: true }`.
+ */
+export async function deleteMyMedication(
+  id: number,
+): Promise<{ ok: boolean }> {
+  return fetchApi<{ ok: boolean }>(`/api/v1/me/medications/${id}`, {
+    method: "DELETE",
+  });
 }
 
 /**

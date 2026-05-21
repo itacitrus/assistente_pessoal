@@ -202,6 +202,7 @@ func (a *Agent) Run(ctx context.Context, user *User, message string, images []Im
 			Text: buildSystemPromptDynamic(pendingReq),
 		},
 	}
+	systemParts = a.appendMedicationPolicyPart(systemParts, user)
 
 	response, _, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, systemParts)
 	if err != nil {
@@ -540,6 +541,25 @@ Estilo:
 // (changes every minute) plus any context that varies per request (pending
 // permission requests). Not cached — pays full tokens every call, but the
 // block is small (~100-300 tokens).
+// appendMedicationPolicyPart anexa o bloco [POLÍTICA DE DOSE ATRASADA] ao
+// system prompt quando o idoso tem medicamentos com politica configurada pelo
+// responsavel. Parte dinamica (nao cacheada) — muda quando reconfiguram. No-op
+// para nao-idosos ou quando nenhum remedio tem politica.
+func (a *Agent) appendMedicationPolicyPart(parts []anthropic.MessageSystemPart, user *User) []anthropic.MessageSystemPart {
+	if user == nil || user.Type != UserTypeIdoso {
+		return parts
+	}
+	meds, err := a.db.ListActiveMedications(user.ID)
+	if err != nil {
+		return parts
+	}
+	block := buildMedicationPolicyPrompt(meds)
+	if block == "" {
+		return parts
+	}
+	return append(parts, anthropic.MessageSystemPart{Type: "text", Text: block})
+}
+
 func buildSystemPromptDynamic(pendingReq *PermissionRequest) string {
 	now := time.Now().In(BRT()).Format("2006-01-02 15:04 (Monday)")
 	out := fmt.Sprintf("Data/hora atual: %s (fuso: America/Sao_Paulo).", now)
@@ -770,7 +790,9 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"schedule_rrule": {"type": "string", "description": "RRULE iCal. Ex: 'FREQ=DAILY;BYHOUR=8;BYMINUTE=0' (1x/dia 8h)."},
 					"start_date": {"type": "string", "description": "Data de inicio YYYY-MM-DD. Default: hoje."},
 					"end_date": {"type": "string", "description": "Data de fim YYYY-MM-DD (inclusiva). Omitir = continuo."},
-					"critical": {"type": "boolean", "description": "Se true, usa politica medication_critical (5 tentativas, 3min). Default false."}
+					"critical": {"type": "boolean", "description": "Se true, usa politica medication_critical (lembrete gentil mais cedo). Default false."},
+					"tolerance_minutes": {"type": "integer", "description": "Carencia em minutos apos o horario antes de avisar a familia em segredo. Configurado pelo responsavel. Default 30. So preencha se o responsavel pedir."},
+					"late_dose_policy": {"type": "string", "enum": ["consult_doctor", "skip", "take_keep_next", "take_recalculate"], "description": "Orientacao do responsavel se passar do horario: consult_doctor (default, decisao do medico), skip (pular), take_keep_next (tomar e manter proxima), take_recalculate (tomar e reagendar horarios). So preencha se o responsavel definir."}
 				},
 				"required": ["name", "schedule_rrule"]
 			}`),
@@ -798,7 +820,9 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"new_instructions": {"type": "string"},
 					"new_schedule_rrule": {"type": "string", "description": "RRULE substituindo todos os schedules."},
 					"new_end_date": {"type": "string", "description": "Nova data de fim YYYY-MM-DD."},
-					"new_critical": {"type": "boolean"}
+					"new_critical": {"type": "boolean"},
+					"new_tolerance_minutes": {"type": "integer", "description": "Nova carencia em minutos antes de avisar a familia. Configurado pelo responsavel."},
+					"new_late_dose_policy": {"type": "string", "enum": ["consult_doctor", "skip", "take_keep_next", "take_recalculate"], "description": "Nova orientacao para dose atrasada (vide cadastrar_medicamento)."}
 				}
 			}`),
 		},
@@ -816,11 +840,23 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 		},
 		{
 			Name:        "marcar_remedio_tomado",
-			Description: "Registra que o usuario tomou um remedio. Use SEMPRE que o usuario disser 'tomei', 'ja bebi', 'pronto, foi', em resposta a um lembrete. NUNCA chame quando o usuario disser 'vou tomar', 'daqui a pouco', 'ja ja' (eh futuro, nao confirma — apenas faca um ack textual). Se medication_id for omitido, pega o lembrete pendente atual (kind='medication').",
+			Description: "Registra que o usuario JA tomou um remedio. Use SEMPRE que o usuario disser 'tomei', 'ja bebi', 'pronto, foi', em resposta a um lembrete. Para 'vou tomar mais tarde'/'daqui a pouco'/'la pelas 18h40', use adiar_remedio (NAO esta). Se medication_id for omitido, pega o lembrete pendente atual (kind='medication').",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
 					"medication_id": {"type": "integer", "description": "Opcional. Omitir = pegar pending atual."}
+				}
+			}`),
+		},
+		{
+			Name:        "adiar_remedio",
+			Description: "Use quando o usuario disser que vai tomar o remedio MAIS TARDE (ex: 'vou tomar daqui a pouco', 'la pelas 18h40', 'ainda vou tomar, eu aviso'). Registra a intencao SEM marcar como tomado e silencia a cobranca ate o horario dito (apenas UM lembrete gentil naquele momento). Passe horario_hhmm (ex '18:40') ou daqui_minutos quando o usuario indicar quando. Se medication_id for omitido, pega o lembrete pendente atual.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"medication_id": {"type": "integer", "description": "Opcional. Omitir = pegar pending atual."},
+					"horario_hhmm": {"type": "string", "description": "Horario que o usuario disse, formato HH:MM 24h (ex: '18:40')."},
+					"daqui_minutos": {"type": "integer", "description": "Alternativa: minutos a partir de agora (ex: usuario disse 'daqui a 30 min' = 30)."}
 				}
 			}`),
 		},

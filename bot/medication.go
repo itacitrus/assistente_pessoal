@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
+	"fmt"
 	"time"
 )
 
@@ -23,9 +23,57 @@ type Medication struct {
 	Instructions    string // "tomar com agua em jejum" — texto livre
 	Active          bool
 	CreatedByUserID int64 // pode ser != UserID (responsavel cadastrou pro idoso)
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+
+	// ToleranceMinutes eh a janela de carencia (em minutos) apos o horario
+	// agendado antes de o motor marcar a dose como nao confirmada e avisar a
+	// familia em segredo. Configurada pelo responsavel. Default 30.
+	ToleranceMinutes int
+
+	// LateDosePolicy eh a orientacao (NAO acao automatica) que o bot passa ao
+	// idoso sobre o que fazer se passar do horario. Default 'consult_doctor'
+	// mantem o comportamento seguro (decisao do medico).
+	LateDosePolicy LateDosePolicy
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
+
+// LateDosePolicy enumera as orientacoes que o responsavel pode configurar para
+// dose atrasada. O bot RELATA a orientacao ao idoso deixando claro que eh
+// "recomendacao do responsavel, nao orientacao medica" — e nunca age sozinho:
+// a decisao de tomar ou pular eh sempre do idoso.
+type LateDosePolicy string
+
+const (
+	// LatePolicyConsultDoctor (default): bot nao orienta tomar/pular; remete a
+	// decisao ao medico. Comportamento seguro pre-configuracao.
+	LatePolicyConsultDoctor LateDosePolicy = "consult_doctor"
+	// LatePolicySkip: responsavel orienta pular a dose atrasada e esperar a
+	// proxima janela.
+	LatePolicySkip LateDosePolicy = "skip"
+	// LatePolicyTakeKeepNext: responsavel orienta tomar agora atrasado e manter
+	// a proxima dose no horario original.
+	LatePolicyTakeKeepNext LateDosePolicy = "take_keep_next"
+	// LatePolicyTakeRecalculate: responsavel orienta tomar agora e reagendar as
+	// proximas doses a partir do novo horario (muda o RRULE permanentemente).
+	LatePolicyTakeRecalculate LateDosePolicy = "take_recalculate"
+)
+
+// ValidateLateDosePolicy normaliza/valida a politica. String vazia vira o
+// default seguro. Valor desconhecido eh rejeitado.
+func ValidateLateDosePolicy(p string) (LateDosePolicy, error) {
+	switch LateDosePolicy(p) {
+	case "":
+		return LatePolicyConsultDoctor, nil
+	case LatePolicyConsultDoctor, LatePolicySkip, LatePolicyTakeKeepNext, LatePolicyTakeRecalculate:
+		return LateDosePolicy(p), nil
+	default:
+		return "", fmt.Errorf("late_dose_policy invalida: %q", p)
+	}
+}
+
+// DefaultToleranceMinutes eh aplicado quando o responsavel nao definiu valor.
+const DefaultToleranceMinutes = 30
 
 // MedicationSchedule eh um RRULE iCal aplicado ao medication.
 // Critical=true muda a politica de escalacao (intervalos menores, mais
@@ -105,25 +153,28 @@ const (
 	EscalateToNone EscalationTarget = "none"
 )
 
-// EscalationContext eh passado ao formatter da policy pra renderizar mensagens.
+// EscalationContext eh passado aos formatters de mensagem da escalacao.
 type EscalationContext struct {
-	User              *User       // quem deveria responder (dono do remedio)
-	Medication        *Medication // contexto opcional (pode ser nil em politicas genericas)
-	ScheduledAt       time.Time   // UTC
-	AttemptNumber     int         // 1, 2, 3...
-	Recipient         *User       // proprio user OU guardian
-	IsFinalEscalation bool        // true quando attempt > MaxAttempts e indo pra familia
+	User          *User       // quem deveria responder (dono do remedio)
+	Medication    *Medication // contexto opcional (pode ser nil em politicas genericas)
+	ScheduledAt   time.Time   // UTC
+	Recipient     *User       // proprio user OU guardian
+	DeferredUntil *time.Time  // horario que o idoso disse que tomaria (se houve adiamento)
 }
 
 // EscalationPolicy eh a abstracao "politica como dado". Politica nova =
-// nova entrada em escalationPolicies em escalation.go. Nao precisa codigo
-// novo no engine.
+// nova entrada em escalationPolicies em escalation.go.
+//
+// Fase 3.1: a cadencia passou a ser dirigida pela TOLERANCIA configurada por
+// medicamento (deadline = scheduled + tolerance_minutes), nao mais por uma
+// escada fixa de tentativas/intervalo. EscalateTo continua valendo (quem
+// recebe ao expirar). MaxAttempts/Interval ficam como teto de seguranca do
+// unico lembrete gentil dentro da janela.
 type EscalationPolicy struct {
-	Name          string
-	MaxAttempts   int
-	Interval      time.Duration // entre tentativas
-	EscalateTo    EscalationTarget
-	EscalationMsg func(ctx EscalationContext) string
+	Name        string
+	MaxAttempts int
+	Interval    time.Duration
+	EscalateTo  EscalationTarget
 }
 
 // =========================================================================

@@ -45,6 +45,7 @@ var medicationToolHandlers = map[string]ToolHandler{
 	"editar_medicamento":     handleEditarMedicamento,
 	"cancelar_medicamento":   handleCancelarMedicamento,
 	"marcar_remedio_tomado":  handleMarcarRemedioTomado,
+	"adiar_remedio":          handleAdiarRemedio,
 	"pular_dose":             handlePularDose,
 	"extrair_receita_imagem": handleExtrairReceitaImagem,
 }
@@ -54,14 +55,16 @@ var medicationToolHandlers = map[string]ToolHandler{
 // =========================================================================
 
 type cadastrarMedicamentoParams struct {
-	TargetUser    string `json:"target_user"`
-	Name          string `json:"name"`
-	Dose          string `json:"dose"`
-	Instructions  string `json:"instructions"`
-	ScheduleRRULE string `json:"schedule_rrule"`
-	StartDate     string `json:"start_date"`
-	EndDate       string `json:"end_date"`
-	Critical      bool   `json:"critical"`
+	TargetUser       string `json:"target_user"`
+	Name             string `json:"name"`
+	Dose             string `json:"dose"`
+	Instructions     string `json:"instructions"`
+	ScheduleRRULE    string `json:"schedule_rrule"`
+	StartDate        string `json:"start_date"`
+	EndDate          string `json:"end_date"`
+	Critical         bool   `json:"critical"`
+	ToleranceMinutes int    `json:"tolerance_minutes"`
+	LateDosePolicy   string `json:"late_dose_policy"`
 }
 
 func handleCadastrarMedicamento(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
@@ -90,15 +93,21 @@ func handleCadastrarMedicamento(ctx context.Context, agent *Agent, user *User, p
 		startDate = time.Now().In(BRT()).Format(dateLayout)
 	}
 
+	policy, perr := ValidateLateDosePolicy(strings.TrimSpace(p.LateDosePolicy))
+	if perr != nil {
+		return "Não reconheci essa política de dose atrasada. As opções são: decisão do médico, pular, tomar e manter a próxima, ou tomar e recalcular os horários.", nil
+	}
 	intent := IntentData{
 		Medication: &MedicationIntent{
-			Name:          p.Name,
-			Dose:          p.Dose,
-			Instructions:  p.Instructions,
-			ScheduleRRULE: p.ScheduleRRULE,
-			StartDate:     startDate,
-			EndDate:       strings.TrimSpace(p.EndDate),
-			Critical:      p.Critical,
+			Name:             p.Name,
+			Dose:             p.Dose,
+			Instructions:     p.Instructions,
+			ScheduleRRULE:    p.ScheduleRRULE,
+			StartDate:        startDate,
+			EndDate:          strings.TrimSpace(p.EndDate),
+			Critical:         p.Critical,
+			ToleranceMinutes: p.ToleranceMinutes,
+			LateDosePolicy:   string(policy),
 		},
 	}
 	if target.ID != user.ID {
@@ -193,14 +202,16 @@ func handleListarMedicamentos(ctx context.Context, agent *Agent, user *User, par
 // =========================================================================
 
 type editarMedicamentoParams struct {
-	MedicationID      int64  `json:"medication_id"`
-	NameQuery         string `json:"name_query"`
-	NewName           string `json:"new_name"`
-	NewDose           string `json:"new_dose"`
-	NewInstructions   string `json:"new_instructions"`
-	NewScheduleRRULE  string `json:"new_schedule_rrule"`
-	NewEndDate        string `json:"new_end_date"`
-	NewCritical       *bool  `json:"new_critical"`
+	MedicationID     int64   `json:"medication_id"`
+	NameQuery        string  `json:"name_query"`
+	NewName          string  `json:"new_name"`
+	NewDose          string  `json:"new_dose"`
+	NewInstructions  string  `json:"new_instructions"`
+	NewScheduleRRULE string  `json:"new_schedule_rrule"`
+	NewEndDate       string  `json:"new_end_date"`
+	NewCritical      *bool   `json:"new_critical"`
+	NewToleranceMin  *int    `json:"new_tolerance_minutes"`
+	NewLateDosePolicy string `json:"new_late_dose_policy"`
 }
 
 func handleEditarMedicamento(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
@@ -239,8 +250,16 @@ func handleEditarMedicamento(ctx context.Context, agent *Agent, user *User, para
 		v := p.NewInstructions
 		pNewInstr = &v
 	}
-	if pNewName != nil || pNewDose != nil || pNewInstr != nil {
-		if err := agent.db.UpdateMedicationFields(med.ID, pNewName, pNewDose, pNewInstr); err != nil {
+	var pNewPolicy *LateDosePolicy
+	if strings.TrimSpace(p.NewLateDosePolicy) != "" {
+		validated, perr := ValidateLateDosePolicy(strings.TrimSpace(p.NewLateDosePolicy))
+		if perr != nil {
+			return "Não reconheci essa política de dose atrasada. As opções são: decisão do médico, pular, tomar e manter a próxima, ou tomar e recalcular os horários.", nil
+		}
+		pNewPolicy = &validated
+	}
+	if pNewName != nil || pNewDose != nil || pNewInstr != nil || p.NewToleranceMin != nil || pNewPolicy != nil {
+		if err := agent.db.UpdateMedicationFields(med.ID, pNewName, pNewDose, pNewInstr, p.NewToleranceMin, pNewPolicy); err != nil {
 			return "", fmt.Errorf("update medication: %w", err)
 		}
 	}
@@ -387,9 +406,85 @@ func handleMarcarRemedioTomado(ctx context.Context, agent *Agent, user *User, pa
 	agent.audit.Log(user.ID, "medication_taken", medName,
 		fmt.Sprintf("med_id=%d|pc=%d", mi.MedicationID, pc.ID))
 
-	// Resposta neutra — sem reforco positivo. Vide regra dura no
-	// escalation.go.
+	// Politica take_recalculate: tomou atrasado e o responsavel configurou que,
+	// nesse caso, os horarios devem ser reancorados a partir de agora. So age
+	// quando o idoso de fato tomou (acao dele) e ha atraso material.
+	delta := time.Now().UTC().Sub(mi.ScheduledAt)
+	if med != nil && med.LateDosePolicy == LatePolicyTakeRecalculate && delta >= time.Minute {
+		newDesc, rErr := agent.db.RescheduleMedicationByDelta(med.ID, delta)
+		if rErr != nil {
+			log.Printf("marcar_remedio_tomado: reschedule: %v", rErr)
+		} else {
+			agent.audit.Log(user.ID, "medication_rescheduled", medName,
+				fmt.Sprintf("med_id=%d|delta_min=%d|new=%s", med.ID, int(delta.Minutes()), newDesc))
+			return fmt.Sprintf(
+				"Anotado, %s. Como seu responsável configurou para esse remédio, reagendei os próximos horários a partir de agora (%s). "+
+					"Se preferir voltar ao horário original, dá pra ajustar pelo painel.",
+				firstName(user.Name), newDesc), nil
+		}
+	}
+
+	// Resposta neutra — sem reforco positivo. Vide regra no escalation.go.
 	return fmt.Sprintf("Anotado, %s.", firstName(user.Name)), nil
+}
+
+// =========================================================================
+// adiar_remedio
+// =========================================================================
+
+type adiarRemedioParams struct {
+	MedicationID int64  `json:"medication_id"`
+	HorarioHHMM  string `json:"horario_hhmm"`  // ex: "18:40" (horario que o idoso disse)
+	DaquiMinutos int    `json:"daqui_minutos"` // alternativa: "daqui a 30 min"
+}
+
+// handleAdiarRemedio registra que o idoso disse que vai tomar mais tarde.
+// NAO marca como tomado. Grava deferred_until (se houver horario) para UM
+// lembrete gentil naquele momento. A familia continua sendo avisada em segredo
+// se a tolerancia expirar sem confirmacao — adiar nao cancela isso, so silencia
+// a cobranca ate o horario dito.
+func handleAdiarRemedio(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
+	var p adiarRemedioParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "", fmt.Errorf("parse params: %w", err)
+	}
+	pc, err := agent.db.GetActivePendingForUserAndMedication(user.ID, p.MedicationID)
+	if err != nil {
+		return "", fmt.Errorf("get pending: %w", err)
+	}
+	if pc == nil {
+		return "Tudo bem, sem pressa. Quando tomar, é só me avisar.", nil
+	}
+
+	var deferred time.Time
+	switch {
+	case p.DaquiMinutos > 0:
+		deferred = time.Now().Add(time.Duration(p.DaquiMinutos) * time.Minute)
+	case strings.TrimSpace(p.HorarioHHMM) != "":
+		h, m, perr := parseHHMM(strings.TrimSpace(p.HorarioHHMM))
+		if perr == nil {
+			now := time.Now().In(BRT())
+			deferred = time.Date(now.Year(), now.Month(), now.Day(), h, m, 0, 0, BRT())
+		}
+	}
+	if !deferred.IsZero() {
+		if err := agent.db.SetPendingDeferredUntil(pc.ID, deferred); err != nil {
+			log.Printf("adiar_remedio: set deferred: %v", err)
+		}
+	}
+
+	med, _ := agent.db.GetMedicationByID(medMedicationID(pc))
+	medName := "remedio"
+	if med != nil {
+		medName = med.Name
+	}
+	agent.audit.Log(user.ID, "medication_deferred", medName,
+		fmt.Sprintf("med_id=%d|pc=%d|until=%s", medMedicationID(pc), pc.ID, deferred.Format(time.RFC3339)))
+
+	if !deferred.IsZero() {
+		return fmt.Sprintf("Combinado, %s. Quando tomar, me avisa que eu anoto.", firstName(user.Name)), nil
+	}
+	return fmt.Sprintf("Tudo bem, %s, sem pressa. Quando tomar, é só me avisar.", firstName(user.Name)), nil
 }
 
 // =========================================================================

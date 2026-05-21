@@ -221,12 +221,18 @@ func (cm *ConfirmationManager) executeMedicationRegistration(user *User, pc *Pen
 			owner = t
 		}
 	}
+	policy, perr := ValidateLateDosePolicy(mi.LateDosePolicy)
+	if perr != nil {
+		policy = LatePolicyConsultDoctor
+	}
 	med := &Medication{
-		UserID:          owner.ID,
-		Name:            mi.Name,
-		Dose:            mi.Dose,
-		Instructions:    mi.Instructions,
-		CreatedByUserID: user.ID,
+		UserID:           owner.ID,
+		Name:             mi.Name,
+		Dose:             mi.Dose,
+		Instructions:     mi.Instructions,
+		CreatedByUserID:  user.ID,
+		ToleranceMinutes: mi.ToleranceMinutes,
+		LateDosePolicy:   policy,
 	}
 	if err := cm.db.CreateMedication(med); err != nil {
 		return "", fmt.Errorf("create medication: %w", err)

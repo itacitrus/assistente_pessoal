@@ -550,7 +550,50 @@ func validateCreateMedication(req *CreateMedicationRequest) string {
 	default:
 		return "Frequencia invalida: use 'daily' ou 'weekly'."
 	}
+	if msg := validateMedicationDuration(req.Duration); msg != "" {
+		return msg
+	}
+	if req.ToleranceMinutes < 0 || req.ToleranceMinutes > 720 {
+		return "Tolerância inválida: use de 0 a 720 minutos."
+	}
+	switch strings.TrimSpace(req.LateDosePolicy) {
+	case "", "consult_doctor", "skip", "take_keep_next", "take_recalculate":
+		// ok
+	default:
+		return "Política de dose atrasada inválida."
+	}
 	return ""
+}
+
+// validateMedicationDuration valida o bloco opcional de duracao. nil ou
+// kind="continuous" eh sempre valido (tratamento sem fim). A aritmetica de
+// data fica no adapter (resolveMedicationEndDate) — aqui so barramos forma
+// invalida cedo, com mensagem amigavel.
+func validateMedicationDuration(d *MedicationDuration) string {
+	if d == nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(d.Kind)) {
+	case "", "continuous":
+		return ""
+	case "period":
+		if d.Count < 1 {
+			return "Informe por quantos dias/semanas/meses o remédio será usado."
+		}
+		switch strings.ToLower(strings.TrimSpace(d.Unit)) {
+		case "days", "weeks", "months":
+			return ""
+		default:
+			return "Unidade de duração inválida: use 'days', 'weeks' ou 'months'."
+		}
+	case "until":
+		if strings.TrimSpace(d.Until) == "" {
+			return "Informe a data de término do tratamento."
+		}
+		return ""
+	default:
+		return "Tipo de duração inválido."
+	}
 }
 
 // isValidHHMM valida formato HH:MM 24h (00:00..23:59).

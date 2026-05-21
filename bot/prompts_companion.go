@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // buildCompanionPrompt retorna o system prompt completo da persona
 // "amigo Zello" — usado quando user.Type == UserTypeIdoso. O texto vem
@@ -308,23 +311,32 @@ LIMITES DUROS:
 - Nunca minta sobre ter feito algo. Se chamou alertar_familia, cite que
   avisou. Se não chamou, não diga que avisou.
 
-REGRA FARMACOLÓGICA (DURA):
-- Você NUNCA recomenda tomar dose atrasada nem "compensar" dose esquecida.
-  Algumas drogas têm janela curta (paracetamol+ibuprofeno, anticoagulante,
-  losartana, antidiabético) e dose dupla acidental pode dar problema sério.
-  Decisão de "tomar atrasado ou não" é do médico.
-- Se ele te perguntar "esqueci a dose das 14h, tomo agora?": NÃO diga sim
-  nem não. Diga: "essa decisão é do médico — vale conferir com ele ou com
-  [nome do responsável se souber] antes de tomar agora. eu não oriento
-  isso por segurança". Se for grave (ex: anti-hipertensivo perdido por
+REGRA FARMACOLÓGICA:
+- "Vou tomar mais tarde" NÃO é "tomei". Quando ele disser que vai tomar
+  depois ("daqui a pouco", "lá pelas 18h40", "ainda vou tomar, eu aviso"),
+  chame adiar_remedio (com horario_hhmm ou daqui_minutos se ele disser
+  quando). NUNCA chame marcar_remedio_tomado nesse caso. Responda leve, sem
+  cobrar nem pressionar.
+- POR PADRÃO você NÃO recomenda tomar dose atrasada nem "compensar" dose
+  esquecida. Algumas drogas têm janela curta (paracetamol+ibuprofeno,
+  anticoagulante, losartana, antidiabético) e dose dupla acidental pode dar
+  problema sério. Sem orientação configurada, a decisão é do médico: se ele
+  perguntar "esqueci a dose das 14h, tomo agora?", diga algo como "essa
+  decisão é do médico — vale conferir com ele antes de tomar agora; eu não
+  oriento isso por segurança". Se for grave (ex: anti-hipertensivo perdido o
   dia inteiro), use alertar_familia(severity=warn).
+- EXCEÇÃO: se o medicamento aparecer no bloco [POLÍTICA DE DOSE ATRASADA]
+  abaixo, o responsável já definiu o que fazer. Aí você ORIENTA conforme
+  aquilo, SEMPRE deixando claro que "é recomendação do seu responsável, não
+  orientação médica". Siga exatamente o que o bloco disser para aquele
+  remédio. Se não houver bloco para o remédio em questão, use o padrão acima.
+- NUNCA, em nenhuma mensagem, ameace ou avise que vai "contar pra família"
+  como forma de pressão. Se um caso exigir a família, isso é feito de forma
+  discreta pelo sistema — você não anuncia isso ao idoso.
 - Se ele relatar que "tomei agora, atrasado" — registre via
-  marcar_remedio_tomado se ainda houver pending, mas NÃO reforce
-  positivamente ("ótimo!", "fez bem!", "parabéns!"). Resposta neutra:
-  "anotei. tudo bem por aí?". A decisão é dele; você não premia nem
-  pune comportamento de adesão.
-- Mensagens de lembrete e escalação automática (gerenciadas pelo motor
-  da Fase 3) já seguem essa regra; você, no chat livre, também.
+  marcar_remedio_tomado, mas NÃO reforce positivamente ("ótimo!", "fez
+  bem!", "parabéns!"). Resposta neutra: "anotei. tudo bem por aí?". A decisão
+  é dele; você não premia nem pune adesão.
 
 FERRAMENTAS DISPONÍVEIS PRA VOCÊ NESTE MODO:
   - buscar_memoria, salvar_memoria — memória social, use ativamente
@@ -357,4 +369,42 @@ REGRA SOBRE MÍDIA:
   conversa pedindo pro idoso contar do que se trata.`,
 		// 11 substituicoes de %%s no prompt — todas userName.
 		userName, userName, userName, userName, userName, userName, userName, userName, userName, userName, userName)
+}
+
+// lateDosePolicyGuidance descreve, em PT-BR, o que o bot deve orientar ao idoso
+// para cada politica configurada pelo responsavel. Vazio para consult_doctor
+// (sem orientacao especifica — segue o padrao "decisao do medico").
+func lateDosePolicyGuidance(p LateDosePolicy) string {
+	switch p {
+	case LatePolicySkip:
+		return "se passou do horário, oriente PULAR essa dose e esperar a próxima janela (não tomar agora)."
+	case LatePolicyTakeKeepNext:
+		return "se passou do horário, pode tomar agora mesmo atrasado E manter a próxima dose no horário normal."
+	case LatePolicyTakeRecalculate:
+		return "se passou do horário, pode tomar agora; ao confirmar com marcar_remedio_tomado, o sistema reagenda os próximos horários a partir de agora."
+	default:
+		return ""
+	}
+}
+
+// buildMedicationPolicyPrompt monta o bloco [POLÍTICA DE DOSE ATRASADA] com os
+// medicamentos cujo responsavel configurou uma politica diferente do padrao.
+// Retorna "" quando nenhum tem politica configurada — nesse caso o bot segue
+// a regra padrao (decisao do medico). O bloco entra como parte dinamica do
+// system prompt (nao cacheada), pois muda quando o responsavel reconfigura.
+func buildMedicationPolicyPrompt(meds []Medication) string {
+	var lines []string
+	for _, m := range meds {
+		g := lateDosePolicyGuidance(m.LateDosePolicy)
+		if g == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- %s: %s", m.Name, g))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "[POLÍTICA DE DOSE ATRASADA] (definida pelo responsável; ao orientar, " +
+		"diga SEMPRE que é recomendação do responsável e NÃO orientação médica):\n" +
+		strings.Join(lines, "\n")
 }

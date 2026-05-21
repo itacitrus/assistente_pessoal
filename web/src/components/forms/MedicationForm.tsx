@@ -11,19 +11,31 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ApiError } from "@/lib/api";
 import { createDependentMedication } from "@/lib/api/family";
+import { createMyMedication } from "@/lib/api/me";
 import { cn } from "@/lib/utils";
 import type {
   CreateMedicationBody,
+  LateDosePolicy,
+  MedicationDuration,
+  MedicationDurationUnit,
   MedicationFrequency,
   MedicationWeekDay,
 } from "@/types/api";
 
+/**
+ * Alvo do cadastro: o remédio do próprio titular (`self`) ou de um dependente.
+ * Mantém o form único pras duas telas — só muda o endpoint chamado.
+ */
+export type MedicationTarget =
+  | { kind: "self" }
+  | { kind: "dependent"; dependentId: number };
+
 export interface MedicationFormProps {
-  /** Id do dependente dono do remedio. */
-  dependentId: number;
+  target: MedicationTarget;
 }
 
 type Status = "idle" | "submitting" | "error";
+type DurationKind = "continuous" | "period" | "until";
 
 const MAX_TIMES = 6;
 
@@ -38,9 +50,55 @@ const WEEK_DAYS: { value: MedicationWeekDay; label: string }[] = [
   { value: "sun", label: "Dom" },
 ];
 
+const DURATION_UNITS: { value: MedicationDurationUnit; label: string }[] = [
+  { value: "days", label: "dias" },
+  { value: "weeks", label: "semanas" },
+  { value: "months", label: "meses" },
+];
+
+/**
+ * Opções de orientação para dose atrasada. O Zello relata ao idoso deixando
+ * claro que é recomendação do responsável, NÃO orientação médica.
+ */
+const LATE_DOSE_POLICIES: {
+  value: LateDosePolicy;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: "consult_doctor",
+    label: "Decisão do médico (padrão)",
+    hint: "O Zello não orienta tomar ou pular — diz que a decisão é do médico.",
+  },
+  {
+    value: "skip",
+    label: "Pular a dose",
+    hint: "Se passar do horário, orienta pular essa dose e esperar a próxima.",
+  },
+  {
+    value: "take_keep_next",
+    label: "Tomar e manter a próxima",
+    hint: "Pode tomar atrasado e mantém a próxima dose no horário normal.",
+  },
+  {
+    value: "take_recalculate",
+    label: "Tomar e recalcular horários",
+    hint: "Pode tomar atrasado; os próximos horários são reagendados a partir daí.",
+  },
+];
+
+const DEFAULT_TOLERANCE_MIN = 30;
+
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-export function MedicationForm({ dependentId }: MedicationFormProps) {
+/** Data de hoje em YYYY-MM-DD (fuso local) para o mínimo do date picker. */
+function todayISO(): string {
+  const d = new Date();
+  const tzOffset = d.getTimezoneOffset() * 60_000;
+  return new Date(d.getTime() - tzOffset).toISOString().slice(0, 10);
+}
+
+export function MedicationForm({ target }: MedicationFormProps) {
   const router = useRouter();
   const [name, setName] = React.useState("");
   const [dose, setDose] = React.useState("");
@@ -49,12 +107,31 @@ export function MedicationForm({ dependentId }: MedicationFormProps) {
   const [frequency, setFrequency] =
     React.useState<MedicationFrequency>("daily");
   const [days, setDays] = React.useState<MedicationWeekDay[]>([]);
+  const [durationKind, setDurationKind] =
+    React.useState<DurationKind>("continuous");
+  const [periodCount, setPeriodCount] = React.useState("1");
+  const [periodUnit, setPeriodUnit] =
+    React.useState<MedicationDurationUnit>("weeks");
+  const [untilDate, setUntilDate] = React.useState("");
+  const [toleranceMin, setToleranceMin] = React.useState(
+    String(DEFAULT_TOLERANCE_MIN),
+  );
+  const [latePolicy, setLatePolicy] =
+    React.useState<LateDosePolicy>("consult_doctor");
   const [status, setStatus] = React.useState<Status>("idle");
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
 
-  const validTimes = times
-    .map((t) => t.trim())
-    .filter((t) => TIME_RE.test(t));
+  const validTimes = times.map((t) => t.trim()).filter((t) => TIME_RE.test(t));
+
+  const durationValid =
+    durationKind === "continuous" ||
+    (durationKind === "period" && Number(periodCount) >= 1) ||
+    (durationKind === "until" && untilDate !== "");
+
+  const toleranceValid =
+    /^\d+$/.test(toleranceMin.trim()) &&
+    Number(toleranceMin) >= 0 &&
+    Number(toleranceMin) <= 720;
 
   const canSubmit =
     name.trim().length >= 2 &&
@@ -62,6 +139,8 @@ export function MedicationForm({ dependentId }: MedicationFormProps) {
     validTimes.length >= 1 &&
     validTimes.length === times.length &&
     (frequency === "daily" || days.length >= 1) &&
+    durationValid &&
+    toleranceValid &&
     status !== "submitting";
 
   function updateTime(index: number, value: string) {
@@ -69,9 +148,7 @@ export function MedicationForm({ dependentId }: MedicationFormProps) {
   }
 
   function addTime() {
-    setTimes((prev) =>
-      prev.length >= MAX_TIMES ? prev : [...prev, ""],
-    );
+    setTimes((prev) => (prev.length >= MAX_TIMES ? prev : [...prev, ""]));
   }
 
   function removeTime(index: number) {
@@ -88,12 +165,37 @@ export function MedicationForm({ dependentId }: MedicationFormProps) {
     );
   }
 
+  function buildDuration(): MedicationDuration | undefined {
+    if (durationKind === "continuous") return undefined;
+    if (durationKind === "period") {
+      return { kind: "period", count: Number(periodCount), unit: periodUnit };
+    }
+    return { kind: "until", until: untilDate };
+  }
+
+  function resetForm() {
+    setName("");
+    setDose("");
+    setInstructions("");
+    setTimes(["08:00"]);
+    setFrequency("daily");
+    setDays([]);
+    setDurationKind("continuous");
+    setPeriodCount("1");
+    setPeriodUnit("weeks");
+    setUntilDate("");
+    setToleranceMin(String(DEFAULT_TOLERANCE_MIN));
+    setLatePolicy("consult_doctor");
+    setStatus("idle");
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
     setStatus("submitting");
     setErrorMsg(null);
 
+    const tolerance = Number(toleranceMin);
     const body: CreateMedicationBody = {
       name: name.trim(),
       dose: dose.trim(),
@@ -101,28 +203,26 @@ export function MedicationForm({ dependentId }: MedicationFormProps) {
       times: validTimes,
       frequency,
       ...(frequency === "weekly" ? { days } : {}),
+      ...(buildDuration() ? { duration: buildDuration() } : {}),
+      ...(Number.isFinite(tolerance) ? { tolerance_minutes: tolerance } : {}),
+      late_dose_policy: latePolicy,
     };
 
     try {
-      await createDependentMedication(dependentId, body);
-      // Limpa o formulario e recarrega a lista (server component pai).
-      setName("");
-      setDose("");
-      setInstructions("");
-      setTimes(["08:00"]);
-      setFrequency("daily");
-      setDays([]);
-      setStatus("idle");
+      if (target.kind === "self") {
+        await createMyMedication(body);
+      } else {
+        await createDependentMedication(target.dependentId, body);
+      }
+      resetForm();
       router.refresh();
     } catch (err) {
       setStatus("error");
-      if (err instanceof ApiError) {
-        setErrorMsg(err.message);
-      } else {
-        setErrorMsg(
-          "Não consegui cadastrar agora. Tente novamente em alguns segundos.",
-        );
-      }
+      setErrorMsg(
+        err instanceof ApiError
+          ? err.message
+          : "Não consegui cadastrar agora. Tente novamente em alguns segundos.",
+      );
     }
   }
 
@@ -161,9 +261,7 @@ export function MedicationForm({ dependentId }: MedicationFormProps) {
       </div>
 
       <fieldset className="space-y-3">
-        <legend className="text-sm font-medium leading-none">
-          Horários
-        </legend>
+        <legend className="text-sm font-medium leading-none">Horários</legend>
         <p className="text-sm text-muted-foreground">
           De 1 a {MAX_TIMES} horários por dia. O Zello lembra na hora certa.
         </p>
@@ -193,12 +291,7 @@ export function MedicationForm({ dependentId }: MedicationFormProps) {
           ))}
         </div>
         {times.length < MAX_TIMES && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={addTime}
-          >
+          <Button type="button" variant="outline" size="sm" onClick={addTime}>
             <Plus className="h-4 w-4" aria-hidden />
             Adicionar horário
           </Button>
@@ -206,9 +299,7 @@ export function MedicationForm({ dependentId }: MedicationFormProps) {
       </fieldset>
 
       <fieldset className="space-y-3">
-        <legend className="text-sm font-medium leading-none">
-          Frequência
-        </legend>
+        <legend className="text-sm font-medium leading-none">Frequência</legend>
         <RadioGroup
           value={frequency}
           onValueChange={(v) => setFrequency(v as MedicationFrequency)}
@@ -263,6 +354,143 @@ export function MedicationForm({ dependentId }: MedicationFormProps) {
             )}
           </div>
         )}
+      </fieldset>
+
+      <fieldset className="space-y-3">
+        <legend className="text-sm font-medium leading-none">
+          Por quanto tempo?
+        </legend>
+        <RadioGroup
+          value={durationKind}
+          onValueChange={(v) => setDurationKind(v as DurationKind)}
+          className="gap-3"
+        >
+          <label
+            htmlFor="dur-cont"
+            className="flex cursor-pointer items-center gap-3 rounded-md border p-3"
+          >
+            <RadioGroupItem value="continuous" id="dur-cont" />
+            <span className="text-base">Contínuo (sem data de término)</span>
+          </label>
+          <label
+            htmlFor="dur-period"
+            className="flex cursor-pointer items-center gap-3 rounded-md border p-3"
+          >
+            <RadioGroupItem value="period" id="dur-period" />
+            <span className="text-base">Por um período</span>
+          </label>
+          <label
+            htmlFor="dur-until"
+            className="flex cursor-pointer items-center gap-3 rounded-md border p-3"
+          >
+            <RadioGroupItem value="until" id="dur-until" />
+            <span className="text-base">Até uma data específica</span>
+          </label>
+        </RadioGroup>
+
+        {durationKind === "period" && (
+          <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 p-3">
+            <span className="text-sm text-muted-foreground">Por</span>
+            <Input
+              type="number"
+              min={1}
+              inputMode="numeric"
+              aria-label="Quantidade"
+              value={periodCount}
+              onChange={(e) => setPeriodCount(e.target.value)}
+              className="max-w-[5rem]"
+            />
+            <select
+              aria-label="Unidade"
+              value={periodUnit}
+              onChange={(e) =>
+                setPeriodUnit(e.target.value as MedicationDurationUnit)
+              }
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              {DURATION_UNITS.map((u) => (
+                <option key={u.value} value={u.value}>
+                  {u.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {durationKind === "until" && (
+          <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+            <Label htmlFor="dur-until-date">Data de término</Label>
+            <Input
+              id="dur-until-date"
+              type="date"
+              min={todayISO()}
+              value={untilDate}
+              onChange={(e) => setUntilDate(e.target.value)}
+              className="max-w-[12rem]"
+            />
+          </div>
+        )}
+      </fieldset>
+
+      <fieldset className="space-y-3">
+        <legend className="text-sm font-medium leading-none">
+          Tolerância de atraso
+        </legend>
+        <p className="text-sm text-muted-foreground">
+          Quanto tempo depois do horário o Zello espera antes de avisar você
+          (em segredo, sem pressionar o titular).
+        </p>
+        <div className="flex items-center gap-2">
+          <Input
+            type="number"
+            min={0}
+            max={720}
+            inputMode="numeric"
+            aria-label="Minutos de tolerância"
+            value={toleranceMin}
+            onChange={(e) => setToleranceMin(e.target.value)}
+            className="max-w-[6rem]"
+          />
+          <span className="text-sm text-muted-foreground">minutos</span>
+        </div>
+        {!toleranceValid && (
+          <p className="text-sm text-destructive">Use de 0 a 720 minutos.</p>
+        )}
+      </fieldset>
+
+      <fieldset className="space-y-3">
+        <legend className="text-sm font-medium leading-none">
+          Se passar do horário
+        </legend>
+        <p className="text-sm text-muted-foreground">
+          Sua orientação. O Zello a repassa ao titular deixando claro que é
+          recomendação sua, não orientação médica.
+        </p>
+        <RadioGroup
+          value={latePolicy}
+          onValueChange={(v) => setLatePolicy(v as LateDosePolicy)}
+          className="gap-3"
+        >
+          {LATE_DOSE_POLICIES.map((p) => (
+            <label
+              key={p.value}
+              htmlFor={`late-${p.value}`}
+              className="flex cursor-pointer items-start gap-3 rounded-md border p-3"
+            >
+              <RadioGroupItem
+                value={p.value}
+                id={`late-${p.value}`}
+                className="mt-1"
+              />
+              <span className="space-y-0.5">
+                <span className="block text-base">{p.label}</span>
+                <span className="block text-sm text-muted-foreground">
+                  {p.hint}
+                </span>
+              </span>
+            </label>
+          ))}
+        </RadioGroup>
       </fieldset>
 
       {status === "error" && errorMsg && (

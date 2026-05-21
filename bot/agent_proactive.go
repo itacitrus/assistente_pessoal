@@ -65,6 +65,7 @@ func (a *Agent) RunProactive(ctx context.Context, user *User, hoursIdle int) (st
 			Text: buildSystemPromptDynamic(pendingReq),
 		},
 	}
+	systemParts = a.appendMedicationPolicyPart(systemParts, user)
 
 	response, _, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, systemParts)
 	if err != nil {
