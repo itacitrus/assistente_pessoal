@@ -32,7 +32,38 @@ import (
 // familyToolHandlers eh o sub-registry da Fase 5 (mesma estrategia da
 // Fase 3 medicacao e Fase 4 companion).
 var familyToolHandlers = map[string]ToolHandler{
-	"status_dependente": handleStatusDependente,
+	"status_dependente":  handleStatusDependente,
+	"listar_dependentes": handleListarDependentes,
+}
+
+// handleListarDependentes lista quem esta sob a responsabilidade do usuario
+// (vinculos family_links onde ele eh guardian). Existe pra que o responsavel
+// que pergunta "quem esta sob minha responsabilidade?" receba a VERDADE do
+// banco — antes nao havia ferramenta e o LLM inventava "ninguem cadastrado".
+func handleListarDependentes(ctx context.Context, agent *Agent, user *User, _ json.RawMessage) (string, error) {
+	if user == nil {
+		return "", errors.New("listar_dependentes: user nil")
+	}
+	deps, err := agent.db.GetDependents(user.ID)
+	if err != nil {
+		return "", fmt.Errorf("get dependents: %w", err)
+	}
+	if len(deps) == 0 {
+		return "Você não tem ninguém cadastrado sob sua responsabilidade ainda.", nil
+	}
+	var sb strings.Builder
+	sb.WriteString("Sob sua responsabilidade:\n")
+	for _, d := range deps {
+		if d.Other == nil {
+			continue
+		}
+		line := "- " + d.Other.Name
+		if rel := strings.TrimSpace(d.Relationship); rel != "" {
+			line += " (" + rel + ")"
+		}
+		sb.WriteString(line + "\n")
+	}
+	return strings.TrimRight(sb.String(), "\n"), nil
 }
 
 // statusDependenteParams espelha o input schema. Pelo menos um identificador
@@ -53,6 +84,12 @@ type DependentStatusReport struct {
 	DaysSinceLastTalk int
 	LastUserMessageAt sql.NullTime
 	Medication        synthesis.MedicationStats
+	// ActiveMedicationCount eh quantos remedios ativos o dependente tem
+	// cadastrados AGORA. Distinto de Medication.Scheduled (doses materializadas
+	// no intake_log na janela): um idoso recem-cadastrado tem remedios mas
+	// ainda zero doses logadas. Sem isso, o relatorio dizia "sem medicacoes"
+	// para quem TEM remedios — mentira para o responsavel.
+	ActiveMedicationCount int
 	ProactiveAttempts ProactiveAttemptsStats
 	AlertsOpen        []FamilyAlert
 	Snapshots         []synthesis.DailySnapshot
@@ -185,6 +222,12 @@ func BuildDependentStatus(ctx context.Context, db *DB, _ llm.ReportProvider, dep
 		return nil, fmt.Errorf("med stats: %w", err)
 	}
 	rep.Medication = medStats
+
+	activeMeds, err := db.ListActiveMedications(dep.ID)
+	if err != nil {
+		return nil, fmt.Errorf("active meds: %w", err)
+	}
+	rep.ActiveMedicationCount = len(activeMeds)
 
 	paStats, err := db.GetProactiveAttemptsStats(dep.ID, weekAgo, now)
 	if err != nil {
@@ -403,13 +446,24 @@ func formatStatusForChat(r *DependentStatusReport) string {
 		sb.WriteString(r.Synthesis.Comparacao + "\n")
 	}
 
-	// Medicação.
-	if r.Medication.Scheduled == 0 {
-		sb.WriteString("Sem medicações cadastradas.\n")
-	} else {
+	// Medicação. Distingue 3 casos para nunca enganar o responsável:
+	//   - tem remédio E doses logadas → mostra aderência;
+	//   - tem remédio mas nenhuma dose na janela → diz isso (não "sem remédios");
+	//   - nenhum remédio cadastrado → diz que não há.
+	switch {
+	case r.Medication.Scheduled > 0:
 		pct := int(100 * r.Medication.AdherenceFrac)
 		sb.WriteString(fmt.Sprintf("Aderência 7d: %d/%d doses (%d%%).\n",
 			r.Medication.Taken, r.Medication.Scheduled, pct))
+	case r.ActiveMedicationCount > 0:
+		plural := "remédio cadastrado"
+		if r.ActiveMedicationCount > 1 {
+			plural = "remédios cadastrados"
+		}
+		sb.WriteString(fmt.Sprintf("%d %s, mas ainda sem registro de doses nesta janela (os lembretes começam no próximo horário).\n",
+			r.ActiveMedicationCount, plural))
+	default:
+		sb.WriteString("Sem medicações cadastradas.\n")
 	}
 
 	// Última conversa.

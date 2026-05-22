@@ -97,32 +97,28 @@ func handleCadastrarMedicamento(ctx context.Context, agent *Agent, user *User, p
 	if perr != nil {
 		return "Não reconheci essa política de dose atrasada. As opções são: decisão do médico, pular, tomar e manter a próxima, ou tomar e recalcular os horários.", nil
 	}
-	intent := IntentData{
-		Medication: &MedicationIntent{
-			Name:             p.Name,
-			Dose:             p.Dose,
-			Instructions:     p.Instructions,
-			ScheduleRRULE:    p.ScheduleRRULE,
-			StartDate:        startDate,
-			EndDate:          strings.TrimSpace(p.EndDate),
-			Critical:         p.Critical,
-			ToleranceMinutes: p.ToleranceMinutes,
-			LateDosePolicy:   string(policy),
-		},
-	}
-	if target.ID != user.ID {
-		intent.TargetUser = target.Name
-	}
-	eventJSON, _ := json.Marshal(intent)
 
-	pc := &PendingConfirmation{
-		UserID:    user.ID,
-		EventData: string(eventJSON),
-		Kind:      "medication",
+	// Persiste DIRETO no ato da chamada (espelha criar_evento). A confirmacao
+	// em linguagem natural acontece ANTES, na conversa — quando o LLM chama
+	// esta tool, eh porque o usuario ja confirmou. O retorno reflete o estado
+	// REAL do banco: nunca dizemos "cadastrei" sem ter cadastrado.
+	mi := &MedicationIntent{
+		Name:             p.Name,
+		Dose:             p.Dose,
+		Instructions:     p.Instructions,
+		ScheduleRRULE:    p.ScheduleRRULE,
+		StartDate:        startDate,
+		EndDate:          strings.TrimSpace(p.EndDate),
+		Critical:         p.Critical,
+		ToleranceMinutes: p.ToleranceMinutes,
+		LateDosePolicy:   string(policy),
 	}
-	if err := agent.db.CreatePendingConfirmation(pc); err != nil {
-		return "", fmt.Errorf("create pending: %w", err)
+	med, err := persistMedicationFromIntent(agent.db, target.ID, user.ID, mi)
+	if err != nil {
+		return "", err
 	}
+	agent.audit.Log(user.ID, "medication_created", med.Name,
+		fmt.Sprintf("med_id=%d|owner_id=%d|rrule=%s|critical=%t|via=chat", med.ID, target.ID, p.ScheduleRRULE, p.Critical))
 
 	desc := DescribeRRULE(p.ScheduleRRULE)
 	dose := strings.TrimSpace(p.Dose)
@@ -131,9 +127,55 @@ func handleCadastrarMedicamento(ctx context.Context, agent *Agent, user *User, p
 		doseSuffix = " " + dose
 	}
 	if target.ID != user.ID {
-		return fmt.Sprintf("Vou cadastrar %s%s pra %s, %s. Confirma?", p.Name, doseSuffix, firstName(target.Name), desc), nil
+		return fmt.Sprintf("Pronto, cadastrei %s%s pra %s, %s. Vou lembrar no horário certo.", p.Name, doseSuffix, firstName(target.Name), desc), nil
 	}
-	return fmt.Sprintf("Vou cadastrar %s%s, %s. Confirma?", p.Name, doseSuffix, desc), nil
+	return fmt.Sprintf("Pronto, cadastrei %s%s, %s. Vou te lembrar no horário certo.", p.Name, doseSuffix, desc), nil
+}
+
+// persistMedicationFromIntent cria medication + schedule a partir de um intent
+// de cadastro (Reminder=false). Fonte UNICA de persistencia de cadastro de
+// medicamento via conversa — usada pela tool cadastrar_medicamento. ownerID eh
+// o dono do remedio; creatorID eh quem cadastrou (pode ser o responsavel
+// cadastrando pra um dependente).
+func persistMedicationFromIntent(db *DB, ownerID, creatorID int64, mi *MedicationIntent) (*Medication, error) {
+	policy, perr := ValidateLateDosePolicy(mi.LateDosePolicy)
+	if perr != nil {
+		policy = LatePolicyConsultDoctor
+	}
+	med := &Medication{
+		UserID:           ownerID,
+		Name:             mi.Name,
+		Dose:             mi.Dose,
+		Instructions:     mi.Instructions,
+		CreatedByUserID:  creatorID,
+		ToleranceMinutes: mi.ToleranceMinutes,
+		LateDosePolicy:   policy,
+	}
+	if err := db.CreateMedication(med); err != nil {
+		return nil, fmt.Errorf("create medication: %w", err)
+	}
+
+	startDate, err := time.ParseInLocation(dateLayout, mi.StartDate, BRT())
+	if err != nil {
+		startDate = time.Now().In(BRT())
+	}
+	var endPtr *time.Time
+	if strings.TrimSpace(mi.EndDate) != "" {
+		if t, e := time.ParseInLocation(dateLayout, mi.EndDate, BRT()); e == nil {
+			endPtr = &t
+		}
+	}
+	sched := &MedicationSchedule{
+		MedicationID: med.ID,
+		RRULE:        mi.ScheduleRRULE,
+		StartDate:    startDate,
+		EndDate:      endPtr,
+		Critical:     mi.Critical,
+	}
+	if err := db.CreateMedicationSchedule(sched); err != nil {
+		return nil, fmt.Errorf("create schedule: %w", err)
+	}
+	return med, nil
 }
 
 // =========================================================================
@@ -357,7 +399,8 @@ func handleCancelarMedicamento(ctx context.Context, agent *Agent, user *User, pa
 // =========================================================================
 
 type marcarRemedioTomadoParams struct {
-	MedicationID int64 `json:"medication_id"`
+	MedicationID int64  `json:"medication_id"`
+	NameQuery    string `json:"name_query"`
 }
 
 func handleMarcarRemedioTomado(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
@@ -371,19 +414,22 @@ func handleMarcarRemedioTomado(ctx context.Context, agent *Agent, user *User, pa
 		return "", fmt.Errorf("get pending: %w", err)
 	}
 	if pc == nil {
-		// Sem pending ativo — pode ter sido auto-confirmado, escalado, ou
-		// usuario nunca recebeu lembrete. Ainda assim registramos no log
-		// se houver medication_id explicito (idoso pode falar "tomei o
-		// remedio das 8h" depois do bot ja ter desistido).
-		if p.MedicationID > 0 {
-			med, mErr := agent.db.GetMedicationByID(p.MedicationID)
-			if mErr == nil {
-				agent.audit.Log(user.ID, "medication_taken", med.Name,
-					fmt.Sprintf("med_id=%d|note=fora_de_pending", med.ID))
-				return fmt.Sprintf("Anotado, %s.", firstName(user.Name)), nil
-			}
+		// Sem pending ativo — o usuario tomou FORA de um lembrete (pre-empcao,
+		// lembrete ja escalado/desistido, ou nunca houve). Mesmo assim a
+		// tomada PRECISA ser registrada no intake_log, senao some da aderencia
+		// e o responsavel ve "nenhuma dose" mesmo o idoso tendo tomado.
+		med, resolveMsg := resolveMedicationForIntake(agent, user, p.MedicationID, p.NameQuery)
+		if med == nil {
+			return resolveMsg, nil
 		}
-		return "Não tenho lembrete de remédio em aberto pra anotar.", nil
+		scheduledAt := nearestScheduledDose(agent, user.ID, med.ID, time.Now().UTC())
+		if err := agent.db.RecordTakenIntake(med.ID, scheduledAt, "tomei (fora de lembrete)"); err != nil {
+			log.Printf("marcar_remedio_tomado: record taken (no pending): %v", err)
+			return "", fmt.Errorf("record taken: %w", err)
+		}
+		agent.audit.Log(user.ID, "medication_taken", med.Name,
+			fmt.Sprintf("med_id=%d|note=fora_de_pending|scheduled=%s", med.ID, scheduledAt.Format(time.RFC3339)))
+		return fmt.Sprintf("Anotado, %s.", firstName(user.Name)), nil
 	}
 
 	mi := parseMedicationIntent(pc)
@@ -699,4 +745,86 @@ func resolveMedication(agent *Agent, user *User, id int64, nameQuery string) (*M
 		}
 	}
 	return nil, fmt.Sprintf("Não achei medicamento com nome parecido com '%s'.", nameQuery), nil
+}
+
+// resolveMedicationForIntake escolhe QUAL remedio o usuario quis dizer ao
+// declarar "tomei" sem haver lembrete ativo. Prioridade:
+//  1. medication_id explicito.
+//  2. name_query (substring no nome dos remedios ativos do proprio usuario).
+//  3. se o usuario tem exatamente UM remedio ativo, eh esse.
+// Em qualquer outro caso (nenhum/ambiguo), retorna med=nil + uma pergunta
+// natural — preferimos perguntar a registrar a dose errada.
+func resolveMedicationForIntake(agent *Agent, user *User, id int64, nameQuery string) (*Medication, string) {
+	if id > 0 {
+		med, err := agent.db.GetMedicationByID(id)
+		if err == nil {
+			return med, ""
+		}
+	}
+	meds, err := agent.db.ListActiveMedications(user.ID)
+	if err != nil {
+		return nil, "Tive um problema pra achar seus remédios agora. Pode me dizer de novo daqui a pouco?"
+	}
+	if q := strings.ToLower(strings.TrimSpace(nameQuery)); q != "" {
+		for i := range meds {
+			if strings.Contains(strings.ToLower(meds[i].Name), q) {
+				return &meds[i], ""
+			}
+		}
+		return nil, fmt.Sprintf("Não achei nenhum remédio seu com nome parecido com '%s'. De qual você tá falando?", nameQuery)
+	}
+	if len(meds) == 1 {
+		return &meds[0], ""
+	}
+	if len(meds) == 0 {
+		return nil, "Não tenho nenhum remédio seu cadastrado pra anotar. Quer que eu cadastre?"
+	}
+	return nil, "De qual remédio você tá falando? Me diz o nome que eu anoto."
+}
+
+// nearestScheduledDose devolve o horario agendado mais proximo de `now` para o
+// medicamento — preferindo a ultima ocorrencia <= now (a dose que o usuario
+// provavelmente acabou de tomar). Casar com o slot real mantem a idempotencia
+// com o scheduler (UNIQUE medication_id+scheduled_at). Se nenhuma ocorrencia
+// cair na janela do dia, usa `now` (registro ad-hoc, ainda contabilizado).
+func nearestScheduledDose(agent *Agent, userID, medID int64, now time.Time) time.Time {
+	scheds, err := agent.db.ListSchedulesForMedication(medID)
+	if err != nil || len(scheds) == 0 {
+		return now
+	}
+	loc := agent.db.GetEventTimezone(userID, now)
+	windowStart := now.Add(-18 * time.Hour)
+	windowEnd := now.Add(2 * time.Hour)
+	var best time.Time
+	var bestPast bool
+	for i := range scheds {
+		occs, err := ExpandOccurrences(&scheds[i], windowStart, windowEnd, loc)
+		if err != nil {
+			continue
+		}
+		for _, occ := range occs {
+			isPast := !occ.After(now)
+			switch {
+			case best.IsZero():
+				best, bestPast = occ, isPast
+			case bestPast && isPast:
+				// ambas no passado: fica com a mais recente (mais perto de now).
+				if occ.After(best) {
+					best = occ
+				}
+			case !bestPast && isPast:
+				// passado vence futuro (dose mais provavelmente "tomada agora").
+				best, bestPast = occ, true
+			case !bestPast && !isPast:
+				// ambas no futuro: fica com a mais cedo.
+				if occ.Before(best) {
+					best = occ
+				}
+			}
+		}
+	}
+	if best.IsZero() {
+		return now
+	}
+	return best.UTC()
 }

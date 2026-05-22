@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -221,44 +220,9 @@ func (cm *ConfirmationManager) executeMedicationRegistration(user *User, pc *Pen
 			owner = t
 		}
 	}
-	policy, perr := ValidateLateDosePolicy(mi.LateDosePolicy)
-	if perr != nil {
-		policy = LatePolicyConsultDoctor
-	}
-	med := &Medication{
-		UserID:           owner.ID,
-		Name:             mi.Name,
-		Dose:             mi.Dose,
-		Instructions:     mi.Instructions,
-		CreatedByUserID:  user.ID,
-		ToleranceMinutes: mi.ToleranceMinutes,
-		LateDosePolicy:   policy,
-	}
-	if err := cm.db.CreateMedication(med); err != nil {
-		return "", fmt.Errorf("create medication: %w", err)
-	}
-
-	startDate, err := time.ParseInLocation(dateLayout, mi.StartDate, BRT())
+	med, err := persistMedicationFromIntent(cm.db, owner.ID, user.ID, mi)
 	if err != nil {
-		// Se startDate vier vazio/invalido, usa hoje em BRT — evitamos
-		// abortar a criacao por falha de parse de data num campo opcional.
-		startDate = time.Now().In(BRT())
-	}
-	var endPtr *time.Time
-	if strings.TrimSpace(mi.EndDate) != "" {
-		if t, e := time.ParseInLocation(dateLayout, mi.EndDate, BRT()); e == nil {
-			endPtr = &t
-		}
-	}
-	sched := &MedicationSchedule{
-		MedicationID: med.ID,
-		RRULE:        mi.ScheduleRRULE,
-		StartDate:    startDate,
-		EndDate:      endPtr,
-		Critical:     mi.Critical,
-	}
-	if err := cm.db.CreateMedicationSchedule(sched); err != nil {
-		return "", fmt.Errorf("create schedule: %w", err)
+		return "", err
 	}
 	if err := cm.db.ResolvePendingConfirmation(pc.ID, "confirmed"); err != nil {
 		return "", err

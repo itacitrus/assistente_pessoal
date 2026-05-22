@@ -107,9 +107,9 @@ func TestBuildToolDefinitions(t *testing.T) {
 	tools := buildToolDefinitions()
 	// 15 originais + 8 da Fase 3/3.1 (medicacao + receita + adiar_remedio) + 4
 	// da Fase 4 (alertar_familia, pausar_proatividade, comentar_imagem,
-	// comentar_link) + 1 da Fase 5 (status_dependente) = 28.
-	if len(tools) != 28 {
-		t.Fatalf("expected 28 tools, got %d", len(tools))
+	// comentar_link) + 2 da Fase 5 (status_dependente, listar_dependentes) = 29.
+	if len(tools) != 29 {
+		t.Fatalf("expected 29 tools, got %d", len(tools))
 	}
 
 	names := map[string]bool{}
@@ -130,7 +130,7 @@ func TestBuildToolDefinitions(t *testing.T) {
 		// Fase 4 (idosos): companion + media
 		"alertar_familia", "pausar_proatividade", "comentar_imagem", "comentar_link",
 		// Fase 5 (idosos): relatorio longitudinal pra responsavel
-		"status_dependente",
+		"status_dependente", "listar_dependentes",
 	}
 	for _, name := range expected {
 		if !names[name] {

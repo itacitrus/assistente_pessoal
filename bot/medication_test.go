@@ -542,8 +542,38 @@ func TestMarkRemedioTomado_NoActivePending_StillResponds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.ToLower(resp), "lembrete") {
-		t.Fatalf("expected 'lembrete' explanation, got %q", resp)
+	// Usuario sem nenhum remedio cadastrado e sem lembrete ativo: o bot
+	// responde de forma sensata (nao tem remedio pra anotar), nunca em
+	// silencio nem alucinando que anotou.
+	if !strings.Contains(strings.ToLower(resp), "remédio") {
+		t.Fatalf("expected a sensible no-medication response, got %q", resp)
+	}
+}
+
+// TestMarkRemedioTomado_ProactiveNoPending_RecordsIntake garante que um "tomei"
+// FORA de um lembrete ativo ainda grava a dose no intake_log (antes ia so pro
+// audit_log e sumia da aderencia do responsavel).
+func TestMarkRemedioTomado_ProactiveNoPending_RecordsIntake(t *testing.T) {
+	db := setupTestDB(t)
+	users := mkUsers(t, db, "Simone")
+	user := users[0]
+	m, _ := mkMedForUser(t, db, user, "4mag", "FREQ=DAILY;BYHOUR=21;BYMINUTE=0", false)
+
+	agent := mkTestAgent(t, db)
+	// Sem pending ativo; usuario cita o nome do remedio.
+	resp, err := handleMarcarRemedioTomado(context.Background(), agent, user, json.RawMessage(`{"name_query":"4mag"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.ToLower(resp), "anotado") {
+		t.Fatalf("expected 'anotado' response, got %q", resp)
+	}
+	logs, _ := db.ListIntakeLogsForMedication(m.ID, 5)
+	if len(logs) != 1 {
+		t.Fatalf("expected 1 intake log recorded, got %d", len(logs))
+	}
+	if logs[0].Status != IntakeTaken {
+		t.Fatalf("expected status=taken, got %s", logs[0].Status)
 	}
 }
 
@@ -631,6 +661,57 @@ func TestPularDose_RequiresReason(t *testing.T) {
 }
 
 // =========================================================================
+// cadastro self — persiste DIRETO (regressao do bug "cadastrei mas nao salvou")
+// =========================================================================
+
+// TestCadastrarMedicamento_Self_PersistsDirectly blinda a falha que motivou
+// esta correcao: a tool dizia "cadastrei" mas so criava um pending orfao que
+// nada executava. Agora a chamada da tool PERSISTE o medication + schedule de
+// imediato (espelhando criar_evento), e nenhum pending fica pra tras.
+func TestCadastrarMedicamento_Self_PersistsDirectly(t *testing.T) {
+	db := setupTestDB(t)
+	users := mkUsers(t, db, "Fabio")
+	user := users[0]
+	agent := mkTestAgent(t, db)
+
+	params := json.RawMessage(`{
+		"name":"Prednisona",
+		"dose":"20mg",
+		"schedule_rrule":"FREQ=DAILY;BYHOUR=21;BYMINUTE=29",
+		"end_date":"2026-05-27"
+	}`)
+	resp, err := handleCadastrarMedicamento(context.Background(), agent, user, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.ToLower(resp), "cadastrei") {
+		t.Fatalf("expected persisted confirmation, got %q", resp)
+	}
+
+	meds, err := db.ListActiveMedications(user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(meds) != 1 {
+		t.Fatalf("expected 1 medication persisted, got %d", len(meds))
+	}
+	if meds[0].Name != "Prednisona" || meds[0].Dose != "20mg" {
+		t.Fatalf("unexpected med persisted: %+v", meds[0])
+	}
+	scheds, _ := db.ListSchedulesForMedication(meds[0].ID)
+	if len(scheds) != 1 {
+		t.Fatalf("expected 1 schedule, got %d", len(scheds))
+	}
+	if scheds[0].EndDate == nil {
+		t.Fatal("expected end_date persisted from the tool call")
+	}
+	// Nenhum pending orfao deve sobrar.
+	if _, err := db.GetPendingConfirmation(user.ID); err != ErrNoPendingConfirmation {
+		t.Fatalf("cadastro must not leave an orphan pending, got err=%v", err)
+	}
+}
+
+// =========================================================================
 // target_user / family link
 // =========================================================================
 
@@ -652,11 +733,11 @@ func TestCadastrarMedicamento_ForElder_RequiresFamilyLink(t *testing.T) {
 	if !strings.Contains(strings.ToLower(resp), "permissão") {
 		t.Fatalf("expected denial mentioning permission, got %q", resp)
 	}
-	if _, err := db.GetPendingConfirmation(users[0].ID); err != ErrNoPendingConfirmation {
-		t.Fatal("should not have created pending without permission")
+	if meds, _ := db.ListActiveMedications(users[1].ID); len(meds) != 0 {
+		t.Fatal("should not have created medication without permission")
 	}
 
-	// Com family_link, cria pending.
+	// Com family_link, persiste DIRETO no dependente (sem pending).
 	if _, err := db.LinkFamily(users[0].ID, users[1].ID, "filha"); err != nil {
 		t.Fatal(err)
 	}
@@ -664,15 +745,25 @@ func TestCadastrarMedicamento_ForElder_RequiresFamilyLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.ToLower(resp), "confirma") {
-		t.Fatalf("expected confirmation prompt, got %q", resp)
+	if !strings.Contains(strings.ToLower(resp), "cadastrei") {
+		t.Fatalf("expected confirmation that med was persisted, got %q", resp)
 	}
-	pc, err := db.GetPendingConfirmation(users[0].ID)
+	meds, err := db.ListActiveMedications(users[1].ID)
 	if err != nil {
-		t.Fatalf("expected pending after permission, got %v", err)
+		t.Fatal(err)
 	}
-	if pc.Kind != "medication" {
-		t.Fatalf("expected kind=medication, got %s", pc.Kind)
+	if len(meds) != 1 {
+		t.Fatalf("expected 1 medication persisted for the dependent, got %d", len(meds))
+	}
+	if meds[0].Name != "Losartana" {
+		t.Fatalf("expected Losartana, got %q", meds[0].Name)
+	}
+	if meds[0].CreatedByUserID != users[0].ID {
+		t.Fatalf("expected created_by=guardian(%d), got %d", users[0].ID, meds[0].CreatedByUserID)
+	}
+	scheds, _ := db.ListSchedulesForMedication(meds[0].ID)
+	if len(scheds) != 1 {
+		t.Fatalf("expected 1 schedule, got %d", len(scheds))
 	}
 }
 

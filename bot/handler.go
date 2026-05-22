@@ -170,7 +170,9 @@ func (h *Handler) handleMessage(msg *events.Message) {
 
 	// For registered users, also handle audio and images
 	var images []ImageAttachment
+	hadAudio := false
 	if audioMsg := msg.Message.GetAudioMessage(); audioMsg != nil && text == "" {
+		hadAudio = true
 		audioData, audioErr := h.client.Download(ctx, audioMsg)
 		if audioErr != nil {
 			log.Printf("Error downloading audio from %s: %v", sender, audioErr)
@@ -203,6 +205,12 @@ func (h *Handler) handleMessage(msg *events.Message) {
 	}
 
 	if text == "" && len(images) == 0 {
+		// Áudio que transcreveu vazio (silêncio, ruído, fala inaudível) NÃO
+		// pode virar silêncio do bot — pra um idoso que mandou áudio, ficar
+		// sem resposta parece abandono. Pedimos pra repetir.
+		if hadAudio {
+			h.sendText(senderJID, "Não consegui entender o áudio — deu pra ouvir bem pouco. Pode mandar de novo ou me escrever?")
+		}
 		return
 	}
 

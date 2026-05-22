@@ -330,6 +330,28 @@ func (db *DB) UpdateIntakeStatus(medID int64, scheduledAt time.Time, status Inta
 	return nil
 }
 
+// RecordTakenIntake registra (ou atualiza) uma dose como tomada para um slot
+// agendado, de forma idempotente via UPSERT em UNIQUE(medication_id,
+// scheduled_at). Usado quando o usuario declara "tomei" FORA de um lembrete
+// ativo (ato proativo): sem isto, a tomada so iria pro audit_log e ficaria
+// invisivel para a aderencia (GetMedicationStats7d le apenas o intake_log).
+//
+// Idempotente com o scheduler: se este slot ja existe como 'pending', vira
+// 'taken'; se o scheduler disparar depois, o CreateIntakeLogIfAbsent dele
+// bate no UNIQUE e nao duplica.
+func (db *DB) RecordTakenIntake(medID int64, scheduledAt time.Time, note string) error {
+	_, err := db.conn.Exec(
+		`INSERT INTO medication_intake_log (medication_id, scheduled_at, status, confirmed_at, response_text)
+		 VALUES (?, ?, 'taken', ?, ?)
+		 ON CONFLICT(medication_id, scheduled_at)
+		 DO UPDATE SET status = 'taken', confirmed_at = excluded.confirmed_at, response_text = excluded.response_text`,
+		medID, scheduledAt.UTC(), time.Now().UTC(), note)
+	if err != nil {
+		return fmt.Errorf("record taken intake: %w", err)
+	}
+	return nil
+}
+
 // GetLatestPendingIntake busca a ocorrencia pending mais recente para o
 // medicamento. Util para "marcar tomado" sem ID explicito (idoso responde
 // "tomei" sem citar qual). Retorna ErrIntakeLogDuplicate se nao houver

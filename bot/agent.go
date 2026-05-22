@@ -525,8 +525,19 @@ Ferramentas disponíveis:
 - gerar_link_meet: gerar link do Google Meet.
 - registrar_viagem, listar_viagens, cancelar_viagem: gerenciar períodos em outro fuso horário (veja seção TIMEZONE E VIAGENS).
 
+CUIDADO DE FAMILIARES (RESPONSÁVEL):
+- Você também ajuda quem cuida de um familiar idoso (dependente). Para isso existem ferramentas próprias:
+  - listar_dependentes: quem está sob a responsabilidade do usuário. Use quando ele perguntar "quem eu cuido", "quem está sob minha responsabilidade", "quais meus dependentes".
+  - status_dependente: como o dependente está (aderência de remédios, última conversa, alertas). Use para "como está minha mãe/meu pai", "a Simone tomou o remédio?".
+  - listar_medicamentos com target_user=<nome do dependente>: lista os remédios do dependente.
+- Sobre "fulano tomou o remédio?": você NÃO observa a tomada em tempo real — o registro só existe quando o próprio dependente confirma no Zello dele. Use status_dependente e responda com o que ele retorna (aderência/última dose). Seja transparente sobre essa limitação SEM negar que o vínculo ou os remédios existem.
+
+REGRA DURA — NUNCA AFIRME FATO SEM CONSULTAR:
+- NUNCA diga que alguém "não tem dependentes", "não tem remédios cadastrados" ou "não tomou a dose" sem ANTES chamar a ferramenta correspondente (listar_dependentes, listar_medicamentos, status_dependente). O banco é a verdade; sua memória da conversa não é.
+- Se a ferramenta retornar vazio, aí sim relate o vazio — citando que veio do sistema.
+
 Regras gerais:
-- NUNCA finja ter executado uma ação sem chamar a ferramenta.
+- NUNCA finja ter executado uma ação sem chamar a ferramenta. NUNCA diga "cadastrei", "anotei", "marquei" se a ferramenta não foi chamada e não retornou sucesso.
 - NUNCA responda sobre agenda usando memória da conversa — sempre consulte.
 - Antes de criar evento, confira se já foi criado. Não duplique.
 - Entenda áudios e contatos compartilhados (transcritos automaticamente).
@@ -779,7 +790,7 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 		// Fase 3 (idosos): medicacao + escalacao.
 		{
 			Name:        "cadastrar_medicamento",
-			Description: "Cadastra um medicamento com horarios. Cria pending_confirmation; o usuario confirma na proxima mensagem antes da persistencia. Use schedule_rrule no formato iCal sem prefixo 'RRULE:' (ex: 'FREQ=DAILY;BYHOUR=8,14,20;BYMINUTE=0' para 'todo dia 8h, 14h e 20h'; 'FREQ=WEEKLY;BYDAY=MO,WE;BYHOUR=9;BYMINUTE=0' para 'seg e qua as 9h'). Sempre inclua BYHOUR. Frequencia deve ser DAILY, WEEKLY ou MONTHLY.",
+			Description: "Cadastra um medicamento com horarios. PERSISTE IMEDIATAMENTE no banco ao ser chamada (igual criar_evento). Por isso: ANTES de chamar, leia de volta em linguagem natural o que vai cadastrar (nome, dose, horario, ate quando) e espere o usuario confirmar ('sim', 'pode', 'isso'). Chame esta tool SOMENTE depois da confirmacao. O retorno comeca com 'Pronto, cadastrei ...' — repasse esse fato ao usuario; NUNCA diga que cadastrou sem ter chamado esta tool e recebido esse retorno. Use schedule_rrule no formato iCal sem prefixo 'RRULE:' (ex: 'FREQ=DAILY;BYHOUR=8,14,20;BYMINUTE=0' para 'todo dia 8h, 14h e 20h'; 'FREQ=WEEKLY;BYDAY=MO,WE;BYHOUR=9;BYMINUTE=0' para 'seg e qua as 9h'). Sempre inclua BYHOUR. Frequencia deve ser DAILY, WEEKLY ou MONTHLY.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -840,11 +851,12 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 		},
 		{
 			Name:        "marcar_remedio_tomado",
-			Description: "Registra que o usuario JA tomou um remedio. Use SEMPRE que o usuario disser 'tomei', 'ja bebi', 'pronto, foi', em resposta a um lembrete. Para 'vou tomar mais tarde'/'daqui a pouco'/'la pelas 18h40', use adiar_remedio (NAO esta). Se medication_id for omitido, pega o lembrete pendente atual (kind='medication').",
+			Description: "Registra que o usuario JA tomou um remedio. Use SEMPRE que o usuario disser 'tomei', 'ja bebi', 'pronto, foi'. Funciona tanto em resposta a um lembrete quanto quando o usuario avisa por conta propria (sem lembrete ativo) — nos dois casos a tomada eh gravada de verdade. Para 'vou tomar mais tarde'/'daqui a pouco'/'la pelas 18h40', use adiar_remedio (NAO esta). Quando o usuario citar o nome do remedio ('tomei o 4mag'), passe name_query pra anotar no remedio certo. Se nada for passado, pega o lembrete pendente atual; sem pending e com mais de um remedio, o sistema pede pra esclarecer.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"medication_id": {"type": "integer", "description": "Opcional. Omitir = pegar pending atual."}
+					"medication_id": {"type": "integer", "description": "Opcional. Omitir = pegar pending atual."},
+					"name_query": {"type": "string", "description": "Opcional. Nome (ou parte) do remedio que o usuario citou, ex: '4mag'. Usado pra identificar o remedio quando nao ha lembrete ativo."}
 				}
 			}`),
 		},
@@ -1009,6 +1021,13 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"days":            {"type": "integer", "description": "Janela de analise em dias (default 14, max 90)."}
 				}
 			}`),
+		},
+		{
+			Name: "listar_dependentes",
+			Description: "Lista as pessoas sob a responsabilidade do usuario (idosos/dependentes vinculados a ele como responsavel). " +
+				"Use SEMPRE que o usuario perguntar 'quem esta sob minha responsabilidade', 'quem eu cuido', 'quais dependentes tenho'. " +
+				"NUNCA responda essa pergunta de cabeca — chame esta tool e repasse o que ela retornar.",
+			InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
 		},
 	}
 }
