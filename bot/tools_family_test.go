@@ -146,6 +146,33 @@ func TestStatusDependente_ResolvesByName(t *testing.T) {
 	}
 }
 
+// TestStatusDependente_ResolvesByRelationship blinda o caso do responsavel que
+// se refere ao dependente pelo PARENTESCO ("meu pai") em vez do nome — antes o
+// bot dizia "não tenho o nome salvo" mesmo com o parentesco gravado no vínculo.
+func TestStatusDependente_ResolvesByRelationship(t *testing.T) {
+	db := setupTestDB(t)
+	guardian := makeGuardian(t, db, "Caio", "111")
+	elder := makeElder(t, db, "Fábio Vivo", "222")
+	if _, err := db.LinkFamily(guardian.ID, elder.ID, "pai"); err != nil {
+		t.Fatal(err)
+	}
+	rp := &fakeReportProvider{out: synthesis.ReportOutput{
+		Tendencia:        "estavel",
+		NivelPreocupacao: "tranquilo",
+		Resumo:           "x.",
+	}}
+	agent := makeAgentForFamily(db, rp)
+
+	params, _ := json.Marshal(map[string]any{"dependent_name": "meu pai"})
+	out, err := handleStatusDependente(context.Background(), agent, guardian, params)
+	if err != nil {
+		t.Fatalf("expected nil err, got %v", err)
+	}
+	if !strings.Contains(out, "Status de Fábio Vivo") {
+		t.Errorf("expected resolution by relationship 'pai', got: %s", out)
+	}
+}
+
 func TestStatusDependente_NoIdentifierReturnsErrorMsg(t *testing.T) {
 	db := setupTestDB(t)
 	guardian := makeGuardian(t, db, "Caio", "111")

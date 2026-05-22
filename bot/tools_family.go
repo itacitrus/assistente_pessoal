@@ -393,6 +393,18 @@ func pickDependentByName(deps []FamilyLink, query string) *User {
 			return d.Other
 		}
 	}
+	// Fallback por parentesco: o responsavel costuma se referir ao dependente
+	// pela relacao ("meu pai", "minha mae") em vez do nome. Casa o parentesco
+	// gravado em family_links contra a query (qualquer direcao de substring).
+	for _, d := range deps {
+		if d.Other == nil {
+			continue
+		}
+		rel := strings.ToLower(strings.TrimSpace(d.Relationship))
+		if rel != "" && (strings.Contains(q, rel) || strings.Contains(rel, q)) {
+			return d.Other
+		}
+	}
 	return nil
 }
 

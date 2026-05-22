@@ -699,6 +699,16 @@ func resolveTargetForMedication(agent *Agent, user *User, targetName string) (*U
 		return nil, "", fmt.Errorf("resolve target: %w", err)
 	}
 	if t == nil {
+		// Nao achou usuario global por nome — pode ser referencia por
+		// parentesco ("pai", "minha mae") ou primeiro nome de um dependente.
+		// Resolve entre os dependentes do proprio usuario (nome OU parentesco).
+		if deps, derr := agent.db.GetDependents(user.ID); derr == nil {
+			if match := pickDependentByName(deps, targetName); match != nil {
+				t = match
+			}
+		}
+	}
+	if t == nil {
 		return nil, fmt.Sprintf("Não encontrei o usuário '%s'.", targetName), nil
 	}
 	can, err := agent.db.CanManageMedicationFor(user.ID, t.ID)
