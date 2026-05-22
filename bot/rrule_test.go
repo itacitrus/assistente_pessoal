@@ -237,6 +237,9 @@ func TestDescribeRRULE(t *testing.T) {
 		{"FREQ=DAILY;BYHOUR=8,14,20;BYMINUTE=0", "8h, 14h e 20h"},
 		{"FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0", "segunda"},
 		{"FREQ=MONTHLY;BYHOUR=10;BYMINUTE=0", "todo mês"},
+		// Minutos não-zero devem aparecer (regressão: antes virava "21h").
+		{"FREQ=DAILY;BYHOUR=21;BYMINUTE=29", "todos os dias às 21h29"},
+		{"FREQ=DAILY;BYHOUR=6,18;BYMINUTE=5", "6h05 e 18h05"},
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {

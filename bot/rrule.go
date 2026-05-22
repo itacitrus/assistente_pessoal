@@ -219,11 +219,27 @@ func DescribeRRULE(s string) string {
 	if len(opts.Byhour) == 0 {
 		return freq
 	}
+	// BYMINUTE eh unico no modelo de medicacao (cf. buildMedicationRRULE) e
+	// aplica a todos os horarios. Sem isto, "BYHOUR=21;BYMINUTE=29" virava
+	// "21h" no painel/chat — escondendo os minutos reais da dose.
+	minute := 0
+	if len(opts.Byminute) > 0 {
+		minute = opts.Byminute[0]
+	}
 	hours := make([]string, 0, len(opts.Byhour))
 	for _, h := range opts.Byhour {
-		hours = append(hours, fmt.Sprintf("%dh", h))
+		hours = append(hours, formatHourMinutePT(h, minute))
 	}
 	return freq + " às " + joinPT(hours)
+}
+
+// formatHourMinutePT formata hora+minuto no estilo PT-BR usado nos lembretes:
+// minuto zero → "8h"; minuto não-zero → "21h29" (minuto com 2 dígitos).
+func formatHourMinutePT(hour, minute int) string {
+	if minute == 0 {
+		return fmt.Sprintf("%dh", hour)
+	}
+	return fmt.Sprintf("%dh%02d", hour, minute)
 }
 
 // weekdayPT mapeia rrule.Weekday (lib usa 0=MO..6=SU) para nome em PT-BR.
