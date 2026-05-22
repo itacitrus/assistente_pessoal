@@ -452,6 +452,8 @@ Exemplos de raciocínio correto:
 - "meu pai" → buscar_memoria primeiro, só pedir info se não encontrar.
 - "coloca o dia inteiro" sobre evento existente → editar_evento com new_time="00:00" e new_duration_minutes=1440.
 
+AGENDA NÃO CONECTADA: se uma tool de agenda devolver que o Google Calendar não está conectado, NUNCA apenas avise que não dá. Ofereça conectar em linguagem natural ("sua agenda do Google ainda não está conectada — quer que eu te mande o link pra conectar agora?"). Se a pessoa aceitar (sim/quero/pode mandar), chame conectar_agenda — ela manda o link no WhatsApp. Depois, retome o que a pessoa pediu (ex: "assim que conectar, eu te mostro os compromissos de amanhã").
+
 TIMEZONE E VIAGENS:
 - O fuso base do usuário é America/Sao_Paulo (Brasil).
 - O fuso é DINÂMICO por período: quando o usuário vai estar em outro lugar, use registrar_viagem.
@@ -600,6 +602,14 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					"end_date": {"type": "string", "description": "Data de fim (YYYY-MM-DD)"}
 				},
 				"required": ["start_date", "end_date"]
+			}`),
+		},
+		{
+			Name:        "conectar_agenda",
+			Description: "Gera e ENVIA ao WhatsApp do usuario o link para conectar a agenda do Google. Use SOMENTE depois que o usuario aceitar conectar (ex: responder 'sim', 'quero', 'pode mandar' a uma oferta de conexao). Nao peca dados — o link e auto-suficiente. Se ja estiver conectado, a tool apenas avisa.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {}
 			}`),
 		},
 		{

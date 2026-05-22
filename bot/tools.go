@@ -47,6 +47,7 @@ var toolHandlers = buildToolHandlers()
 func buildToolHandlers() map[string]ToolHandler {
 	m := map[string]ToolHandler{
 		"buscar_agenda":              handleBuscarAgenda,
+		"conectar_agenda":            handleConectarAgenda,
 		"criar_evento":               handleCriarEvento,
 		"editar_evento":              handleEditarEvento,
 		"cancelar_evento":            handleCancelarEvento,
@@ -78,6 +79,38 @@ func buildToolHandlers() map[string]ToolHandler {
 	return m
 }
 
+// googleNotConnectedMsg eh devolvido pelas tools de agenda quando o usuario
+// ainda nao conectou o Google Calendar. NAO eh erro: o agente recebe esta
+// string como resultado e, seguindo a regra do system prompt, OFERECE conectar
+// (em vez de so negar) e chama conectar_agenda se o usuario aceitar.
+const googleNotConnectedMsg = "O Google Calendar deste usuario ainda nao esta conectado, entao nao consigo acessar/alterar a agenda. NAO apenas negue: pergunte se a pessoa quer conectar agora e, se aceitar, chame a tool conectar_agenda."
+
+// handleConectarAgenda gera um link de conexao com o Google Calendar (state
+// OAuth de uso unico + AuthURL) e ENVIA pro WhatsApp do usuario — mesmo
+// mecanismo do botao do painel e do reauth. Use quando o usuario aceitar
+// conectar. Idempotente: se ja estiver conectado, so avisa.
+func handleConectarAgenda(ctx context.Context, agent *Agent, user *User, _ json.RawMessage) (string, error) {
+	if user.GoogleCredentials != "" {
+		return "A agenda do Google ja esta conectada.", nil
+	}
+	if agent.cal == nil {
+		return "", fmt.Errorf("conectar_agenda: calendar client nao configurado")
+	}
+	state, err := agent.db.CreateOAuthState(user.ID, oauthStateTTL)
+	if err != nil {
+		return "", fmt.Errorf("create oauth state: %w", err)
+	}
+	authURL := agent.cal.AuthURL(state)
+	msg := fmt.Sprintf(
+		"Pra conectar sua agenda do Google, é só tocar aqui:\n\n%s\n\nVocê autoriza na sua conta Google e eu já passo a enxergar seus compromissos.",
+		authURL,
+	)
+	if err := agent.sendMsg(user.PhoneNumber, msg); err != nil {
+		return "", fmt.Errorf("send connect link: %w", err)
+	}
+	return "Link de conexão com o Google enviado ao usuário. Avise que é só tocar no link que você mandou.", nil
+}
+
 type buscarAgendaParams struct {
 	StartDate string `json:"start_date"`
 	EndDate   string `json:"end_date"`
@@ -89,6 +122,9 @@ func handleBuscarAgenda(ctx context.Context, agent *Agent, user *User, params js
 		return "", fmt.Errorf("parse params: %w", err)
 	}
 
+	if user.GoogleCredentials == "" {
+		return googleNotConnectedMsg, nil
+	}
 	refreshToken, err := Decrypt(user.GoogleCredentials, agent.cfg.EncryptionKey)
 	if err != nil {
 		return "", fmt.Errorf("decrypt credentials: %w", err)
@@ -174,6 +210,9 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 		return "", fmt.Errorf("parse params: %w", err)
 	}
 
+	if user.GoogleCredentials == "" {
+		return googleNotConnectedMsg, nil
+	}
 	refreshToken, err := Decrypt(user.GoogleCredentials, agent.cfg.EncryptionKey)
 	if err != nil {
 		return "", fmt.Errorf("decrypt credentials: %w", err)
@@ -396,6 +435,9 @@ func handleEditarEvento(ctx context.Context, agent *Agent, user *User, params js
 		return "", fmt.Errorf("parse params: %w", err)
 	}
 
+	if user.GoogleCredentials == "" {
+		return googleNotConnectedMsg, nil
+	}
 	refreshToken, err := Decrypt(user.GoogleCredentials, agent.cfg.EncryptionKey)
 	if err != nil {
 		return "", fmt.Errorf("decrypt credentials: %w", err)
@@ -476,6 +518,9 @@ func handleCancelarEvento(ctx context.Context, agent *Agent, user *User, params 
 		return "", fmt.Errorf("parse params: %w", err)
 	}
 
+	if user.GoogleCredentials == "" {
+		return googleNotConnectedMsg, nil
+	}
 	refreshToken, err := Decrypt(user.GoogleCredentials, agent.cfg.EncryptionKey)
 	if err != nil {
 		return "", fmt.Errorf("decrypt credentials: %w", err)
@@ -665,6 +710,9 @@ func handleGerarLinkMeet(ctx context.Context, agent *Agent, user *User, params j
 		return "", fmt.Errorf("parse params: %w", err)
 	}
 
+	if user.GoogleCredentials == "" {
+		return googleNotConnectedMsg, nil
+	}
 	refreshToken, err := Decrypt(user.GoogleCredentials, agent.cfg.EncryptionKey)
 	if err != nil {
 		return "", fmt.Errorf("decrypt credentials: %w", err)
@@ -777,6 +825,9 @@ func handleConvidarParticipante(ctx context.Context, agent *Agent, user *User, p
 		return "", fmt.Errorf("parse params: %w", err)
 	}
 
+	if user.GoogleCredentials == "" {
+		return googleNotConnectedMsg, nil
+	}
 	refreshToken, err := Decrypt(user.GoogleCredentials, agent.cfg.EncryptionKey)
 	if err != nil {
 		return "", fmt.Errorf("decrypt credentials: %w", err)

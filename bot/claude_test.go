@@ -105,11 +105,12 @@ func TestMarkLastMessageForCache(t *testing.T) {
 
 func TestBuildToolDefinitions(t *testing.T) {
 	tools := buildToolDefinitions()
-	// 15 originais + 8 da Fase 3/3.1 (medicacao + receita + adiar_remedio) + 4
-	// da Fase 4 (alertar_familia, pausar_proatividade, comentar_imagem,
-	// comentar_link) + 2 da Fase 5 (status_dependente, listar_dependentes) = 29.
-	if len(tools) != 29 {
-		t.Fatalf("expected 29 tools, got %d", len(tools))
+	// 16 originais (inclui conectar_agenda) + 8 da Fase 3/3.1 (medicacao +
+	// receita + adiar_remedio) + 4 da Fase 4 (alertar_familia,
+	// pausar_proatividade, comentar_imagem, comentar_link) + 2 da Fase 5
+	// (status_dependente, listar_dependentes) = 30.
+	if len(tools) != 30 {
+		t.Fatalf("expected 30 tools, got %d", len(tools))
 	}
 
 	names := map[string]bool{}
@@ -119,7 +120,7 @@ func TestBuildToolDefinitions(t *testing.T) {
 
 	expected := []string{
 		// Originais
-		"buscar_agenda", "criar_evento", "editar_evento", "cancelar_evento",
+		"buscar_agenda", "conectar_agenda", "criar_evento", "editar_evento", "cancelar_evento",
 		"buscar_historico", "criar_evento_outro_usuario", "convidar_participante",
 		"salvar_memoria", "buscar_memoria", "gerar_link_meet", "convidar_externo",
 		"registrar_viagem", "listar_viagens", "cancelar_viagem", "responder_permissao",
