@@ -2,14 +2,8 @@ import Link from "next/link";
 import { Pill } from "lucide-react";
 
 import { MedicationCard } from "@/components/family/MedicationCard";
-import { MedicationForm } from "@/components/forms/MedicationForm";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { AddMedicationDisclosure } from "@/components/forms/AddMedicationDisclosure";
+import { Card, CardContent } from "@/components/ui/card";
 import { getMyMedications } from "@/lib/api/me";
 import { getSessionCookieHeader } from "@/lib/server-cookie";
 import type { MedicationItem } from "@/types/api";
@@ -90,22 +84,8 @@ export default async function MeusRemediosPage() {
       <section
         className="space-y-4 animate-rise"
         style={{ animationDelay: "120ms" }}
-        aria-labelledby="add-remedio"
       >
-        <Card className="shadow-warm">
-          <CardHeader>
-            <CardTitle id="add-remedio" className="text-lg">
-              Adicionar remédio
-            </CardTitle>
-            <CardDescription>
-              Nome, dose, horários, frequência e por quanto tempo o Zello deve
-              lembrar.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <MedicationForm target={{ kind: "self" }} />
-          </CardContent>
-        </Card>
+        <AddMedicationDisclosure target={{ kind: "self" }} />
       </section>
     </div>
   );
