@@ -428,16 +428,52 @@ type ProfileFactsResponse struct {
 }
 
 // RelationFact eh um vinculo familiar/relacao do usuario. Kind ∈ dependent|guardian|memory.
+// Quando Editable=true (kind=memory), Category+Key identificam a memoria crua
+// para edicao/remocao via /api/v1/me/people. Vinculos familiares (dependent/
+// guardian) tem Editable=false — sua gestao vive nas telas de familia.
 type RelationFact struct {
 	Name     string `json:"name"`
 	Relation string `json:"relation"`
 	Kind     string `json:"kind"`
+	Editable bool   `json:"editable"`
+	Category string `json:"category,omitempty"`
+	Key      string `json:"key,omitempty"`
 }
 
 // PersonFact eh uma pessoa que o Zello conhece do contexto social do usuario.
+// Sempre editavel (sempre vem de memoria). Category+Key identificam a memoria
+// crua para edicao/remocao.
 type PersonFact struct {
-	Name   string `json:"name"`
-	Detail string `json:"detail"`
+	Name     string `json:"name"`
+	Detail   string `json:"detail"`
+	Editable bool   `json:"editable"`
+	Category string `json:"category,omitempty"`
+	Key      string `json:"key,omitempty"`
+}
+
+// =========================================================================
+// Pessoas na vida (POST/PATCH/DELETE /api/v1/me/people)
+// =========================================================================
+
+// PersonFactType eh o tipo escolhido na UI. "relacao" -> categoria de memoria
+// "relacao" (familia/proximos). "pessoa" -> contexto social.
+type PersonFactType string
+
+const (
+	PersonFactTypeRelacao PersonFactType = "relacao"
+	PersonFactTypePessoa  PersonFactType = "pessoa"
+)
+
+// PersonFactRequest eh o corpo de POST (criar) e PATCH (editar) de uma pessoa
+// na vida do usuario. Em PATCH, OriginalCategory+OriginalKey identificam a
+// entrada existente (que pode ter sido criada pelo bot ou pela UI); quando o
+// nome muda, a chave muda e a memoria eh recriada.
+type PersonFactRequest struct {
+	Name             string         `json:"name"`
+	Detail           string         `json:"detail"`
+	Type             PersonFactType `json:"type"`
+	OriginalCategory string         `json:"original_category,omitempty"`
+	OriginalKey      string         `json:"original_key,omitempty"`
 }
 
 // TripFact eh uma viagem (passada recente ou futura) do usuario.

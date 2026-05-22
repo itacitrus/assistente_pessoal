@@ -12,7 +12,8 @@ import (
 // =========================================================================
 
 // profilePeopleMax limita quantas pessoas do contexto social retornamos.
-const profilePeopleMax = 10
+// Folgado o suficiente pra nao truncar curadoria manual pela UI.
+const profilePeopleMax = 50
 
 // profileTripsMax limita quantas viagens retornamos.
 const profileTripsMax = 6
@@ -40,6 +41,7 @@ func (a *apiAdapter) ProfileFacts(ctx context.Context, userID int64) (api.Profil
 			Name:     fl.Other.Name,
 			Relation: relationLabel(fl.Relationship),
 			Kind:     "dependent",
+			Editable: false, // vinculo real — gerido nas telas de familia.
 		})
 	}
 	guards, err := a.db.GetGuardians(userID)
@@ -54,6 +56,7 @@ func (a *apiAdapter) ProfileFacts(ctx context.Context, userID int64) (api.Profil
 			Name:     fl.Other.Name,
 			Relation: relationLabel(fl.Relationship),
 			Kind:     "guardian",
+			Editable: false, // vinculo real — gerido nas telas de familia.
 		})
 	}
 
@@ -72,6 +75,9 @@ func (a *apiAdapter) ProfileFacts(ctx context.Context, userID int64) (api.Profil
 			Name:     humanizeMemoryKey(m.Key),
 			Relation: m.Value,
 			Kind:     "memory",
+			Editable: true,
+			Category: m.Category,
+			Key:      m.Key,
 		})
 	}
 
@@ -89,8 +95,11 @@ func (a *apiAdapter) ProfileFacts(ctx context.Context, userID int64) (api.Profil
 				break
 			}
 			resp.People = append(resp.People, api.PersonFact{
-				Name:   humanizeMemoryKey(m.Key),
-				Detail: m.Value,
+				Name:     humanizeMemoryKey(m.Key),
+				Detail:   m.Value,
+				Editable: true,
+				Category: m.Category,
+				Key:      m.Key,
 			})
 		}
 	}

@@ -382,17 +382,39 @@ export interface ActivityResponse {
  */
 export type RelationKind = "dependent" | "guardian" | "memory";
 
-/** Espelha api.RelationFact — uma pessoa ligada ao usuario por relacao. */
+/** Espelha api.RelationFact — uma pessoa ligada ao usuario por relacao.
+ * `editable` true (kind=memory) -> `category`/`key` identificam a memoria crua
+ * para edicao/remocao. Vinculos familiares vem editable=false. */
 export interface RelationFact {
   name: string;
   relation: string;
   kind: RelationKind;
+  editable: boolean;
+  category?: string;
+  key?: string;
 }
 
-/** Espelha api.PersonFact — pessoa citada nas conversas com um detalhe livre. */
+/** Espelha api.PersonFact — pessoa citada nas conversas com um detalhe livre.
+ * Sempre editavel; `category`/`key` identificam a memoria crua. */
 export interface PersonFact {
   name: string;
   detail: string;
+  editable: boolean;
+  category?: string;
+  key?: string;
+}
+
+/** Tipo escolhido na UI ao cadastrar/editar uma pessoa na vida. */
+export type PersonFactType = "relacao" | "pessoa";
+
+/** Corpo de POST/PATCH /api/v1/me/people. Em edicao, `original_category` e
+ * `original_key` identificam a entrada existente. */
+export interface PersonFactBody {
+  name: string;
+  detail: string;
+  type: PersonFactType;
+  original_category?: string;
+  original_key?: string;
 }
 
 /** Espelha api.TripFact — uma viagem conhecida do usuario. */

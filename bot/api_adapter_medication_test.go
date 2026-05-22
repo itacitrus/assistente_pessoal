@@ -198,6 +198,97 @@ func TestProfileFacts_RelacaoNotDuplicated(t *testing.T) {
 	}
 }
 
+// TestPersonFact_CreateRoundTripsToProfileFacts garante que o que a UI cadastra
+// (CreatePersonFact) aparece editavel em ProfileFacts com a (category, key)
+// crua, e que o bucket relacao/pessoa cai na secao certa.
+func TestPersonFact_CreateRoundTripsToProfileFacts(t *testing.T) {
+	a, db, _ := mkAdapter(t)
+	u := mkUsers(t, db, "Giovanni")[0]
+	ctx := context.Background()
+
+	if err := a.CreatePersonFact(ctx, u.ID, api.PersonFactRequest{
+		Name: "João Victor", Detail: "Colega da Octalab", Type: api.PersonFactTypePessoa,
+	}); err != nil {
+		t.Fatalf("create pessoa: %v", err)
+	}
+	if err := a.CreatePersonFact(ctx, u.ID, api.PersonFactRequest{
+		Name: "Fábio", Detail: "Pai", Type: api.PersonFactTypeRelacao,
+	}); err != nil {
+		t.Fatalf("create relacao: %v", err)
+	}
+
+	facts, err := a.ProfileFacts(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("ProfileFacts: %v", err)
+	}
+	if len(facts.Relations) != 1 || !facts.Relations[0].Editable ||
+		facts.Relations[0].Category != "relacao" || facts.Relations[0].Key != "Fábio" {
+		t.Fatalf("relation editable/identity errada: %+v", facts.Relations)
+	}
+	if len(facts.People) != 1 || !facts.People[0].Editable ||
+		facts.People[0].Category != "social_context" || facts.People[0].Key != "João Victor" {
+		t.Fatalf("person editable/identity errada: %+v", facts.People)
+	}
+}
+
+// TestPersonFact_FamilyLinkNotEditable garante que vinculos familiares vem como
+// nao-editaveis (geridos nas telas de familia), sem category/key.
+func TestPersonFact_FamilyLinkNotEditable(t *testing.T) {
+	a, db, _ := mkAdapter(t)
+	users := mkUsers(t, db, "Maria", "Fabio")
+	if _, err := db.LinkFamily(users[0].ID, users[1].ID, "filho"); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	facts, err := a.ProfileFacts(context.Background(), users[0].ID)
+	if err != nil {
+		t.Fatalf("ProfileFacts: %v", err)
+	}
+	if len(facts.Relations) != 1 {
+		t.Fatalf("relations = %d, want 1", len(facts.Relations))
+	}
+	if facts.Relations[0].Editable || facts.Relations[0].Key != "" {
+		t.Fatalf("vinculo familiar nao deveria ser editavel: %+v", facts.Relations[0])
+	}
+}
+
+// TestPersonFact_UpdateRenameRemovesOldMemory valida o rename atomico: a chave
+// antiga some e a nova carrega o valor.
+func TestPersonFact_UpdateRenameRemovesOldMemory(t *testing.T) {
+	a, db, _ := mkAdapter(t)
+	u := mkUsers(t, db, "Giovanni")[0]
+	ctx := context.Background()
+	_ = db.SaveMemory(u.ID, "social_context", "jo", "colega")
+
+	if err := a.UpdatePersonFact(ctx, u.ID, api.PersonFactRequest{
+		Name: "João", Detail: "colega de trabalho", Type: api.PersonFactTypePessoa,
+		OriginalCategory: "social_context", OriginalKey: "jo",
+	}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if exists, _ := db.MemoryExists(u.ID, "social_context", "jo"); exists {
+		t.Fatalf("chave antiga 'jo' deveria ter sumido")
+	}
+	mems, _ := db.GetMemories(u.ID, "social_context")
+	if len(mems) != 1 || mems[0].Key != "João" || mems[0].Value != "colega de trabalho" {
+		t.Fatalf("memoria renomeada errada: %+v", mems)
+	}
+}
+
+// TestPersonFact_DeleteRemovesMemory valida a remocao via adapter.
+func TestPersonFact_DeleteRemovesMemory(t *testing.T) {
+	a, db, _ := mkAdapter(t)
+	u := mkUsers(t, db, "Giovanni")[0]
+	ctx := context.Background()
+	_ = db.SaveMemory(u.ID, "relacao", "Fábio", "Pai")
+
+	if err := a.DeletePersonFact(ctx, u.ID, "relacao", "Fábio"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if exists, _ := db.MemoryExists(u.ID, "relacao", "Fábio"); exists {
+		t.Fatalf("memoria deveria ter sido removida")
+	}
+}
+
 func TestProfileFacts_EmptyAvailableFalse(t *testing.T) {
 	a, db, _ := mkAdapter(t)
 	u := mkUsers(t, db, "Solo")[0]

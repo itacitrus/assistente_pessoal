@@ -50,6 +50,9 @@ type fakeStore struct {
 	// ProfileFacts fixture por userID.
 	profileFacts map[int64]ProfileFactsResponse
 
+	// Pessoas na vida (CRUD manual): userID -> "category\x00key" -> value.
+	personFacts map[int64]map[string]string
+
 	// Catalogo de medicamentos: fixture devolvido por ResolveDrug quando a
 	// query tem >=2 chars. Filtro real fica no resolver de producao.
 	drugMatches []DrugMatch
@@ -118,6 +121,7 @@ func newFakeStore() *fakeStore {
 		userInsights:  map[string]*InsightsResponse{},
 		dependentMeds: map[int64][]MedicationItem{},
 		profileFacts:  map[int64]ProfileFactsResponse{},
+		personFacts:   map[int64]map[string]string{},
 	}
 }
 
@@ -699,6 +703,78 @@ func (s *fakeStore) ProfileFacts(_ context.Context, userID int64) (ProfileFactsR
 	}
 	resp.Available = len(resp.Relations) > 0 || len(resp.People) > 0 || len(resp.Trips) > 0
 	return resp, nil
+}
+
+func fakePersonCanonicalCategory(t PersonFactType) string {
+	if t == PersonFactTypeRelacao {
+		return "relacao"
+	}
+	return "social_context"
+}
+
+func fakePersonBucket(category string) string {
+	switch category {
+	case "relacao":
+		return "relacao"
+	case "contato", "social_context":
+		return "pessoa"
+	default:
+		return ""
+	}
+}
+
+func fakePersonKey(category, key string) string { return category + "\x00" + key }
+
+func (s *fakeStore) CreatePersonFact(_ context.Context, userID int64, in PersonFactRequest) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cat := fakePersonCanonicalCategory(in.Type)
+	if s.personFacts[userID] == nil {
+		s.personFacts[userID] = map[string]string{}
+	}
+	k := fakePersonKey(cat, strings.TrimSpace(in.Name))
+	if _, ok := s.personFacts[userID][k]; ok {
+		return ErrConflict
+	}
+	s.personFacts[userID][k] = strings.TrimSpace(in.Detail)
+	return nil
+}
+
+func (s *fakeStore) UpdatePersonFact(_ context.Context, userID int64, in PersonFactRequest) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.personFacts[userID] == nil {
+		s.personFacts[userID] = map[string]string{}
+	}
+	origK := fakePersonKey(in.OriginalCategory, strings.TrimSpace(in.OriginalKey))
+	if _, ok := s.personFacts[userID][origK]; !ok {
+		return ErrNotFound
+	}
+	newCat := fakePersonCanonicalCategory(in.Type)
+	if fakePersonBucket(newCat) == fakePersonBucket(in.OriginalCategory) && in.OriginalCategory != "" {
+		newCat = in.OriginalCategory
+	}
+	newK := fakePersonKey(newCat, strings.TrimSpace(in.Name))
+	if newK != origK {
+		if _, ok := s.personFacts[userID][newK]; ok {
+			return ErrConflict
+		}
+		delete(s.personFacts[userID], origK)
+	}
+	s.personFacts[userID][newK] = strings.TrimSpace(in.Detail)
+	return nil
+}
+
+func (s *fakeStore) DeletePersonFact(_ context.Context, userID int64, category, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if fakePersonBucket(category) == "" {
+		return ErrValidation
+	}
+	if s.personFacts[userID] != nil {
+		delete(s.personFacts[userID], fakePersonKey(category, strings.TrimSpace(key)))
+	}
+	return nil
 }
 
 func (s *fakeStore) ResolveDrug(_ context.Context, query string, limit int) ([]DrugMatch, error) {

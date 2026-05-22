@@ -159,6 +159,11 @@ func (s *Server) Mount(mux *http.ServeMux) {
 	mux.Handle(s.route("/api/v1/me/profile-facts"),
 		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMeProfileFacts))))
 
+	// Curadoria manual das "pessoas na sua vida" (POST/PATCH/DELETE). Grava
+	// memorias que o Zello passa a conhecer. RequireOrigin protege as mutacoes.
+	mux.Handle(s.route("/api/v1/me/people"),
+		s.CORS(s.RequireOrigin(s.RequireAuth(http.HandlerFunc(s.handleMyPeopleCollection)))))
+
 	// Conexao com o Google Calendar do proprio titular. POST (emite token de
 	// uso unico) — RequireOrigin protege contra CSRF.
 	mux.Handle(s.route("/api/v1/me/google/connect-url"),

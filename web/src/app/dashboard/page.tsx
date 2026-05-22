@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ConnectGoogleButton } from "@/components/me/ConnectGoogleButton";
+import { PeopleManager } from "@/components/me/PeopleManager";
 import { DependentList } from "@/components/family/DependentList";
 import { PendingAutoRefresh } from "@/components/PendingAutoRefresh";
 import { ApiError } from "@/lib/api";
@@ -48,9 +49,7 @@ import type {
   Insight,
   InsightKind,
   InsightsResponse,
-  PersonFact,
   ProfileFacts,
-  RelationFact,
   TripFact,
   User,
 } from "@/types/api";
@@ -412,9 +411,7 @@ function ProfileFactsSection({ facts }: { facts: ProfileFacts }) {
   const relations = facts.relations ?? [];
   const people = facts.people ?? [];
   const trips = facts.trips ?? [];
-  const hasPeople = relations.length > 0 || people.length > 0;
   const hasTrips = trips.length > 0;
-  const hasAnything = facts.available && (hasPeople || hasTrips);
 
   return (
     <section
@@ -432,83 +429,11 @@ function ProfileFactsSection({ facts }: { facts: ProfileFacts }) {
         </h2>
       </header>
 
-      {!hasAnything ? (
-        <Card className="border-dashed bg-muted/30 shadow-warm">
-          <CardContent className="flex flex-col items-center gap-3 p-8 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[--zello-emerald]/10 text-[--zello-emerald]">
-              <BookHeart className="h-6 w-6" aria-hidden />
-            </div>
-            <p className="max-w-md text-base text-muted-foreground">
-              O Zello vai aprendendo sobre você conforme conversam — pessoas,
-              viagens e rotinas aparecem aqui.
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {hasPeople ? (
-            <PeopleCard relations={relations} people={people} />
-          ) : null}
-          {hasTrips ? <TripsCard trips={trips} /> : null}
-        </div>
-      )}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <PeopleManager relations={relations} people={people} />
+        {hasTrips ? <TripsCard trips={trips} /> : null}
+      </div>
     </section>
-  );
-}
-
-function PeopleCard({
-  relations,
-  people,
-}: {
-  relations: RelationFact[];
-  people: PersonFact[];
-}) {
-  return (
-    <Card className="shadow-warm">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-lg">
-          <Users className="h-5 w-5 text-[--zello-emerald]" aria-hidden />
-          Pessoas na sua vida
-        </CardTitle>
-        <CardDescription>
-          Quem o Zello conhece a partir das suas conversas.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <ul className="divide-y divide-border/70">
-          {relations.map((r, i) => (
-            <PersonRow
-              key={`rel-${r.name}-${i}`}
-              name={r.name}
-              detail={r.relation}
-            />
-          ))}
-          {people.map((p, i) => (
-            <PersonRow
-              key={`per-${p.name}-${i}`}
-              name={p.name}
-              detail={p.detail}
-            />
-          ))}
-        </ul>
-      </CardContent>
-    </Card>
-  );
-}
-
-function PersonRow({ name, detail }: { name: string; detail: string }) {
-  return (
-    <li className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
-      <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[--zello-emerald]/10 text-[--zello-emerald]">
-        <HeartHandshake className="h-4 w-4" aria-hidden />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-medium text-foreground">{name}</p>
-        {detail ? (
-          <p className="text-sm capitalize text-muted-foreground">{detail}</p>
-        ) : null}
-      </div>
-    </li>
   );
 }
 

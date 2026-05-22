@@ -799,6 +799,18 @@ func (db *DB) DeleteMemory(userID int64, category, key string) error {
 	return err
 }
 
+// MemoryExists informa se ja existe uma memoria (category, key) do usuario.
+func (db *DB) MemoryExists(userID int64, category, key string) (bool, error) {
+	var n int
+	err := db.conn.QueryRow(
+		`SELECT COUNT(1) FROM user_memories WHERE user_id = ? AND category = ? AND key = ?`,
+		userID, category, key).Scan(&n)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 func (db *DB) CreateUser(u *User) error {
 	result, err := db.conn.Exec(
 		`INSERT INTO users (phone_number, name, google_calendar_id, google_credentials,

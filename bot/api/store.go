@@ -129,6 +129,19 @@ type Store interface {
 	// viagens. Le o DB direto. available=false quando tudo vazio.
 	ProfileFacts(ctx context.Context, userID int64) (ProfileFactsResponse, error)
 
+	// CreatePersonFact grava uma pessoa/relacao na vida do usuario como memoria
+	// (category derivada do tipo, key = nome, value = detalhe). Retorna
+	// ErrConflict se ja existir uma entrada com o mesmo (category, key).
+	CreatePersonFact(ctx context.Context, userID int64, in PersonFactRequest) error
+	// UpdatePersonFact edita uma pessoa/relacao existente, identificada por
+	// OriginalCategory+OriginalKey. Se o nome (e portanto a key) ou o tipo (a
+	// category) mudarem, a memoria antiga eh removida e a nova criada
+	// atomicamente. ErrNotFound se a original nao existir; ErrConflict se o
+	// novo (category, key) colidir com outra entrada.
+	UpdatePersonFact(ctx context.Context, userID int64, in PersonFactRequest) error
+	// DeletePersonFact remove a memoria (category, key) do usuario.
+	DeletePersonFact(ctx context.Context, userID int64, category, key string) error
+
 	// Catalogo de medicamentos -------------------------------------------
 	// ResolveDrug busca no catalogo (ANVISA/CMED) ate `limit` apresentacoes
 	// que melhor correspondem a `query`, com correcao fuzzy/fonetica. Usado

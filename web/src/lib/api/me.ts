@@ -9,6 +9,7 @@ import type {
   IntakesResponse,
   MedicationItem,
   MedicationsResponse,
+  PersonFactBody,
   ProfileFacts,
 } from "@/types/api";
 
@@ -222,6 +223,49 @@ export async function getMyIntakes(
 export async function getGoogleConnectUrl(): Promise<{ url: string }> {
   return fetchApi<{ url: string }>("/api/v1/me/google/connect-url", {
     method: "POST",
+  });
+}
+
+/**
+ * POST /api/v1/me/people
+ * Cadastra uma pessoa/relacao na vida do usuario (vira memoria que o Zello
+ * passa a conhecer). 409 se ja existir alguem com o mesmo nome no mesmo tipo.
+ */
+export async function createPersonFact(
+  body: PersonFactBody,
+): Promise<{ ok: boolean }> {
+  return fetchApi<{ ok: boolean }>("/api/v1/me/people", {
+    method: "POST",
+    json: body,
+  });
+}
+
+/**
+ * PATCH /api/v1/me/people
+ * Edita uma pessoa/relacao existente. `original_category` + `original_key`
+ * identificam a entrada (mesmo que o nome/tipo mudem).
+ */
+export async function updatePersonFact(
+  body: PersonFactBody,
+): Promise<{ ok: boolean }> {
+  return fetchApi<{ ok: boolean }>("/api/v1/me/people", {
+    method: "PATCH",
+    json: body,
+  });
+}
+
+/**
+ * DELETE /api/v1/me/people?category=&key=
+ * Remove uma pessoa/relacao. Identidade vai na query (keys arbitrarias com
+ * unicode/espacos nao cabem bem em path param).
+ */
+export async function deletePersonFact(
+  category: string,
+  key: string,
+): Promise<{ ok: boolean }> {
+  const qs = new URLSearchParams({ category, key }).toString();
+  return fetchApi<{ ok: boolean }>(`/api/v1/me/people?${qs}`, {
+    method: "DELETE",
   });
 }
 
