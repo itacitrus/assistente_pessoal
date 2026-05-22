@@ -57,8 +57,9 @@ func (a *apiAdapter) ProfileFacts(ctx context.Context, userID int64) (api.Profil
 		})
 	}
 
-	// Memorias de relacao -> relations; contato/relacao/social_context ->
-	// people. Uma unica leitura de memorias por categoria relevante.
+	// Memorias de "relacao" -> Relations. "contato"/"social_context" -> People.
+	// "relacao" NAO entra em People (senao o mesmo fato duplica na UI, que
+	// renderiza relations + people no mesmo card).
 	relMems, err := a.db.GetMemories(userID, "relacao")
 	if err != nil {
 		return resp, err
@@ -74,8 +75,8 @@ func (a *apiAdapter) ProfileFacts(ctx context.Context, userID int64) (api.Profil
 		})
 	}
 
-	// People: contato + relacao + social_context (sem risco:*).
-	for _, cat := range []string{"contato", "relacao", "social_context"} {
+	// People: contato + social_context (sem risco:*).
+	for _, cat := range []string{"contato", "social_context"} {
 		mems, err := a.db.GetMemories(userID, cat)
 		if err != nil {
 			return resp, err

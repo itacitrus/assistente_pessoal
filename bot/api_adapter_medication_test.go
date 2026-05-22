@@ -172,6 +172,32 @@ func TestProfileFacts_AggregatesRelationsPeopleTrips(t *testing.T) {
 	}
 }
 
+// TestProfileFacts_RelacaoNotDuplicated blinda o bug de uma memoria "relacao"
+// aparecer duas vezes — uma em Relations e outra em People — porque o loop de
+// People incluia "relacao". Deve aparecer SO em Relations.
+func TestProfileFacts_RelacaoNotDuplicated(t *testing.T) {
+	a, db, _ := mkAdapter(t)
+	users := mkUsers(t, db, "Waldyr")
+	waldyr := users[0]
+	_ = db.SaveMemory(waldyr.ID, "relacao", "sobrinha_maria_paula", "Maria Paula - sobrinha, aniversário 13/06")
+
+	facts, err := a.ProfileFacts(context.Background(), waldyr.ID)
+	if err != nil {
+		t.Fatalf("ProfileFacts: %v", err)
+	}
+	if len(facts.Relations) != 1 {
+		t.Fatalf("relations = %d, want 1: %+v", len(facts.Relations), facts.Relations)
+	}
+	for _, p := range facts.People {
+		if strings.Contains(strings.ToLower(p.Name), "maria") {
+			t.Fatalf("memoria 'relacao' vazou pra People (duplicata): %+v", p)
+		}
+	}
+	if len(facts.People) != 0 {
+		t.Fatalf("people = %d, want 0 (relacao nao deve entrar em people)", len(facts.People))
+	}
+}
+
 func TestProfileFacts_EmptyAvailableFalse(t *testing.T) {
 	a, db, _ := mkAdapter(t)
 	u := mkUsers(t, db, "Solo")[0]
