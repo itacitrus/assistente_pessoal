@@ -125,6 +125,20 @@ export async function createMyMedication(
 }
 
 /**
+ * PATCH /api/v1/me/medications/{id}
+ * Edita (replace) um remédio do próprio titular. Devolve o MedicationItem.
+ */
+export async function updateMyMedication(
+  id: number,
+  body: CreateMedicationBody,
+): Promise<MedicationItem> {
+  return fetchApi<MedicationItem>(`/api/v1/me/medications/${id}`, {
+    method: "PATCH",
+    json: body,
+  });
+}
+
+/**
  * DELETE /api/v1/me/medications/{id}
  * Remove (soft-delete) um remédio do próprio titular. Devolve `{ ok: true }`.
  */

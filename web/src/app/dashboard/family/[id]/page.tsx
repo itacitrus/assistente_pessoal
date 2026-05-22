@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { AlertList } from "@/components/family/AlertList";
 import { ConnectDependentGoogleButton } from "@/components/family/ConnectDependentGoogleButton";
+import { DependentDangerZone } from "@/components/family/DependentDangerZone";
 import { DependentDataForm } from "@/components/family/DependentDataForm";
 import { MetricCard } from "@/components/family/MetricCard";
 import { StatusHeader } from "@/components/family/StatusHeader";
@@ -41,6 +42,7 @@ export default async function DependentDetailPage({ params }: PageProps) {
   let dependentName = "";
   let dependentPhone = "";
   let dependentGoogleConnected = false;
+  let dependentActive = true;
   let medications: MedicationItem[] = [];
   try {
     const [s, deps, meds] = await Promise.all([
@@ -55,6 +57,7 @@ export default async function DependentDetailPage({ params }: PageProps) {
     dependentName = entry?.user.name ?? "";
     dependentPhone = entry?.user.phone_number ?? "";
     dependentGoogleConnected = entry?.user.google_connected ?? false;
+    dependentActive = entry?.user.is_active ?? true;
     medications = meds;
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) {
@@ -145,6 +148,12 @@ export default async function DependentDetailPage({ params }: PageProps) {
         dependentId={id}
         initialName={dependentName}
         initialPhoneE164={dependentPhone}
+      />
+
+      <DependentDangerZone
+        dependentId={id}
+        dependentName={dependentName}
+        initialActive={dependentActive}
       />
     </div>
   );

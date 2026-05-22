@@ -746,6 +746,54 @@ func (s *fakeStore) DeactivateMyMedication(_ context.Context, userID, medID int6
 	return ErrNotFound
 }
 
+func (s *fakeStore) UpdateDependentMedication(_ context.Context, guardianID, dependentID, medID int64, in CreateMedicationRequest) (*MedicationItem, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.linksByGD[joinGDKey(guardianID, dependentID)]; !ok {
+		return nil, ErrNotFound
+	}
+	meds := s.dependentMeds[dependentID]
+	for i := range meds {
+		if meds[i].ID == medID {
+			meds[i].Name = in.Name
+			meds[i].Dose = in.Dose
+			meds[i].Instructions = in.Instructions
+			meds[i].ToleranceMinutes = in.ToleranceMinutes
+			meds[i].LateDosePolicy = in.LateDosePolicy
+			return &meds[i], nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (s *fakeStore) UpdateMyMedication(_ context.Context, userID, medID int64, in CreateMedicationRequest) (*MedicationItem, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	meds := s.dependentMeds[userID]
+	for i := range meds {
+		if meds[i].ID == medID {
+			meds[i].Name = in.Name
+			meds[i].Dose = in.Dose
+			meds[i].Instructions = in.Instructions
+			meds[i].ToleranceMinutes = in.ToleranceMinutes
+			meds[i].LateDosePolicy = in.LateDosePolicy
+			return &meds[i], nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (s *fakeStore) UnlinkDependent(_ context.Context, guardianID, dependentID int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := joinGDKey(guardianID, dependentID)
+	if _, ok := s.linksByGD[key]; !ok {
+		return ErrNotFound
+	}
+	delete(s.linksByGD, key)
+	return nil
+}
+
 // helpers ---
 
 // joinGDKey eh chave para mapas (guardian, dependent).

@@ -361,6 +361,19 @@ func (a *apiAdapter) UpdateDependent(ctx context.Context, guardianID, dependentI
 			return nil, perr
 		}
 	}
+	// Ativa/desativa a conta (pausa lembretes/proatividade), reversivel.
+	if p.Active != nil {
+		if err := a.db.SetUserActive(dependentID, *p.Active); err != nil {
+			return nil, fmt.Errorf("set dependent active: %w", err)
+		}
+		if a.audit != nil {
+			action := "dependent_deactivated"
+			if *p.Active {
+				action = "dependent_reactivated"
+			}
+			_ = a.audit.Log(guardianID, action, "", fmt.Sprintf("dependent_id=%d", dependentID))
+		}
+	}
 	patch := api.PreferencesPatch{
 		Name:                     p.Name,
 		DailySummaryTime:         p.DailySummaryTime,
@@ -370,6 +383,26 @@ func (a *apiAdapter) UpdateDependent(ctx context.Context, guardianID, dependentI
 		InactivityThresholdHours: p.InactivityThresholdHours,
 	}
 	return a.UpdateUserPreferences(ctx, dependentID, patch)
+}
+
+// UnlinkDependent remove o vinculo guardiao->dependente. Reversivel: o idoso e
+// seus dados (medicamentos, historico) permanecem; basta revincular. Valida
+// que o guardiao realmente cuida do dependente antes de remover.
+func (a *apiAdapter) UnlinkDependent(ctx context.Context, guardianID, dependentID int64) error {
+	ok, err := a.db.IsGuardianOf(guardianID, dependentID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return api.ErrNotFound
+	}
+	if err := a.db.UnlinkFamily(guardianID, dependentID); err != nil {
+		return fmt.Errorf("unlink family: %w", err)
+	}
+	if a.audit != nil {
+		_ = a.audit.Log(guardianID, "dependent_unlinked", "", fmt.Sprintf("dependent_id=%d", dependentID))
+	}
+	return nil
 }
 
 func (a *apiAdapter) UpdateNotifyPrefs(ctx context.Context, guardianID, linkID int64, p api.NotifyPatch) (*api.FamilyLink, error) {

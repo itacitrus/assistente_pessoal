@@ -520,6 +520,58 @@ func (s *Server) handleDeleteDependentMedication(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// handleUpdateDependentMedication — PATCH /family/dependents/{id}/medications/{medId}.
+// Replace: o body traz a definicao completa do medicamento (mesmo shape de
+// criacao).
+func (s *Server) handleUpdateDependentMedication(w http.ResponseWriter, r *http.Request, depID, medID int64) {
+	user := userFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Não autenticado.")
+		return
+	}
+	var req CreateMedicationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, CodeValidation, "JSON inválido.")
+		return
+	}
+	if msg := validateCreateMedication(&req); msg != "" {
+		writeError(w, http.StatusBadRequest, CodeValidation, msg)
+		return
+	}
+	item, err := s.store.UpdateDependentMedication(r.Context(), user.ID, depID, medID, req)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			writeError(w, http.StatusNotFound, CodeNotFound, "Medicamento não encontrado.")
+		case errors.Is(err, ErrValidation):
+			writeError(w, http.StatusBadRequest, CodeValidation, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao editar medicamento.")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, *item)
+}
+
+// handleUnlinkDependent — DELETE /family/dependents/{id}. Remove o vinculo
+// (reversivel; nao apaga a conta do idoso nem seus dados).
+func (s *Server) handleUnlinkDependent(w http.ResponseWriter, r *http.Request, depID int64) {
+	user := userFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Não autenticado.")
+		return
+	}
+	if err := s.store.UnlinkDependent(r.Context(), user.ID, depID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeError(w, http.StatusNotFound, CodeNotFound, "Dependente não encontrado.")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao remover vínculo.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // validateCreateMedication valida o body de criacao de medicamento. Retorna
 // string vazia se ok, mensagem de erro PT-BR caso contrario.
 func validateCreateMedication(req *CreateMedicationRequest) string {

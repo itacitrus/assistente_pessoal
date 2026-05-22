@@ -51,6 +51,9 @@ type Store interface {
 	CreateDependent(ctx context.Context, guardianID int64, req CreateDependentRequest) (*User, *FamilyLink, error)
 	ListDependents(ctx context.Context, guardianID int64) ([]DependentSummary, error)
 	UpdateDependent(ctx context.Context, guardianID, dependentID int64, p DependentPatch) (*User, error)
+	// UnlinkDependent remove o vinculo guardiao->dependente (reversivel: o
+	// idoso e seus dados permanecem; basta revincular). Valida IsGuardianOf.
+	UnlinkDependent(ctx context.Context, guardianID, dependentID int64) error
 	UpdateNotifyPrefs(ctx context.Context, guardianID, linkID int64, p NotifyPatch) (*FamilyLink, error)
 	GetFamilyLink(ctx context.Context, linkID int64) (*FamilyLink, error)
 	IsGuardianOf(ctx context.Context, guardianID, dependentID int64) (bool, error)
@@ -66,6 +69,7 @@ type Store interface {
 	// medicamento nao pertence ao dependente.
 	ListDependentMedications(ctx context.Context, guardianID, dependentID int64) ([]MedicationItem, error)
 	CreateDependentMedication(ctx context.Context, guardianID, dependentID int64, in CreateMedicationRequest) (*MedicationItem, error)
+	UpdateDependentMedication(ctx context.Context, guardianID, dependentID, medID int64, in CreateMedicationRequest) (*MedicationItem, error)
 	DeactivateDependentMedication(ctx context.Context, guardianID, dependentID, medID int64) error
 
 	// Medicacao do proprio usuario (titular). Mesmo motor de lembrete/escalacao
@@ -73,6 +77,7 @@ type Store interface {
 	// usuario gerenciando os remedios dele.
 	ListMyMedications(ctx context.Context, userID int64) ([]MedicationItem, error)
 	CreateMyMedication(ctx context.Context, userID int64, in CreateMedicationRequest) (*MedicationItem, error)
+	UpdateMyMedication(ctx context.Context, userID, medID int64, in CreateMedicationRequest) (*MedicationItem, error)
 	DeactivateMyMedication(ctx context.Context, userID, medID int64) error
 
 	// Me / agenda ----------------------------------------------------------

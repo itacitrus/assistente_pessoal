@@ -384,6 +384,10 @@ export interface MedicationItem {
   tolerance_minutes: number;
   /** Orientação para dose atrasada, definida pelo responsável. */
   late_dose_policy: LateDosePolicy;
+  /** Campos estruturados do primeiro schedule, para o form de edição pré-preencher. */
+  times: string[];
+  frequency: MedicationFrequency;
+  days?: MedicationWeekDay[];
 }
 
 /**
@@ -495,6 +499,8 @@ export interface UpdateDependentBody {
   weekly_summary_time?: string;
   reminder_before?: ReminderBefore;
   inactivity_threshold_hours?: number;
+  /** Liga/desliga a conta do dependente (pausa lembretes/proatividade). */
+  active?: boolean;
 }
 
 /** Body de PATCH /api/v1/family/links/{id}/notify — espelha api.NotifyPatch. */

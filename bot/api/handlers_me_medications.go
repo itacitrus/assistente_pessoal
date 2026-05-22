@@ -39,11 +39,46 @@ func (s *Server) handleMyMedicationResource(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, CodeValidation, "ID do medicamento inválido.")
 		return
 	}
-	if r.Method != http.MethodDelete {
+	switch r.Method {
+	case http.MethodPatch:
+		s.handleUpdateMyMedication(w, r, medID)
+	case http.MethodDelete:
+		s.handleDeleteMyMedication(w, r, medID)
+	default:
 		writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
+	}
+}
+
+// handleUpdateMyMedication — PATCH /me/medications/{id}. Replace com o shape de
+// criacao.
+func (s *Server) handleUpdateMyMedication(w http.ResponseWriter, r *http.Request, medID int64) {
+	user := userFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Não autenticado.")
 		return
 	}
-	s.handleDeleteMyMedication(w, r, medID)
+	var req CreateMedicationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, CodeValidation, "JSON inválido.")
+		return
+	}
+	if msg := validateCreateMedication(&req); msg != "" {
+		writeError(w, http.StatusBadRequest, CodeValidation, msg)
+		return
+	}
+	item, err := s.store.UpdateMyMedication(r.Context(), user.ID, medID, req)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			writeError(w, http.StatusNotFound, CodeNotFound, "Medicamento não encontrado.")
+		case errors.Is(err, ErrValidation):
+			writeError(w, http.StatusBadRequest, CodeValidation, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao editar medicamento.")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, *item)
 }
 
 func (s *Server) handleListMyMedications(w http.ResponseWriter, r *http.Request) {

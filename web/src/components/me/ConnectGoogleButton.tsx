@@ -18,12 +18,23 @@ export interface ConnectGoogleButtonProps {
  * consentimento ao backend e redireciona o navegador atual — o titular ja
  * esta logado na conta Google dele aqui, entao autoriza na mesma sessao.
  * Mantemos `redirecting` ate a navegacao acontecer pra evitar duplo clique.
+ *
+ * O label reflete o status: "Conectar" quando desconectado, "Reconectar"
+ * quando ja conectado. Desconectado abre o link direto (sem fricao). Ja
+ * conectado, confirmamos antes — reautorizar troca o refresh token, entao
+ * evitamos disparar isso por clique acidental.
  */
 export function ConnectGoogleButton({ connected }: ConnectGoogleButtonProps) {
   const [redirecting, setRedirecting] = React.useState(false);
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
 
   async function handleClick() {
+    if (connected) {
+      const ok = window.confirm(
+        "Sua agenda do Google já está conectada. Deseja reconectar para reautorizar o acesso?",
+      );
+      if (!ok) return;
+    }
     setRedirecting(true);
     setErrorMsg(null);
     try {

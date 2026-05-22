@@ -84,6 +84,9 @@ type DependentPatch struct {
 	WeeklySummaryTime        *string `json:"weekly_summary_time,omitempty"`
 	ReminderBefore           *string `json:"reminder_before,omitempty"`
 	InactivityThresholdHours *int    `json:"inactivity_threshold_hours,omitempty"`
+	// Active liga/desliga a conta do dependente (pausa lembretes/proatividade).
+	// Reversivel; nao apaga dados. nil = nao mexe.
+	Active *bool `json:"active,omitempty"`
 }
 
 // NotifyPatch eh body de PATCH /family/links/{id}/notify.
@@ -130,6 +133,12 @@ type MedicationItem struct {
 	// LateDosePolicy: orientacao para dose atrasada. Um de: consult_doctor
 	// (padrao), skip, take_keep_next, take_recalculate.
 	LateDosePolicy string `json:"late_dose_policy"`
+	// Campos estruturados do PRIMEIRO schedule, para o form de edicao
+	// pre-preencher (o texto humano `Schedule` cobre todos os schedules). Times
+	// em "HH:MM"; Frequency "daily"|"weekly"; Days subset mon..sun (weekly).
+	Times     []string `json:"times"`
+	Frequency string   `json:"frequency"`
+	Days      []string `json:"days,omitempty"`
 }
 
 // MedicationsResponse eh o payload de GET /family/dependents/{id}/medications.

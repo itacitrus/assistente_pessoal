@@ -176,6 +176,8 @@ func (s *Server) handleDependentResource(w http.ResponseWriter, r *http.Request)
 		switch r.Method {
 		case http.MethodPatch:
 			s.handleUpdateDependent(w, r, depID)
+		case http.MethodDelete:
+			s.handleUnlinkDependent(w, r, depID)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
 		}
@@ -238,11 +240,14 @@ func (s *Server) routeDependentMedications(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, CodeValidation, "ID do medicamento inválido.")
 		return
 	}
-	if r.Method != http.MethodDelete {
+	switch r.Method {
+	case http.MethodPatch:
+		s.handleUpdateDependentMedication(w, r, depID, medID)
+	case http.MethodDelete:
+		s.handleDeleteDependentMedication(w, r, depID, medID)
+	default:
 		writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
-		return
 	}
-	s.handleDeleteDependentMedication(w, r, depID, medID)
 }
 
 // handleLinkResource roteia /family/links/{id}/notify.

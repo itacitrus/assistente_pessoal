@@ -164,6 +164,21 @@ export async function createDependentMedication(
 }
 
 /**
+ * PATCH /api/v1/family/dependents/{id}/medications/{medId}
+ * Edita um remedio (replace: body completo, mesmo shape da criacao).
+ */
+export async function updateDependentMedication(
+  id: number,
+  medId: number,
+  body: CreateMedicationBody,
+): Promise<MedicationItem> {
+  return fetchApi<MedicationItem>(
+    `/api/v1/family/dependents/${id}/medications/${medId}`,
+    { method: "PATCH", json: body },
+  );
+}
+
+/**
  * DELETE /api/v1/family/dependents/{id}/medications/{medId}
  * Remove um remedio cadastrado. Devolve `{ ok: true }`.
  */
@@ -175,6 +190,32 @@ export async function deleteDependentMedication(
     `/api/v1/family/dependents/${id}/medications/${medId}`,
     { method: "DELETE" },
   );
+}
+
+/**
+ * PATCH /api/v1/family/dependents/{id} com { active }.
+ * Desativa (pausa lembretes/proatividade) ou reativa a conta do dependente.
+ * Reversivel; nao apaga dados.
+ */
+export async function setDependentActive(
+  id: number,
+  active: boolean,
+): Promise<User> {
+  return fetchApi<User>(`/api/v1/family/dependents/${id}`, {
+    method: "PATCH",
+    json: { active },
+  });
+}
+
+/**
+ * DELETE /api/v1/family/dependents/{id}
+ * Remove o vinculo responsavel->dependente (reversivel: a conta do idoso e
+ * seus dados permanecem). Devolve `{ ok: true }`.
+ */
+export async function unlinkDependent(id: number): Promise<{ ok: boolean }> {
+  return fetchApi<{ ok: boolean }>(`/api/v1/family/dependents/${id}`, {
+    method: "DELETE",
+  });
 }
 
 /**

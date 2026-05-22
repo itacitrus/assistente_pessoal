@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/giovannirambo/assistente_pessoal/bot/api"
+	"github.com/teambition/rrule-go"
 )
 
 // =========================================================================
@@ -59,6 +60,7 @@ func (a *apiAdapter) buildMedicationItem(m *Medication) api.MedicationItem {
 		scheds = nil
 	}
 	text, endsAt := summarizeSchedules(scheds)
+	times, freq, days := scheduleFormFields(scheds)
 	return api.MedicationItem{
 		ID:               m.ID,
 		Name:             m.Name,
@@ -69,7 +71,46 @@ func (a *apiAdapter) buildMedicationItem(m *Medication) api.MedicationItem {
 		EndsAt:           endsAt,
 		ToleranceMinutes: m.ToleranceMinutes,
 		LateDosePolicy:   string(m.LateDosePolicy),
+		Times:            times,
+		Frequency:        freq,
+		Days:             days,
 	}
+}
+
+// scheduleFormFields extrai do PRIMEIRO schedule os campos estruturados que o
+// form de edicao precisa pre-preencher: horarios "HH:MM", frequencia
+// daily|weekly e dias da semana (mon..sun) quando weekly. Best-effort — devolve
+// daily/sem horarios se nao conseguir parsear.
+func scheduleFormFields(scheds []MedicationSchedule) (times []string, frequency string, days []string) {
+	frequency = "daily"
+	times = []string{}
+	if len(scheds) == 0 {
+		return times, frequency, days
+	}
+	raw := strings.TrimPrefix(strings.TrimSpace(scheds[0].RRULE), "RRULE:")
+	opts, err := rrule.StrToROption(raw)
+	if err != nil {
+		return times, frequency, days
+	}
+	minute := 0
+	if len(opts.Byminute) > 0 {
+		minute = opts.Byminute[0]
+	}
+	hours := append([]int(nil), opts.Byhour...)
+	sort.Ints(hours)
+	for _, h := range hours {
+		times = append(times, fmt.Sprintf("%02d:%02d", h, minute))
+	}
+	if opts.Freq == rrule.WEEKLY && len(opts.Byweekday) > 0 {
+		frequency = "weekly"
+		short := [...]string{"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
+		for _, d := range opts.Byweekday {
+			if i := d.Day(); i >= 0 && i < len(short) {
+				days = append(days, short[i])
+			}
+		}
+	}
+	return times, frequency, days
 }
 
 // summarizeSchedules junta os schedules num texto PT-BR e calcula a data de
@@ -180,6 +221,90 @@ func (a *apiAdapter) createMedicationForOwner(ownerID, createdByID int64, in api
 	}
 	med.Active = true
 	item := a.buildMedicationItem(med)
+	return &item, nil
+}
+
+// UpdateDependentMedication edita um medicamento do dependente (PUT/replace),
+// validando guardiao + posse. Substitui dados + schedule pelo conteudo de `in`.
+func (a *apiAdapter) UpdateDependentMedication(ctx context.Context, guardianID, dependentID, medID int64, in api.CreateMedicationRequest) (*api.MedicationItem, error) {
+	ok, err := a.db.IsGuardianOf(guardianID, dependentID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, api.ErrNotFound
+	}
+	item, err := a.updateMedicationForOwner(dependentID, medID, in)
+	if err != nil {
+		return nil, err
+	}
+	if a.audit != nil {
+		_ = a.audit.Log(guardianID, "medication_edited", item.Name,
+			fmt.Sprintf("dependent_id=%d|medication_id=%d", dependentID, medID))
+	}
+	return item, nil
+}
+
+// UpdateMyMedication edita um medicamento do proprio titular (PUT/replace).
+func (a *apiAdapter) UpdateMyMedication(ctx context.Context, userID, medID int64, in api.CreateMedicationRequest) (*api.MedicationItem, error) {
+	item, err := a.updateMedicationForOwner(userID, medID, in)
+	if err != nil {
+		return nil, err
+	}
+	if a.audit != nil {
+		_ = a.audit.Log(userID, "medication_edited", item.Name,
+			fmt.Sprintf("self=true|medication_id=%d", medID))
+	}
+	return item, nil
+}
+
+// updateMedicationForOwner aplica a edicao (replace) garantindo que medID
+// pertence a ownerID (nao vaza existencia de remedio alheio). Atualiza campos
+// do medicamento e SUBSTITUI o schedule pelo novo (times/frequency/days +
+// duracao). Autorizacao fica a cargo do caller.
+func (a *apiAdapter) updateMedicationForOwner(ownerID, medID int64, in api.CreateMedicationRequest) (*api.MedicationItem, error) {
+	med, err := a.db.GetMedicationByID(medID)
+	if err != nil || med.UserID != ownerID {
+		return nil, api.ErrNotFound
+	}
+	rruleStr, err := buildMedicationRRULE(in.Times, in.Frequency, in.Days)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", api.ErrValidation, err)
+	}
+	policy, err := ValidateLateDosePolicy(strings.TrimSpace(in.LateDosePolicy))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", api.ErrValidation, err)
+	}
+	start := time.Now().In(BRT())
+	endDate, err := resolveMedicationEndDate(start, in.Duration)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", api.ErrValidation, err)
+	}
+
+	name := strings.TrimSpace(in.Name)
+	dose := strings.TrimSpace(in.Dose)
+	instr := strings.TrimSpace(in.Instructions)
+	tol := in.ToleranceMinutes
+	if err := a.db.UpdateMedicationFields(medID, &name, &dose, &instr, &tol, &policy); err != nil {
+		return nil, fmt.Errorf("update medication fields: %w", err)
+	}
+	// Substitui o(s) schedule(s) pelo novo conjunto.
+	if err := a.db.DeleteSchedulesForMedication(medID); err != nil {
+		return nil, fmt.Errorf("delete schedules: %w", err)
+	}
+	if err := a.db.CreateMedicationSchedule(&MedicationSchedule{
+		MedicationID: medID,
+		RRULE:        rruleStr,
+		StartDate:    start,
+		EndDate:      endDate,
+	}); err != nil {
+		return nil, fmt.Errorf("create schedule: %w", err)
+	}
+	updated, err := a.db.GetMedicationByID(medID)
+	if err != nil {
+		return nil, err
+	}
+	item := a.buildMedicationItem(updated)
 	return &item, nil
 }
 

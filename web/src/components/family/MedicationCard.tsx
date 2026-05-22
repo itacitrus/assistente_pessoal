@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Clock, Pill, Trash2 } from "lucide-react";
+import { Clock, Pencil, Pill, Trash2 } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,17 +10,29 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ApiError } from "@/lib/api";
 import { deleteDependentMedication } from "@/lib/api/family";
 import { deleteMyMedication } from "@/lib/api/me";
-import type { MedicationTarget } from "@/components/forms/MedicationForm";
-import type { MedicationItem } from "@/types/api";
+import {
+  MedicationForm,
+  type MedicationTarget,
+} from "@/components/forms/MedicationForm";
+import type { LateDosePolicy, MedicationItem } from "@/types/api";
 
 export interface MedicationCardProps {
   target: MedicationTarget;
   medication: MedicationItem;
 }
 
+/** Resumo curto da política de dose atrasada para o responsável conferir. */
+const LATE_POLICY_LABEL: Record<LateDosePolicy, string> = {
+  consult_doctor: "Atraso: decisão do médico",
+  skip: "Atraso: pular a dose",
+  take_keep_next: "Atraso: tomar e manter a próxima",
+  take_recalculate: "Atraso: tomar e recalcular horários",
+};
+
 export function MedicationCard({ target, medication }: MedicationCardProps) {
   const router = useRouter();
   const [removing, setRemoving] = React.useState(false);
+  const [editing, setEditing] = React.useState(false);
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
 
   async function handleRemove() {
@@ -45,6 +57,33 @@ export function MedicationCard({ target, medication }: MedicationCardProps) {
         setErrorMsg("Não consegui remover agora. Tente novamente.");
       }
     }
+  }
+
+  if (editing) {
+    return (
+      <Card className="shadow-warm">
+        <CardContent className="space-y-4 p-5">
+          <div className="flex items-center justify-between">
+            <p className="font-medium text-foreground">
+              Editar {medication.name}
+            </p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setEditing(false)}
+            >
+              Cancelar
+            </Button>
+          </div>
+          <MedicationForm
+            target={target}
+            medication={medication}
+            onDone={() => setEditing(false)}
+          />
+        </CardContent>
+      </Card>
+    );
   }
 
   return (
@@ -83,6 +122,11 @@ export function MedicationCard({ target, medication }: MedicationCardProps) {
                 {medication.instructions}
               </p>
             ) : null}
+            <p className="text-xs text-muted-foreground">
+              Tolerância: {medication.tolerance_minutes} min ·{" "}
+              {LATE_POLICY_LABEL[medication.late_dose_policy] ??
+                LATE_POLICY_LABEL.consult_doctor}
+            </p>
             {errorMsg ? (
               <Alert variant="destructive" className="mt-2">
                 <AlertDescription>{errorMsg}</AlertDescription>
@@ -90,17 +134,33 @@ export function MedicationCard({ target, medication }: MedicationCardProps) {
             ) : null}
           </div>
         </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={handleRemove}
-          disabled={removing}
-          className="shrink-0 self-start text-muted-foreground hover:text-destructive"
-        >
-          <Trash2 className="h-4 w-4" aria-hidden />
-          {removing ? "Removendo..." : "Remover"}
-        </Button>
+        <div className="flex shrink-0 gap-1 self-start">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setErrorMsg(null);
+              setEditing(true);
+            }}
+            disabled={removing}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <Pencil className="h-4 w-4" aria-hidden />
+            Editar
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={handleRemove}
+            disabled={removing}
+            className="text-muted-foreground hover:text-destructive"
+          >
+            <Trash2 className="h-4 w-4" aria-hidden />
+            {removing ? "Removendo..." : "Remover"}
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );

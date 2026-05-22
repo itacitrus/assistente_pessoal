@@ -10,8 +10,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ApiError } from "@/lib/api";
-import { createDependentMedication } from "@/lib/api/family";
-import { createMyMedication } from "@/lib/api/me";
+import {
+  createDependentMedication,
+  updateDependentMedication,
+} from "@/lib/api/family";
+import { createMyMedication, updateMyMedication } from "@/lib/api/me";
 import { cn } from "@/lib/utils";
 import type {
   CreateMedicationBody,
@@ -19,6 +22,7 @@ import type {
   MedicationDuration,
   MedicationDurationUnit,
   MedicationFrequency,
+  MedicationItem,
   MedicationWeekDay,
 } from "@/types/api";
 
@@ -32,6 +36,10 @@ export type MedicationTarget =
 
 export interface MedicationFormProps {
   target: MedicationTarget;
+  /** Quando presente, o form entra em modo edição (PATCH) desse medicamento. */
+  medication?: MedicationItem;
+  /** Chamado após salvar com sucesso (ex: fechar o modal de edição). */
+  onDone?: () => void;
 }
 
 type Status = "idle" | "submitting" | "error";
@@ -98,26 +106,40 @@ function todayISO(): string {
   return new Date(d.getTime() - tzOffset).toISOString().slice(0, 10);
 }
 
-export function MedicationForm({ target }: MedicationFormProps) {
+export function MedicationForm({
+  target,
+  medication,
+  onDone,
+}: MedicationFormProps) {
   const router = useRouter();
-  const [name, setName] = React.useState("");
-  const [dose, setDose] = React.useState("");
-  const [instructions, setInstructions] = React.useState("");
-  const [times, setTimes] = React.useState<string[]>(["08:00"]);
-  const [frequency, setFrequency] =
-    React.useState<MedicationFrequency>("daily");
-  const [days, setDays] = React.useState<MedicationWeekDay[]>([]);
-  const [durationKind, setDurationKind] =
-    React.useState<DurationKind>("continuous");
+  const isEdit = medication != null;
+  const [name, setName] = React.useState(medication?.name ?? "");
+  const [dose, setDose] = React.useState(medication?.dose ?? "");
+  const [instructions, setInstructions] = React.useState(
+    medication?.instructions ?? "",
+  );
+  const [times, setTimes] = React.useState<string[]>(
+    medication?.times?.length ? medication.times : ["08:00"],
+  );
+  const [frequency, setFrequency] = React.useState<MedicationFrequency>(
+    medication?.frequency ?? "daily",
+  );
+  const [days, setDays] = React.useState<MedicationWeekDay[]>(
+    medication?.days ?? [],
+  );
+  const [durationKind, setDurationKind] = React.useState<DurationKind>(
+    medication?.ends_at ? "until" : "continuous",
+  );
   const [periodCount, setPeriodCount] = React.useState("1");
   const [periodUnit, setPeriodUnit] =
     React.useState<MedicationDurationUnit>("weeks");
-  const [untilDate, setUntilDate] = React.useState("");
+  const [untilDate, setUntilDate] = React.useState(medication?.ends_at ?? "");
   const [toleranceMin, setToleranceMin] = React.useState(
-    String(DEFAULT_TOLERANCE_MIN),
+    String(medication?.tolerance_minutes ?? DEFAULT_TOLERANCE_MIN),
   );
-  const [latePolicy, setLatePolicy] =
-    React.useState<LateDosePolicy>("consult_doctor");
+  const [latePolicy, setLatePolicy] = React.useState<LateDosePolicy>(
+    medication?.late_dose_policy ?? "consult_doctor",
+  );
   const [status, setStatus] = React.useState<Status>("idle");
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
 
@@ -209,19 +231,28 @@ export function MedicationForm({ target }: MedicationFormProps) {
     };
 
     try {
-      if (target.kind === "self") {
+      if (isEdit) {
+        if (target.kind === "self") {
+          await updateMyMedication(medication.id, body);
+        } else {
+          await updateDependentMedication(target.dependentId, medication.id, body);
+        }
+      } else if (target.kind === "self") {
         await createMyMedication(body);
       } else {
         await createDependentMedication(target.dependentId, body);
       }
-      resetForm();
+      if (!isEdit) resetForm();
       router.refresh();
+      onDone?.();
     } catch (err) {
       setStatus("error");
       setErrorMsg(
         err instanceof ApiError
           ? err.message
-          : "Não consegui cadastrar agora. Tente novamente em alguns segundos.",
+          : isEdit
+            ? "Não consegui salvar as alterações agora. Tente novamente em alguns segundos."
+            : "Não consegui cadastrar agora. Tente novamente em alguns segundos.",
       );
     }
   }
@@ -500,7 +531,13 @@ export function MedicationForm({ target }: MedicationFormProps) {
       )}
 
       <Button type="submit" disabled={!canSubmit} className="w-full">
-        {status === "submitting" ? "Cadastrando..." : "Cadastrar remédio"}
+        {status === "submitting"
+          ? isEdit
+            ? "Salvando..."
+            : "Cadastrando..."
+          : isEdit
+            ? "Salvar alterações"
+            : "Cadastrar remédio"}
       </Button>
     </form>
   );

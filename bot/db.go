@@ -766,6 +766,18 @@ func (db *DB) UpdateUserPhone(userID int64, phone string) error {
 	return nil
 }
 
+// SetUserActive liga/desliga a conta (is_active). Desativar pausa lembretes,
+// escalacao e proatividade (os jobs filtram por is_active=1) sem apagar dados.
+// Reversivel.
+func (db *DB) SetUserActive(userID int64, active bool) error {
+	_, err := db.conn.Exec(
+		`UPDATE users SET is_active = ? WHERE id = ?`, boolToInt(active), userID)
+	if err != nil {
+		return fmt.Errorf("set user active: %w", err)
+	}
+	return nil
+}
+
 func (db *DB) GetReauthNotifiedAt(userID int64) (*time.Time, error) {
 	var notifiedAt sql.NullTime
 	err := db.conn.QueryRow(
