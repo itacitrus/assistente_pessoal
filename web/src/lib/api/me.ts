@@ -1,6 +1,7 @@
 import { ApiError, fetchApi } from "@/lib/api";
 import type {
   ActivityResponse,
+  AgendaEventsResponse,
   AgendaResponse,
   CreateMedicationBody,
   InsightsResponse,
@@ -33,6 +34,25 @@ export async function getMyAgenda(
     }
     throw err;
   }
+}
+
+/**
+ * GET /api/v1/me/agenda/events?from=YYYY-MM-DD&to=YYYY-MM-DD
+ *
+ * Eventos do Google Calendar no intervalo [from, to) — usado pela visão de
+ * calendário mensal navegável. Intervalo máximo de 62 dias (validado no
+ * backend). `from`/`to` no formato AAAA-MM-DD.
+ */
+export async function getMyAgendaEvents(
+  from: string,
+  to: string,
+  cookieHeader?: string,
+): Promise<AgendaEventsResponse> {
+  const qs = new URLSearchParams({ from, to }).toString();
+  return fetchApi<AgendaEventsResponse>(`/api/v1/me/agenda/events?${qs}`, {
+    method: "GET",
+    cookie: cookieHeader,
+  });
 }
 
 /**

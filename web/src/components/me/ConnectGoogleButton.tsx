@@ -62,7 +62,7 @@ export function ConnectGoogleButton({ connected }: ConnectGoogleButtonProps) {
         {redirecting
           ? "Abrindo o Google..."
           : connected
-            ? "Reconectar Google Agenda"
+            ? "Conectado ao Google Agenda"
             : "Conectar Google Agenda"}
       </Button>
       {errorMsg ? (

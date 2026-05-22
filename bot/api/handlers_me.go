@@ -51,6 +51,54 @@ func (s *Server) handleMeAgenda(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleMeAgendaEvents — GET /api/v1/me/agenda/events?from=YYYY-MM-DD&to=YYYY-MM-DD.
+// Eventos do intervalo pedido, para a visao de calendario mensal navegavel.
+// Janela limitada a 62 dias (cobre a grade de um mes com sobras) pra evitar
+// varreduras grandes no Google Calendar.
+func (s *Server) handleMeAgendaEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
+		return
+	}
+	user := userFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Não autenticado.")
+		return
+	}
+	const layout = "2006-01-02"
+	from, err := time.ParseInLocation(layout, r.URL.Query().Get("from"), time.UTC)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeValidation, "Parâmetro 'from' inválido (use AAAA-MM-DD).")
+		return
+	}
+	to, err := time.ParseInLocation(layout, r.URL.Query().Get("to"), time.UTC)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeValidation, "Parâmetro 'to' inválido (use AAAA-MM-DD).")
+		return
+	}
+	if !to.After(from) {
+		writeError(w, http.StatusBadRequest, CodeValidation, "'to' precisa ser depois de 'from'.")
+		return
+	}
+	if to.Sub(from) > 62*24*time.Hour {
+		writeError(w, http.StatusBadRequest, CodeValidation, "Intervalo máximo de 62 dias.")
+		return
+	}
+
+	events, err := s.store.EventsInRange(r.Context(), user.ID, from, to)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao carregar eventos.")
+		return
+	}
+	if events == nil {
+		events = []AgendaEvent{}
+	}
+	writeJSON(w, http.StatusOK, AgendaEventsResponse{
+		GoogleConnected: user.GoogleConnected,
+		Events:          events,
+	})
+}
+
 // handleMeActivity — GET /api/v1/me/activity?limit=100. Historico completo das
 // acoes relevantes do usuario (allowlist), mais recentes primeiro. default
 // limit 50, max 200. Nao audita (consulta pura — auditar poluiria o proprio

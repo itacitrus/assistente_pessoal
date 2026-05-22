@@ -164,31 +164,41 @@ function AgendaSection({ agenda }: { agenda: AgendaResponse }) {
 
 function UpcomingCard({ agenda }: { agenda: AgendaResponse }) {
   return (
-    <Card className="shadow-warm">
+    <Card className="flex h-[440px] flex-col shadow-warm">
       <CardHeader>
         <CardTitle className="text-lg">Próximos compromissos</CardTitle>
         <CardDescription>O que vem pela frente na sua agenda.</CardDescription>
       </CardHeader>
-      <CardContent>
-        {!agenda.google_connected ? (
-          <EmptyHint
-            icon={<CalendarClock className="h-6 w-6" aria-hidden />}
-            title="Agenda ainda não conectada"
-            body="Toque em “Conectar Google Agenda” aqui em cima para ver seus compromissos."
-          />
-        ) : agenda.upcoming.length === 0 ? (
-          <EmptyHint
-            icon={<CheckCircle2 className="h-6 w-6" aria-hidden />}
-            title="Tudo tranquilo"
-            body="Nada nos próximos dias."
-          />
-        ) : (
-          <ul className="divide-y divide-border/70">
-            {agenda.upcoming.map((ev) => (
-              <EventRow key={ev.id} event={ev} />
-            ))}
-          </ul>
-        )}
+      <CardContent className="flex min-h-0 flex-1 flex-col">
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {!agenda.google_connected ? (
+            <EmptyHint
+              icon={<CalendarClock className="h-6 w-6" aria-hidden />}
+              title="Agenda ainda não conectada"
+              body="Toque em “Conectar Google Agenda” aqui em cima para ver seus compromissos."
+            />
+          ) : agenda.upcoming.length === 0 ? (
+            <EmptyHint
+              icon={<CheckCircle2 className="h-6 w-6" aria-hidden />}
+              title="Tudo tranquilo"
+              body="Nada nos próximos dias."
+            />
+          ) : (
+            <ul className="divide-y divide-border/70">
+              {agenda.upcoming.map((ev) => (
+                <EventRow key={ev.id} event={ev} />
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="mt-3 shrink-0 border-t border-border/70 pt-3">
+          <Link
+            href="/dashboard/agenda"
+            className="text-sm font-medium text-[--zello-emerald] underline-offset-4 hover:underline"
+          >
+            Agenda completa →
+          </Link>
+        </div>
       </CardContent>
     </Card>
   );
@@ -218,20 +228,20 @@ function EventRow({ event }: { event: AgendaEvent }) {
 
 function ActivityCard({ items }: { items: ActivityItem[] }) {
   return (
-    <Card className="shadow-warm">
+    <Card className="flex h-[440px] flex-col shadow-warm">
       <CardHeader>
         <CardTitle className="text-lg">Atividade recente</CardTitle>
         <CardDescription>O que o Zello fez por você ultimamente.</CardDescription>
       </CardHeader>
-      <CardContent>
-        {items.length === 0 ? (
-          <EmptyHint
-            icon={<Clock3 className="h-6 w-6" aria-hidden />}
-            title="Sem atividade recente"
-            body="Quando você conversar com o Zello no WhatsApp, o histórico aparece aqui."
-          />
-        ) : (
-          <>
+      <CardContent className="flex min-h-0 flex-1 flex-col">
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {items.length === 0 ? (
+            <EmptyHint
+              icon={<Clock3 className="h-6 w-6" aria-hidden />}
+              title="Sem atividade recente"
+              body="Quando você conversar com o Zello no WhatsApp, o histórico aparece aqui."
+            />
+          ) : (
             <ul className="divide-y divide-border/70">
               {items.map((item, i) => (
                 <ActivityRow
@@ -240,16 +250,16 @@ function ActivityCard({ items }: { items: ActivityItem[] }) {
                 />
               ))}
             </ul>
-            <div className="mt-4 border-t border-border/70 pt-3">
-              <Link
-                href="/dashboard/atividade"
-                className="text-sm font-medium text-[--zello-emerald] underline-offset-4 hover:underline"
-              >
-                Ver histórico completo →
-              </Link>
-            </div>
-          </>
-        )}
+          )}
+        </div>
+        <div className="mt-3 shrink-0 border-t border-border/70 pt-3">
+          <Link
+            href="/dashboard/atividade"
+            className="text-sm font-medium text-[--zello-emerald] underline-offset-4 hover:underline"
+          >
+            Ver histórico completo →
+          </Link>
+        </div>
       </CardContent>
     </Card>
   );

@@ -133,6 +133,57 @@ func TestMeAgenda_StoreError500(t *testing.T) {
 }
 
 // =========================================================================
+// GET /me/agenda/events?from&to (calendário mensal)
+// =========================================================================
+
+func TestMeAgendaEvents_FiltersByRange(t *testing.T) {
+	_, store, mux := newTestServer(t)
+	u, cookie := loggedInUser(store, "Maria", "5511999999999")
+	store.upcoming[u.ID] = []AgendaEvent{
+		{ID: "in", Title: "Dentro", Start: time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)},
+		{ID: "out", Title: "Fora", Start: time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC)},
+	}
+	rec := doRequest(t, mux, http.MethodGet,
+		"/api/v1/me/agenda/events?from=2026-05-01&to=2026-05-31", nil, withCookie(cookie))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp AgendaEventsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Events) != 1 || resp.Events[0].ID != "in" {
+		t.Fatalf("expected only in-range event, got %+v", resp.Events)
+	}
+}
+
+func TestMeAgendaEvents_Validation(t *testing.T) {
+	_, store, mux := newTestServer(t)
+	_, cookie := loggedInUser(store, "Maria", "5511999999999")
+	cases := []string{
+		"/api/v1/me/agenda/events?from=xx&to=2026-05-31", // from inválido
+		"/api/v1/me/agenda/events?from=2026-05-01",       // to ausente
+		"/api/v1/me/agenda/events?from=2026-05-31&to=2026-05-01", // to antes de from
+		"/api/v1/me/agenda/events?from=2026-01-01&to=2026-12-31", // > 62 dias
+	}
+	for _, url := range cases {
+		rec := doRequest(t, mux, http.MethodGet, url, nil, withCookie(cookie))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status = %d, want 400", url, rec.Code)
+		}
+	}
+}
+
+func TestMeAgendaEvents_RequiresAuth(t *testing.T) {
+	_, _, mux := newTestServer(t)
+	rec := doRequest(t, mux, http.MethodGet,
+		"/api/v1/me/agenda/events?from=2026-05-01&to=2026-05-31", nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+// =========================================================================
 // GET /me/insights
 // =========================================================================
 

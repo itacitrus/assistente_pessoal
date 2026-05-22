@@ -580,6 +580,21 @@ func (s *fakeStore) UpcomingEvents(_ context.Context, userID int64) ([]AgendaEve
 	return out, nil
 }
 
+func (s *fakeStore) EventsInRange(_ context.Context, userID int64, from, to time.Time) ([]AgendaEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.upcomingErr != nil {
+		return nil, s.upcomingErr
+	}
+	var out []AgendaEvent
+	for _, ev := range s.upcoming[userID] {
+		if !ev.Start.Before(from) && ev.Start.Before(to) {
+			out = append(out, ev)
+		}
+	}
+	return out, nil
+}
+
 func (s *fakeStore) RecentActivity(ctx context.Context, userID int64, limit int) ([]ActivityItem, error) {
 	if limit <= 0 {
 		limit = 8

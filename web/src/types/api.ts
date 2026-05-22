@@ -291,6 +291,15 @@ export interface AgendaResponse {
   recent_activity: ActivityItem[];
 }
 
+/**
+ * Espelha api.AgendaEventsResponse — GET /api/v1/me/agenda/events?from&to.
+ * Eventos do intervalo pedido, para a visão de calendário mensal navegável.
+ */
+export interface AgendaEventsResponse {
+  google_connected: boolean;
+  events: AgendaEvent[];
+}
+
 /** Tipo de insight — define o icone e o tom do card de insight. */
 export type InsightKind =
   | "pattern"

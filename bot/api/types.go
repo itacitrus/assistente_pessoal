@@ -303,6 +303,14 @@ type AgendaResponse struct {
 	RecentActivity  []ActivityItem `json:"recent_activity"`
 }
 
+// AgendaEventsResponse eh o payload de GET /api/v1/me/agenda/events?from&to —
+// eventos do intervalo pedido, para a visao de calendario mensal. CONTRATO
+// ESPELHADO 1:1 PELO FRONTEND.
+type AgendaEventsResponse struct {
+	GoogleConnected bool          `json:"google_connected"`
+	Events          []AgendaEvent `json:"events"`
+}
+
 // AgendaEvent eh um evento futuro do calendario do usuario. End pode ser nil
 // (evento sem fim explicito). AllDay marca eventos de dia inteiro.
 type AgendaEvent struct {

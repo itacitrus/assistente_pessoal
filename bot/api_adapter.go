@@ -683,6 +683,31 @@ func (a *apiAdapter) UpcomingEvents(ctx context.Context, userID int64) ([]api.Ag
 	return out, nil
 }
 
+// EventsInRange le o Google Calendar do proprio usuario no intervalo [from, to)
+// — usado pela visao de calendario mensal (navegavel). Sem teto de itens (um
+// mes cabe). Google nao conectado retorna lista vazia (nao eh erro).
+func (a *apiAdapter) EventsInRange(ctx context.Context, userID int64, from, to time.Time) ([]api.AgendaEvent, error) {
+	user, err := a.db.GetUserByID(userID)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return nil, api.ErrNotFound
+		}
+		return nil, err
+	}
+	if user.GoogleCredentials == "" {
+		return []api.AgendaEvent{}, nil
+	}
+	refreshToken, err := Decrypt(user.GoogleCredentials, a.encKey)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt credentials: %w", err)
+	}
+	events, err := a.cal.ListEvents(ctx, refreshToken, user.GoogleCalendarID, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("list events: %w", err)
+	}
+	return agendaEventsToAPI(events), nil
+}
+
 // agendaEventsToAPI converte CalendarEvent -> api.AgendaEvent. ListEvents ja
 // devolve ordenado por startTime asc (OrderBy("startTime")). Detecta all-day
 // pela ausencia de hora (meia-noite BRT) — heuristica consistente com como

@@ -97,6 +97,10 @@ type Store interface {
 	// ordenado por start asc). Retorna lista vazia se o usuario nao tem
 	// Google conectado — nunca erro por isso.
 	UpcomingEvents(ctx context.Context, userID int64) ([]AgendaEvent, error)
+	// EventsInRange le os eventos do Google Calendar no intervalo [from, to) —
+	// usado pela visao de calendario mensal navegavel. Lista vazia se sem
+	// Google conectado.
+	EventsInRange(ctx context.Context, userID int64, from, to time.Time) ([]AgendaEvent, error)
 	// RecentActivity le as ultimas `limit` entradas RELEVANTES (allowlist
 	// IsRelevantActivity) do action_log do usuario, mais recentes primeiro.
 	RecentActivity(ctx context.Context, userID int64, limit int) ([]ActivityItem, error)
