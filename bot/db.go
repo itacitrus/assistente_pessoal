@@ -881,8 +881,17 @@ func (db *DB) ListActiveUsers() ([]User, error) {
 }
 
 func (db *DB) UpdateUserCredentials(userID int64, encryptedCredentials string) error {
+	// Ao conectar a agenda, fixa google_calendar_id em "primary" quando ainda
+	// vazio — alias do Google para o calendario do proprio usuario. Sem isso, um
+	// usuario criado pela web/dependente (calendar id default "") faria toda
+	// chamada ao Google com id vazio e tomaria erro. Ids explicitos (titular via
+	// CLI apontando p/ calendario especifico) sao preservados.
 	_, err := db.conn.Exec(
-		`UPDATE users SET google_credentials = ?, reauth_notified_at = NULL WHERE id = ?`,
+		`UPDATE users
+		    SET google_credentials = ?,
+		        google_calendar_id = CASE WHEN google_calendar_id = '' THEN 'primary' ELSE google_calendar_id END,
+		        reauth_notified_at = NULL
+		  WHERE id = ?`,
 		encryptedCredentials, userID)
 	return err
 }

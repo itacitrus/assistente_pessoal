@@ -55,6 +55,18 @@ func (c *CalendarClient) ExchangeCode(ctx context.Context, code string) (*oauth2
 	return c.oauthConfig.Exchange(ctx, code)
 }
 
+// calID resolve um calendar id vazio para "primary", o alias do Google para o
+// calendario principal do usuario. Usuarios conectados via OAuth podem ter id
+// vazio no banco (default do schema); string vazia nao eh referencia valida na
+// API. Normalizar aqui, no boundary com o Google, garante que nenhuma operacao
+// de calendario (web ou WhatsApp) chegue ao Google com id vazio.
+func calID(id string) string {
+	if id == "" {
+		return "primary"
+	}
+	return id
+}
+
 func (c *CalendarClient) serviceForUser(ctx context.Context, refreshToken string) (*calendar.Service, error) {
 	token := &oauth2.Token{RefreshToken: refreshToken}
 	tokenSource := c.oauthConfig.TokenSource(ctx, token)
@@ -62,6 +74,7 @@ func (c *CalendarClient) serviceForUser(ctx context.Context, refreshToken string
 }
 
 func (c *CalendarClient) CreateEvent(ctx context.Context, refreshToken, calendarID string, ev CalendarEvent) (*CalendarEvent, error) {
+	calendarID = calID(calendarID)
 	svc, err := c.serviceForUser(ctx, refreshToken)
 	if err != nil {
 		return nil, fmt.Errorf("calendar service: %w", err)
@@ -180,6 +193,7 @@ func (c *CalendarClient) CreateEvent(ctx context.Context, refreshToken, calendar
 // Google's Date-format all-day events use an exclusive end date: to span
 // 10 Apr to 12 Apr you set end=13 Apr.
 func (c *CalendarClient) CreateAllDayEvent(ctx context.Context, refreshToken, calendarID, title string, startDate, endDate time.Time) (string, error) {
+	calendarID = calID(calendarID)
 	svc, err := c.serviceForUser(ctx, refreshToken)
 	if err != nil {
 		return "", fmt.Errorf("calendar service: %w", err)
@@ -212,6 +226,7 @@ func (c *CalendarClient) CreateAllDayEvent(ctx context.Context, refreshToken, ca
 // for an event we only know by ID (e.g., cancelling by id, showing a nicer
 // confirmation message).
 func (c *CalendarClient) GetEvent(ctx context.Context, refreshToken, calendarID, eventID string) (*CalendarEvent, error) {
+	calendarID = calID(calendarID)
 	svc, err := c.serviceForUser(ctx, refreshToken)
 	if err != nil {
 		return nil, fmt.Errorf("calendar service: %w", err)
@@ -232,6 +247,7 @@ func (c *CalendarClient) GetEvent(ctx context.Context, refreshToken, calendarID,
 }
 
 func (c *CalendarClient) ListEvents(ctx context.Context, refreshToken, calendarID string, start, end time.Time) ([]CalendarEvent, error) {
+	calendarID = calID(calendarID)
 	svc, err := c.serviceForUser(ctx, refreshToken)
 	if err != nil {
 		return nil, fmt.Errorf("calendar service: %w", err)
@@ -283,6 +299,7 @@ func parseEventTimes(item *calendar.Event, ev *CalendarEvent) {
 }
 
 func (c *CalendarClient) DeleteEvent(ctx context.Context, refreshToken, calendarID, eventID string) error {
+	calendarID = calID(calendarID)
 	svc, err := c.serviceForUser(ctx, refreshToken)
 	if err != nil {
 		return fmt.Errorf("calendar service: %w", err)
@@ -309,6 +326,7 @@ func (c *CalendarClient) DeleteEvent(ctx context.Context, refreshToken, calendar
 }
 
 func (c *CalendarClient) UpdateEvent(ctx context.Context, refreshToken, calendarID, eventID string, ev CalendarEvent) error {
+	calendarID = calID(calendarID)
 	svc, err := c.serviceForUser(ctx, refreshToken)
 	if err != nil {
 		return fmt.Errorf("calendar service: %w", err)
@@ -378,6 +396,7 @@ func (c *CalendarClient) UpdateEvent(ctx context.Context, refreshToken, calendar
 }
 
 func (c *CalendarClient) AddAttendees(ctx context.Context, refreshToken, calendarID, eventID string, emails []string) error {
+	calendarID = calID(calendarID)
 	svc, err := c.serviceForUser(ctx, refreshToken)
 	if err != nil {
 		return fmt.Errorf("calendar service: %w", err)
@@ -397,6 +416,7 @@ func (c *CalendarClient) AddAttendees(ctx context.Context, refreshToken, calenda
 }
 
 func (c *CalendarClient) AddMeetLink(ctx context.Context, refreshToken, calendarID, eventID string) (string, error) {
+	calendarID = calID(calendarID)
 	svc, err := c.serviceForUser(ctx, refreshToken)
 	if err != nil {
 		return "", fmt.Errorf("calendar service: %w", err)
@@ -430,6 +450,7 @@ func (c *CalendarClient) AddMeetLink(ctx context.Context, refreshToken, calendar
 }
 
 func (c *CalendarClient) FindEvent(ctx context.Context, refreshToken, calendarID, query string) (*CalendarEvent, error) {
+	calendarID = calID(calendarID)
 	svc, err := c.serviceForUser(ctx, refreshToken)
 	if err != nil {
 		return nil, fmt.Errorf("calendar service: %w", err)
