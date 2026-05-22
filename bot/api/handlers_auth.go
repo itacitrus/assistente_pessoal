@@ -157,7 +157,9 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// handleMe retorna o usuario logado.
+// handleMe retorna o usuario logado (efetivo) + contexto de admin. Durante
+// uma impersonacao, `user` eh o alvo (painel que o admin esta vendo) e
+// `viewing_as` o identifica; `is_admin` segue refletindo o dono real.
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	user := userFromContext(r.Context())
 	if user == nil {
@@ -165,5 +167,10 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Não autenticado.")
 		return
 	}
-	writeJSON(w, http.StatusOK, user)
+	real := realUserFromContext(r.Context())
+	resp := MeResponse{User: user, IsAdmin: s.isAdmin(real)}
+	if real != nil && user.ID != real.ID {
+		resp.ViewingAs = &ViewingAs{ID: user.ID, Name: user.Name, Phone: user.PhoneNumber}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

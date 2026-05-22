@@ -262,6 +262,7 @@ func runBot() {
 		CookieSecure:   resolveCookieSecure(),
 		CookieDomain:   resolveCookieDomain(),
 		ReportClient:   report,
+		AdminPhones:    resolveAdminPhones(),
 	})
 
 	go startHTTPServer(cal, db, cfg, apiServer)
@@ -407,6 +408,29 @@ func resolveCookieSecure() bool {
 // cookie em zello.chat enquanto a API que o emite responde de api.zello.chat.
 func resolveCookieDomain() string {
 	return strings.TrimSpace(os.Getenv("COOKIE_DOMAIN"))
+}
+
+// resolveAdminPhones le o allowlist de telefones com privilegio de admin no
+// painel. Fonte primaria: ADMIN_PHONES (separado por virgula). Fallback:
+// ADMIN_PHONE (singular, ja usado pelo watchdog) — assim o mesmo numero do
+// operador serve aos dois sem config duplicada. A normalizacao pra digitos
+// acontece no api.NewServer; aqui so quebramos a lista.
+func resolveAdminPhones() []string {
+	raw := strings.TrimSpace(os.Getenv("ADMIN_PHONES"))
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("ADMIN_PHONE"))
+	}
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func addUser() {

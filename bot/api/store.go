@@ -27,9 +27,15 @@ type Store interface {
 	// Sessions ------------------------------------------------------------
 	CreatePendingSession(ctx context.Context, userID int64, ip, userAgent string) (sessionID int64, plaintext string, err error)
 	ActivateSession(ctx context.Context, plaintext string) (userID int64, sessionID int64, err error)
-	GetActiveSessionByToken(ctx context.Context, plaintext string) (sessionID, userID int64, err error)
+	// GetActiveSessionByToken retorna o id da sessao, o dono real (userID) e
+	// o usuario impersonado (impersonatedUserID; 0 = nenhum). O middleware so
+	// honra a impersonacao se o dono real for admin.
+	GetActiveSessionByToken(ctx context.Context, plaintext string) (sessionID, userID, impersonatedUserID int64, err error)
 	TouchSession(ctx context.Context, sessionID int64) error
 	RevokeSession(ctx context.Context, sessionID int64) error
+	// SetSessionImpersonation grava o alvo de "ver como" na sessao (admin).
+	// targetUserID == 0 limpa a impersonacao ("sair da visao").
+	SetSessionImpersonation(ctx context.Context, sessionID, targetUserID int64) error
 
 	// Rate limit ----------------------------------------------------------
 	CountRecentLoginAttempts(ctx context.Context, phone string, window time.Duration) (int, error)
@@ -38,6 +44,12 @@ type Store interface {
 
 	// User update ---------------------------------------------------------
 	UpdateUserPreferences(ctx context.Context, userID int64, p PreferencesPatch) (*User, error)
+
+	// Admin ---------------------------------------------------------------
+	// SearchUsers busca usuarios por nome ou telefone (match parcial). Query
+	// vazia retorna os mais recentes. So a tela de admin usa — gate de
+	// privilegio fica no handler.
+	SearchUsers(ctx context.Context, query string, limit int) ([]User, error)
 
 	// Google Calendar -----------------------------------------------------
 	// GoogleConnectURL gera a URL de consentimento do Google Calendar para

@@ -36,6 +36,33 @@ type User struct {
 	CreatedAt                time.Time `json:"created_at"`
 }
 
+// MeResponse eh o retorno de GET /api/v1/me. Embute o usuario EFETIVO (o
+// alvo, quando um admin esta "vendo como"; senao o proprio) com os campos
+// achatados no JSON, e acrescenta o contexto de admin/impersonacao. Manter o
+// User embutido preserva 100% do payload que o frontend ja consome.
+type MeResponse struct {
+	*User
+	// IsAdmin reflete o DONO REAL da sessao (nao o impersonado): continua true
+	// mesmo enquanto o admin ve o painel de outra pessoa, pra UI manter o
+	// acesso a area admin e ao banner de "sair da visao".
+	IsAdmin bool `json:"is_admin"`
+	// ViewingAs != nil quando ha impersonacao ativa — identifica de quem eh o
+	// painel sendo exibido. nil no estado normal.
+	ViewingAs *ViewingAs `json:"viewing_as,omitempty"`
+}
+
+// ViewingAs identifica o usuario-alvo de uma impersonacao em curso.
+type ViewingAs struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Phone string `json:"phone_number"`
+}
+
+// AdminUsersResponse eh o retorno de GET /api/v1/admin/users.
+type AdminUsersResponse struct {
+	Users []User `json:"users"`
+}
+
 // FamilyLink reflete a tabela family_links. As prefs vivem aninhadas em
 // `notify` pra alinhar com o codigo Go existente.
 type FamilyLink struct {

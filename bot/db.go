@@ -511,6 +511,15 @@ func (db *DB) migrate() error {
 		// — a familia continua sendo avisada em scheduled_at + tolerance_minutes
 		// se nao houver confirmacao. NULL = sem adiamento registrado.
 		`ALTER TABLE pending_confirmations ADD COLUMN deferred_until DATETIME`,
+
+		// Admin: visao "ver como". Quando um admin (allowlist ADMIN_PHONES) ativa
+		// a impersonacao, gravamos aqui o id do usuario-alvo NA SESSAO do admin.
+		// RequireAuth so honra este campo se o dono real da sessao for admin —
+		// dupla barreira: gravar a coluna nao basta, o portador tem que ser admin.
+		// NULL = sem impersonacao (estado normal). Amarrar a impersonacao a
+		// sessao (e nao a um cookie) faz o estado sobreviver a reload e dispensa
+		// reencaminhar um segundo cookie no SSR do painel.
+		`ALTER TABLE web_sessions ADD COLUMN impersonated_user_id INTEGER REFERENCES users(id)`,
 	}
 	for _, stmt := range additive {
 		if _, err := db.conn.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
@@ -991,6 +1000,75 @@ func (db *DB) GetUserByID(id int64) (*User, error) {
 		scanUserPhase4(u, thresh, paused)
 	}
 	return u, err
+}
+
+// SearchUsers busca usuarios por nome OU telefone (match parcial,
+// case-insensitive). Query vazia retorna os mais recentes. Usado pela tela
+// de admin ("ver dashboard de qualquer pessoa"). limit clampa o resultado.
+// Ordena por nome pra leitura previsivel; quando a query eh vazia, mais
+// recentes primeiro (descoberta do que foi cadastrado por ultimo).
+func (db *DB) SearchUsers(query string, limit int) ([]User, error) {
+	if limit <= 0 {
+		limit = 30
+	}
+	const cols = `id, phone_number, name, google_calendar_id, google_credentials,
+		daily_summary_time, weekly_summary_day, weekly_summary_time,
+		reminder_before, auto_confirm_timeout, is_active, created_at,
+		type, last_user_message_at,
+		inactivity_threshold_hours, proactive_paused_until`
+
+	var rows *sql.Rows
+	var err error
+	q := strings.TrimSpace(query)
+	if q == "" {
+		rows, err = db.conn.Query(
+			`SELECT `+cols+` FROM users ORDER BY created_at DESC LIMIT ?`, limit)
+	} else {
+		// Casa nome (qualquer parte) ou telefone (so digitos). LOWER pra
+		// case-insensitive em nome; telefone ja eh so digito.
+		like := "%" + strings.ToLower(q) + "%"
+		digits := onlyDigitsBR(q)
+		phoneLike := "%" + digits + "%"
+		rows, err = db.conn.Query(
+			`SELECT `+cols+` FROM users
+			 WHERE LOWER(name) LIKE ? OR (? != '' AND phone_number LIKE ?)
+			 ORDER BY name ASC LIMIT ?`,
+			like, digits, phoneLike, limit)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("search users: %w", err)
+	}
+	defer rows.Close()
+
+	var out []User
+	for rows.Next() {
+		var u User
+		var ut sql.NullString
+		var lastMsg sql.NullTime
+		var thresh sql.NullInt64
+		var paused sql.NullTime
+		if err := rows.Scan(&u.ID, &u.PhoneNumber, &u.Name, &u.GoogleCalendarID, &u.GoogleCredentials,
+			&u.DailySummaryTime, &u.WeeklySummaryDay, &u.WeeklySummaryTime,
+			&u.ReminderBefore, &u.AutoConfirmTimeout, &u.IsActive, &u.CreatedAt,
+			&ut, &lastMsg, &thresh, &paused); err != nil {
+			return nil, fmt.Errorf("scan search user: %w", err)
+		}
+		scanUserExtras(&u, ut, lastMsg)
+		scanUserPhase4(&u, thresh, paused)
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// onlyDigitsBR extrai apenas digitos de s. Usado pra casar telefone na busca.
+func onlyDigitsBR(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // PermissionRequest represents a pending cross-user calendar access request.

@@ -43,6 +43,12 @@ type WebSession struct {
 	RevokedAt   *time.Time
 	IP          string
 	UserAgent   string
+
+	// ImpersonatedUserID eh o usuario que o dono (admin) desta sessao esta
+	// visualizando via "ver como". NULL = sem impersonacao. So tem efeito se
+	// o dono real for admin (checado no RequireAuth) — gravar aqui nao concede
+	// privilegio por si so.
+	ImpersonatedUserID *int64
 }
 
 // Sentinels.
@@ -236,6 +242,33 @@ func (db *DB) RevokeSession(sessionID int64) error {
 	return nil
 }
 
+// SetSessionImpersonation grava (ou limpa) o usuario-alvo da impersonacao na
+// sessao. targetUserID == nil limpa ("sair da visao"). So muda sessoes ativas
+// — uma sessao revogada/expirada nao pode impersonar. A checagem de privilegio
+// (dono eh admin?) acontece no handler/middleware; aqui eh persistencia pura.
+func (db *DB) SetSessionImpersonation(sessionID int64, targetUserID *int64) error {
+	var arg interface{}
+	if targetUserID != nil {
+		arg = *targetUserID
+	}
+	res, err := db.conn.Exec(`
+		UPDATE web_sessions SET impersonated_user_id = ?
+		WHERE id = ? AND status = 'active'`,
+		arg, sessionID,
+	)
+	if err != nil {
+		return fmt.Errorf("set session impersonation: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrSessionNotFound
+	}
+	return nil
+}
+
 // CountRecentLoginAttempts conta tentativas de magic link nas ultimas
 // `window` por phone. Usado pelo rate limiter — 3/hora atualmente.
 //
@@ -292,21 +325,28 @@ func (db *DB) RecordLoginAttempt(phone, ip string) error {
 func (db *DB) getSessionByHash(hash string) (*WebSession, error) {
 	var s WebSession
 	var activated, lastUsed, revoked sql.NullTime
+	var impersonated sql.NullInt64
 	err := db.conn.QueryRow(`
 		SELECT id, user_id, token_hash, status, expires_at, created_at,
-		       activated_at, last_used_at, revoked_at, ip, user_agent
+		       activated_at, last_used_at, revoked_at, ip, user_agent,
+		       impersonated_user_id
 		FROM web_sessions
 		WHERE token_hash = ?`,
 		hash,
 	).Scan(
 		&s.ID, &s.UserID, &s.TokenHash, &s.Status, &s.ExpiresAt, &s.CreatedAt,
 		&activated, &lastUsed, &revoked, &s.IP, &s.UserAgent,
+		&impersonated,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrSessionNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query web session: %w", err)
+	}
+	if impersonated.Valid && impersonated.Int64 > 0 {
+		v := impersonated.Int64
+		s.ImpersonatedUserID = &v
 	}
 	if activated.Valid {
 		t := activated.Time

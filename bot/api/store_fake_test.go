@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -71,11 +72,12 @@ type fakeStore struct {
 }
 
 type fakeSession struct {
-	ID        int64
-	UserID    int64
-	Hash      string
-	Status    string
-	ExpiresAt time.Time
+	ID                 int64
+	UserID             int64
+	Hash               string
+	Status             string
+	ExpiresAt          time.Time
+	ImpersonatedUserID int64
 }
 
 type fakeAttempt struct {
@@ -245,21 +247,51 @@ func (s *fakeStore) ActivateSession(_ context.Context, plaintext string) (int64,
 	return sess.UserID, sess.ID, nil
 }
 
-func (s *fakeStore) GetActiveSessionByToken(_ context.Context, plaintext string) (int64, int64, error) {
+func (s *fakeStore) GetActiveSessionByToken(_ context.Context, plaintext string) (int64, int64, int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id, ok := s.sessByHash[plaintext]
 	if !ok {
-		return 0, 0, ErrNotFound
+		return 0, 0, 0, ErrNotFound
 	}
 	sess := s.sessions[id]
 	if sess.Status != "active" {
-		return 0, 0, ErrSessionInvalid
+		return 0, 0, 0, ErrSessionInvalid
 	}
 	if time.Now().UTC().After(sess.ExpiresAt) {
-		return 0, 0, ErrSessionExpired
+		return 0, 0, 0, ErrSessionExpired
 	}
-	return sess.ID, sess.UserID, nil
+	return sess.ID, sess.UserID, sess.ImpersonatedUserID, nil
+}
+
+func (s *fakeStore) SetSessionImpersonation(_ context.Context, sessionID, targetUserID int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[sessionID]
+	if !ok || sess.Status != "active" {
+		return ErrNotFound
+	}
+	sess.ImpersonatedUserID = targetUserID
+	return nil
+}
+
+func (s *fakeStore) SearchUsers(_ context.Context, query string, limit int) ([]User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if limit <= 0 {
+		limit = 30
+	}
+	q := strings.ToLower(strings.TrimSpace(query))
+	var out []User
+	for _, u := range s.users {
+		if q == "" || strings.Contains(strings.ToLower(u.Name), q) || strings.Contains(u.PhoneNumber, q) {
+			out = append(out, *u)
+		}
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 func (s *fakeStore) TouchSession(_ context.Context, sessID int64) error {

@@ -6,6 +6,8 @@ import { getMe } from "@/lib/api/auth";
 import { logoutAction } from "@/app/dashboard/actions";
 import { getSessionCookieHeader } from "@/lib/server-cookie";
 import { Wordmark } from "@/components/brand/Logo";
+import { ImpersonationBanner } from "@/components/admin/ImpersonationBanner";
+import type { User } from "@/types/api";
 
 export default async function DashboardLayout({
   children,
@@ -17,10 +19,9 @@ export default async function DashboardLayout({
     redirect("/login");
   }
 
-  let userName = "";
+  let me: User;
   try {
-    const me = await getMe(cookieHeader);
-    userName = me.name;
+    me = await getMe(cookieHeader);
   } catch (err) {
     if (err instanceof ApiError && err.isUnauthorized) {
       redirect("/login");
@@ -51,8 +52,16 @@ export default async function DashboardLayout({
             >
               Preferências
             </Link>
+            {me.is_admin ? (
+              <Link
+                href="/dashboard/admin"
+                className="font-medium text-[--zello-emerald] hover:text-[--zello-emerald-deep]"
+              >
+                Admin
+              </Link>
+            ) : null}
             <span className="hidden text-muted-foreground sm:inline">
-              {userName}
+              {me.name}
             </span>
             <form action={logoutAction}>
               <button
@@ -65,6 +74,7 @@ export default async function DashboardLayout({
           </nav>
         </div>
       </header>
+      {me.viewing_as ? <ImpersonationBanner name={me.viewing_as.name} /> : null}
       <main className="container flex-1 py-8">{children}</main>
     </div>
   );

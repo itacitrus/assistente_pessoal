@@ -83,6 +83,20 @@ export interface User {
   google_connected: boolean;
   is_active: boolean;
   created_at: string; // ISO8601
+
+  // Campos extras presentes somente no payload de GET /api/v1/me (MeResponse).
+  // `is_admin` reflete o DONO REAL da sessao (segue true durante "ver como").
+  is_admin?: boolean;
+  // `viewing_as` != null quando o admin esta visualizando o painel de outra
+  // pessoa via impersonacao; identifica de quem eh o painel exibido.
+  viewing_as?: ViewingAs | null;
+}
+
+/** Identifica o usuario-alvo de uma impersonacao em curso (MeResponse). */
+export interface ViewingAs {
+  id: number;
+  name: string;
+  phone_number: string;
 }
 
 /** Espelha api.Notify (subset das flags por canal). */

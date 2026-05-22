@@ -119,7 +119,7 @@ func TestAdapter_TouchAndRevoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Apos revoke, lookup falha.
-	_, _, err = a.GetActiveSessionByToken(context.Background(), plaintext)
+	_, _, _, err = a.GetActiveSessionByToken(context.Background(), plaintext)
 	if !errors.Is(err, api.ErrSessionInvalid) {
 		t.Fatalf("err = %v, want api.ErrSessionInvalid", err)
 	}

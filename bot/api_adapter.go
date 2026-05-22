@@ -156,21 +156,54 @@ func (a *apiAdapter) ActivateSession(ctx context.Context, plaintext string) (int
 	return sess.UserID, sess.ID, nil
 }
 
-func (a *apiAdapter) GetActiveSessionByToken(ctx context.Context, plaintext string) (int64, int64, error) {
+func (a *apiAdapter) GetActiveSessionByToken(ctx context.Context, plaintext string) (sessionID, userID, impersonatedUserID int64, err error) {
 	sess, err := a.db.GetActiveSessionByToken(plaintext)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrSessionNotFound):
-			return 0, 0, api.ErrNotFound
+			return 0, 0, 0, api.ErrNotFound
 		case errors.Is(err, ErrSessionExpired):
-			return 0, 0, api.ErrSessionExpired
+			return 0, 0, 0, api.ErrSessionExpired
 		case errors.Is(err, ErrSessionInvalid):
-			return 0, 0, api.ErrSessionInvalid
+			return 0, 0, 0, api.ErrSessionInvalid
 		default:
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
 	}
-	return sess.ID, sess.UserID, nil
+	var imp int64
+	if sess.ImpersonatedUserID != nil {
+		imp = *sess.ImpersonatedUserID
+	}
+	return sess.ID, sess.UserID, imp, nil
+}
+
+// SetSessionImpersonation grava/limpa o alvo de "ver como" na sessao do admin.
+// targetUserID == 0 limpa.
+func (a *apiAdapter) SetSessionImpersonation(ctx context.Context, sessionID, targetUserID int64) error {
+	var ptr *int64
+	if targetUserID > 0 {
+		ptr = &targetUserID
+	}
+	if err := a.db.SetSessionImpersonation(sessionID, ptr); err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return api.ErrNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+// SearchUsers delega a busca de usuarios (admin) pro DB e converte pro DTO.
+func (a *apiAdapter) SearchUsers(ctx context.Context, query string, limit int) ([]api.User, error) {
+	users, err := a.db.SearchUsers(query, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]api.User, 0, len(users))
+	for i := range users {
+		out = append(out, *userToAPI(&users[i]))
+	}
+	return out, nil
 }
 
 func (a *apiAdapter) TouchSession(ctx context.Context, sessionID int64) error {

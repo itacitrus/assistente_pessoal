@@ -27,6 +27,11 @@ type Server struct {
 	insightsCache  *insightsCache
 	insightsTTL    time.Duration
 	reportClient   synthesis.ReportClient
+	// adminPhones eh o allowlist (digitos normalizados) de quem pode usar a
+	// area admin / "ver como". Privilegio vive na config de deploy (env
+	// ADMIN_PHONES) — nao em dado editavel —, entao nao da pra escalar por
+	// bug de banco.
+	adminPhones map[string]struct{}
 	// insightsInFlight deduplica o regen assincrono de insights por (user,days).
 	insightsInFlight sync.Map // map[string]struct{}
 }
@@ -53,6 +58,10 @@ type Config struct {
 	// ReportClient eh o provider Sonnet usado pelo sub-agente de insights de
 	// agenda. Pode ser nil — handler trata como "insights indisponiveis".
 	ReportClient synthesis.ReportClient
+	// AdminPhones eh o allowlist de telefones (qualquer formato; normalizado
+	// internamente pra so digitos) com privilegio de admin no painel. Vazio =
+	// ninguem tem acesso admin (area fica invisivel/403).
+	AdminPhones []string
 }
 
 // NewServer constroi com defaults ajuiziados. Caller eh responsavel pelo
@@ -72,6 +81,12 @@ func NewServer(cfg Config) *Server {
 	cfg.WebBaseURL = strings.TrimRight(cfg.WebBaseURL, "/")
 	// pathPrefix tambem sem trailing slash; "" fica "" (dev local).
 	cfg.PathPrefix = strings.TrimRight(cfg.PathPrefix, "/")
+	admins := make(map[string]struct{}, len(cfg.AdminPhones))
+	for _, p := range cfg.AdminPhones {
+		if d := digitsOnly(p); d != "" {
+			admins[d] = struct{}{}
+		}
+	}
 	return &Server{
 		store:          cfg.Store,
 		webBaseURL:     cfg.WebBaseURL,
@@ -83,7 +98,30 @@ func NewServer(cfg Config) *Server {
 		insightsCache:  newInsightsCache(cfg.InsightsCacheTTL),
 		insightsTTL:    cfg.InsightsCacheTTL,
 		reportClient:   cfg.ReportClient,
+		adminPhones:    admins,
 	}
+}
+
+// isAdmin retorna true se o telefone do usuario estiver no allowlist de admin.
+// Comparacao por digitos normalizados — robusta a "+55", espacos e mascaras.
+func (s *Server) isAdmin(u *User) bool {
+	if u == nil || len(s.adminPhones) == 0 {
+		return false
+	}
+	_, ok := s.adminPhones[digitsOnly(u.PhoneNumber)]
+	return ok
+}
+
+// digitsOnly extrai apenas os digitos de s. Normaliza telefones do allowlist
+// e do user pra comparacao estavel.
+func digitsOnly(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // Mount registra todas as rotas /api/v1/* em mux. CORS sempre por fora;
@@ -143,6 +181,14 @@ func (s *Server) Mount(mux *http.ServeMux) {
 
 	mux.Handle(s.route("/api/v1/family/links/"),
 		s.CORS(s.RequireOrigin(s.RequireAuth(http.HandlerFunc(s.handleLinkResource)))))
+
+	// Admin — busca de usuarios (GET) + impersonacao "ver como" (POST/DELETE).
+	// O gate de privilegio vive nos handlers (requireAdmin sobre o dono real
+	// da sessao). RequireOrigin protege os metodos mutativos de /impersonate.
+	mux.Handle(s.route("/api/v1/admin/users"),
+		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleAdminUsers))))
+	mux.Handle(s.route("/api/v1/admin/impersonate"),
+		s.CORS(s.RequireOrigin(s.RequireAuth(http.HandlerFunc(s.handleAdminImpersonate)))))
 }
 
 // handleDependentsCollection roteia GET (list) vs POST (create) pra coleção.

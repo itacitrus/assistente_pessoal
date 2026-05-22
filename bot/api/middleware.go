@@ -16,11 +16,32 @@ const CookieName = "zello_session"
 // com chaves de outros packages (linter avisa se usar string crua).
 type userContextKey struct{}
 
-// userFromContext extrai o user injetado pelo RequireAuth. Retorna nil se
+// realUserKey carrega o DONO real da sessao, sempre — mesmo durante uma
+// impersonacao de admin. userContextKey carrega o usuario EFETIVO (o alvo,
+// quando o admin esta "vendo como"). Handlers de negocio usam o efetivo
+// (operam sobre os dados certos); checagens de privilegio usam o real.
+type realUserKey struct{}
+
+// userFromContext extrai o user EFETIVO injetado pelo RequireAuth (o alvo da
+// impersonacao, quando ativa; senao o proprio dono da sessao). Retorna nil se
 // nao logado — handlers protegidos chamam apenas dentro de RequireAuth,
 // entao teoricamente sempre retorna != nil; defensivo retorna nil.
 func userFromContext(ctx context.Context) *User {
 	v := ctx.Value(userContextKey{})
+	if v == nil {
+		return nil
+	}
+	u, ok := v.(*User)
+	if !ok {
+		return nil
+	}
+	return u
+}
+
+// realUserFromContext extrai o DONO real da sessao (nunca o impersonado).
+// Usar em gates de privilegio (admin) e em auditoria de quem agiu.
+func realUserFromContext(ctx context.Context) *User {
+	v := ctx.Value(realUserKey{})
 	if v == nil {
 		return nil
 	}
@@ -58,7 +79,7 @@ func (s *Server) RequireAuth(next http.Handler) http.Handler {
 			return
 		}
 		ctx := r.Context()
-		sessID, userID, err := s.store.GetActiveSessionByToken(ctx, cookie.Value)
+		sessID, userID, impersonatedID, err := s.store.GetActiveSessionByToken(ctx, cookie.Value)
 		if err != nil {
 			// Cookie ruim ou sessao expirada — limpa cookie pra evitar loop.
 			clearSessionCookie(w, s.cookieSecure, s.cookieDomain)
@@ -76,14 +97,28 @@ func (s *Server) RequireAuth(next http.Handler) http.Handler {
 		// (log no adapter): nao bloqueia request por write race.
 		_ = s.store.TouchSession(ctx, sessID)
 
-		user, err := s.store.GetUserByID(ctx, userID)
+		realUser, err := s.store.GetUserByID(ctx, userID)
 		if err != nil {
 			clearSessionCookie(w, s.cookieSecure, s.cookieDomain)
 			writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Usuário da sessão não existe mais.")
 			return
 		}
 
-		ctx = context.WithValue(ctx, userContextKey{}, user)
+		// Usuario efetivo = real, por padrao. Se a sessao carrega uma
+		// impersonacao E o dono real eh admin, troca o efetivo pro alvo. A
+		// dupla barreira (coluna setada + dono admin) garante que gravar a
+		// coluna sozinho nao concede acesso.
+		effective := realUser
+		if impersonatedID > 0 && impersonatedID != realUser.ID && s.isAdmin(realUser) {
+			if target, terr := s.store.GetUserByID(ctx, impersonatedID); terr == nil {
+				effective = target
+			}
+			// Alvo sumiu (deletado): cai no fluxo normal como o proprio admin.
+			// Nao limpamos a coluna aqui (read path) — o stop explicito limpa.
+		}
+
+		ctx = context.WithValue(ctx, userContextKey{}, effective)
+		ctx = context.WithValue(ctx, realUserKey{}, realUser)
 		ctx = context.WithValue(ctx, sessionIDKey{}, sessID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
