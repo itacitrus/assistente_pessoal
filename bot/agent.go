@@ -203,6 +203,16 @@ func (a *Agent) Run(ctx context.Context, user *User, message string, images []Im
 		},
 	}
 	systemParts = a.appendMedicationPolicyPart(systemParts, user)
+	systemParts = a.appendCompanionPharmaPart(systemParts, user, message)
+
+	// Idoso roteia para o companion provider (DeepSeek em prod). O loop usa a
+	// abstracao llm.ChatProvider, reaproveitando os mesmos toolHandlers. Imagens
+	// sao pre-descritas via VisionProvider (Haiku) e injetadas como texto, pois
+	// o DeepSeek-chat nao tem vision. Fallback (companionChat nil) cai no loop
+	// Anthropic abaixo.
+	if user.Type == UserTypeIdoso && a.companionChat != nil {
+		return a.runCompanion(ctx, user, message, images, systemParts)
+	}
 
 	response, _, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, systemParts)
 	if err != nil {
@@ -422,7 +432,9 @@ func buildMessages(history []ConversationMessage, userMsg string) []anthropic.Me
 // hit rate em conversa multi-turno fica acima de 70% facilmente.
 func buildSystemPromptStable(user *User) string {
 	if user != nil && user.Type == UserTypeIdoso {
-		return buildCompanionPrompt(user.Name)
+		// Núcleo social apenas. As regras farmacológicas entram via
+		// appendCompanionPharmaPart somente quando o turno toca em remédio.
+		return buildCompanionCore(user.Name)
 	}
 	name := ""
 	if user != nil {
@@ -574,6 +586,35 @@ func (a *Agent) appendMedicationPolicyPart(parts []anthropic.MessageSystemPart, 
 		return parts
 	}
 	return append(parts, anthropic.MessageSystemPart{Type: "text", Text: block})
+}
+
+// appendCompanionPharmaPart anexa as regras farmacologicas do companheiro ao
+// system prompt SOMENTE quando o turno do idoso toca em medicacao (ver
+// medContextActive). Fora desse contexto o prompt fica enxuto/social. No-op
+// para nao-idosos. Parte dinamica (nao cacheada). Mensagem vazia (ex: so
+// imagem) ainda passa pelo detector — pendencia de dose sozinha ja ativa.
+func (a *Agent) appendCompanionPharmaPart(parts []anthropic.MessageSystemPart, user *User, message string) []anthropic.MessageSystemPart {
+	if user == nil || user.Type != UserTypeIdoso {
+		return parts
+	}
+	meds, err := a.db.ListActiveMedications(user.ID)
+	if err != nil {
+		// Em duvida, inclui as regras (falso positivo eh inofensivo; ficar sem
+		// a regra "nunca narre sem persistir" nao eh).
+		return append(parts, anthropic.MessageSystemPart{Type: "text", Text: buildCompanionPharmaRules()})
+	}
+	names := make([]string, 0, len(meds))
+	for _, m := range meds {
+		names = append(names, m.Name)
+	}
+	hasPending, err := a.db.HasActiveMedicationPending(user.ID)
+	if err != nil {
+		hasPending = true // mesma logica defensiva
+	}
+	if !medContextActive(message, names, hasPending) {
+		return parts
+	}
+	return append(parts, anthropic.MessageSystemPart{Type: "text", Text: buildCompanionPharmaRules()})
 }
 
 func buildSystemPromptDynamic(pendingReq *PermissionRequest) string {
@@ -801,6 +842,18 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 			}`),
 		},
 		// Fase 3 (idosos): medicacao + escalacao.
+		{
+			Name:        "buscar_medicamento_catalogo",
+			Description: "Procura um remedio no catalogo oficial (ANVISA/CMED) para CORRIGIR grafia/fonetica e confirmar o nome e a dose exatos ANTES de cadastrar. Use sempre que o usuario informar um remedio por nome (digitado ou de ouvido) que possa estar escrito errado, abreviado ou incompleto (ex: 'losartna', 'buscopam', 'rivotrio', 'dipirona'). Retorna candidatos ranqueados (nome comercial + dose + principio ativo). NAO persiste nada — depois de confirmar com o usuario em linguagem natural (sem menu numerado), chame cadastrar_medicamento com o nome/dose corretos. Pode tambem ser usada para descobrir as doses disponiveis de um remedio.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"query": {"type": "string", "description": "Nome do remedio como o usuario disse, mesmo errado/aproximado (ex: 'losartna', 'buscopam')."},
+					"limit": {"type": "integer", "description": "Maximo de candidatos (default 5, teto 8)."}
+				},
+				"required": ["query"]
+			}`),
+		},
 		{
 			Name:        "cadastrar_medicamento",
 			Description: "Cadastra um medicamento com horarios. PERSISTE IMEDIATAMENTE no banco ao ser chamada (igual criar_evento). Por isso: ANTES de chamar, leia de volta em linguagem natural o que vai cadastrar (nome, dose, horario, ate quando) e espere o usuario confirmar ('sim', 'pode', 'isso'). Chame esta tool SOMENTE depois da confirmacao. O retorno comeca com 'Pronto, cadastrei ...' — repasse esse fato ao usuario; NUNCA diga que cadastrou sem ter chamado esta tool e recebido esse retorno. Use schedule_rrule no formato iCal sem prefixo 'RRULE:' (ex: 'FREQ=DAILY;BYHOUR=8,14,20;BYMINUTE=0' para 'todo dia 8h, 14h e 20h'; 'FREQ=WEEKLY;BYDAY=MO,WE;BYHOUR=9;BYMINUTE=0' para 'seg e qua as 9h'). Sempre inclua BYHOUR. Frequencia deve ser DAILY, WEEKLY ou MONTHLY.",

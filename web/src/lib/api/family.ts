@@ -9,6 +9,7 @@ import type {
   DependentTimeline,
   DependentTimelineRaw,
   FamilyLink,
+  IntakesResponse,
   MedicationItem,
   MedicationsResponse,
   SnapshotPoint,
@@ -161,6 +162,26 @@ export async function createDependentMedication(
     `/api/v1/family/dependents/${id}/medications`,
     { method: "POST", json: body },
   );
+}
+
+/**
+ * GET /api/v1/family/dependents/{id}/intakes
+ * Histórico de tomadas do dependente nos últimos `days` dias (default 14, teto
+ * 90). `medicationId` filtra um único remédio. Normaliza array nil -> [].
+ */
+export async function getDependentIntakes(
+  id: number,
+  opts: { days?: number; medicationId?: number; cookieHeader?: string } = {},
+): Promise<IntakesResponse> {
+  const qs = new URLSearchParams();
+  if (opts.days) qs.set("days", String(opts.days));
+  if (opts.medicationId) qs.set("medication_id", String(opts.medicationId));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  const res = await fetchApi<IntakesResponse>(
+    `/api/v1/family/dependents/${id}/intakes${suffix}`,
+    { method: "GET", cookie: opts.cookieHeader },
+  );
+  return { intakes: res.intakes ?? [], days: res.days };
 }
 
 /**

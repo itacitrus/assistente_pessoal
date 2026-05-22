@@ -71,6 +71,8 @@ func (s *Server) handleUpdateMyMedication(w http.ResponseWriter, r *http.Request
 		switch {
 		case errors.Is(err, ErrNotFound):
 			writeError(w, http.StatusNotFound, CodeNotFound, "Medicamento não encontrado.")
+		case errors.Is(err, ErrMedicationDuplicate):
+			writeError(w, http.StatusConflict, CodeMedicationDup, msgMedicationDuplicate)
 		case errors.Is(err, ErrValidation):
 			writeError(w, http.StatusBadRequest, CodeValidation, err.Error())
 		default:
@@ -116,6 +118,8 @@ func (s *Server) handleCreateMyMedication(w http.ResponseWriter, r *http.Request
 	item, err := s.store.CreateMyMedication(r.Context(), user.ID, req)
 	if err != nil {
 		switch {
+		case errors.Is(err, ErrMedicationDuplicate):
+			writeError(w, http.StatusConflict, CodeMedicationDup, msgMedicationDuplicate)
 		case errors.Is(err, ErrValidation):
 			writeError(w, http.StatusBadRequest, CodeValidation, err.Error())
 		default:
@@ -124,6 +128,68 @@ func (s *Server) handleCreateMyMedication(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusCreated, *item)
+}
+
+// handleDrugSearch — GET /me/drugs/search?q=<termo>&limit=<n>. Autocomplete do
+// cadastro de remedio: resolve o termo (mesmo com erro de grafia/fonetica)
+// contra o catalogo ANVISA/CMED. Apenas leitura, exige autenticacao. q curto
+// (<2) ou catalogo nao populado -> lista vazia.
+func (s *Server) handleDrugSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
+		return
+	}
+	if user := userFromContext(r.Context()); user == nil {
+		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Não autenticado.")
+		return
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len([]rune(q)) < 2 {
+		writeJSON(w, http.StatusOK, DrugSearchResponse{Matches: []DrugMatch{}})
+		return
+	}
+	limit := int(parseInt64Query(r, "limit"))
+	if limit <= 0 || limit > 15 {
+		limit = 8
+	}
+	matches, err := s.store.ResolveDrug(r.Context(), q, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao buscar no catálogo de medicamentos.")
+		return
+	}
+	if matches == nil {
+		matches = []DrugMatch{}
+	}
+	writeJSON(w, http.StatusOK, DrugSearchResponse{Matches: matches})
+}
+
+// handleMyIntakes — GET /me/intakes. Historico de tomadas do proprio titular.
+// Query: ?days (1..90, default 14), ?medication_id (filtra um remedio).
+func (s *Server) handleMyIntakes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
+		return
+	}
+	user := userFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Não autenticado.")
+		return
+	}
+	days := parseDaysParam(r, 14, 90)
+	medID := parseInt64Query(r, "medication_id")
+	intakes, err := s.store.ListMyIntakes(r.Context(), user.ID, days, medID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeError(w, http.StatusNotFound, CodeNotFound, "Medicamento não encontrado.")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao listar histórico de tomadas.")
+		return
+	}
+	if intakes == nil {
+		intakes = []IntakeEntry{}
+	}
+	writeJSON(w, http.StatusOK, IntakesResponse{Intakes: intakes, Days: days})
 }
 
 func (s *Server) handleDeleteMyMedication(w http.ResponseWriter, r *http.Request, medID int64) {

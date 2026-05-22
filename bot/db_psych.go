@@ -240,14 +240,19 @@ func (db *DB) GetMedicationStats7d(userID int64, from, to time.Time) (synthesis.
 			s.Skipped = count
 		case "pending":
 			s.Pending = count
+		case "unknown":
+			s.Unknown = count
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return s, err
 	}
 
-	if s.Scheduled > 0 {
-		s.AdherenceFrac = float64(s.Taken) / float64(s.Scheduled)
+	// Aderencia ignora doses "unknown" (remedios que nao exigem confirmacao):
+	// nao da pra creditar nem penalizar uma toma que nunca foi conferida. O
+	// denominador eh o total agendado MENOS os unknown.
+	if confirmable := s.Scheduled - s.Unknown; confirmable > 0 {
+		s.AdherenceFrac = float64(s.Taken) / float64(confirmable)
 	}
 
 	missRows, err := db.conn.Query(`

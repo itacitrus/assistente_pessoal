@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Clock, Pencil, Pill, Trash2 } from "lucide-react";
+import { Clock, History, Pencil, Pill, Trash2 } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import {
   MedicationForm,
   type MedicationTarget,
 } from "@/components/forms/MedicationForm";
+import { MedicationIntakeHistory } from "@/components/family/MedicationIntakeHistory";
 import type { LateDosePolicy, MedicationItem } from "@/types/api";
 
 export interface MedicationCardProps {
@@ -33,6 +34,7 @@ export function MedicationCard({ target, medication }: MedicationCardProps) {
   const router = useRouter();
   const [removing, setRemoving] = React.useState(false);
   const [editing, setEditing] = React.useState(false);
+  const [historyOpen, setHistoryOpen] = React.useState(false);
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
 
   async function handleRemove() {
@@ -110,6 +112,11 @@ export function MedicationCard({ target, medication }: MedicationCardProps) {
                   temporário
                 </span>
               ) : null}
+              {medication.active && !medication.require_confirmation ? (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                  só lembrete
+                </span>
+              ) : null}
             </div>
             {medication.schedule ? (
               <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
@@ -134,7 +141,7 @@ export function MedicationCard({ target, medication }: MedicationCardProps) {
             ) : null}
           </div>
         </div>
-        <div className="flex shrink-0 gap-1 self-start">
+        <div className="flex shrink-0 flex-wrap gap-1 self-start">
           <Button
             type="button"
             variant="ghost"
@@ -153,6 +160,18 @@ export function MedicationCard({ target, medication }: MedicationCardProps) {
             type="button"
             variant="ghost"
             size="sm"
+            onClick={() => setHistoryOpen((v) => !v)}
+            disabled={removing}
+            aria-expanded={historyOpen}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <History className="h-4 w-4" aria-hidden />
+            {historyOpen ? "Ocultar histórico" : "Ver histórico"}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
             onClick={handleRemove}
             disabled={removing}
             className="text-muted-foreground hover:text-destructive"
@@ -162,6 +181,17 @@ export function MedicationCard({ target, medication }: MedicationCardProps) {
           </Button>
         </div>
       </CardContent>
+      {historyOpen ? (
+        <CardContent className="border-t p-5">
+          <p className="mb-3 text-sm font-medium text-foreground">
+            Histórico de toma (últimos 30 dias)
+          </p>
+          <MedicationIntakeHistory
+            target={target}
+            medicationId={medication.id}
+          />
+        </CardContent>
+      ) : null}
     </Card>
   );
 }

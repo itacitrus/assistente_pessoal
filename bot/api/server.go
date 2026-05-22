@@ -172,6 +172,16 @@ func (s *Server) Mount(mux *http.ServeMux) {
 	mux.Handle(s.route("/api/v1/me/medications/"),
 		s.CORS(s.RequireOrigin(s.RequireAuth(http.HandlerFunc(s.handleMyMedicationResource)))))
 
+	// Historico de tomadas do proprio titular (GET). Janela via ?days, filtro
+	// opcional ?medication_id.
+	mux.Handle(s.route("/api/v1/me/intakes"),
+		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMyIntakes))))
+
+	// Busca no catalogo de medicamentos (GET, autocomplete do cadastro). So
+	// leitura de dado publico — RequireAuth basta, sem RequireOrigin.
+	mux.Handle(s.route("/api/v1/me/drugs/search"),
+		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleDrugSearch))))
+
 	// Family — colecao.
 	mux.Handle(s.route("/api/v1/family/dependents"),
 		s.CORS(s.RequireOrigin(s.RequireAuth(http.HandlerFunc(s.handleDependentsCollection)))))
@@ -250,6 +260,12 @@ func (s *Server) handleDependentResource(w http.ResponseWriter, r *http.Request)
 		s.handleDependentTimeline(w, r, depID)
 	case "medications":
 		s.routeDependentMedications(w, r, depID, subParts)
+	case "intakes":
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
+			return
+		}
+		s.handleListDependentIntakes(w, r, depID)
 	case "welcome":
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")

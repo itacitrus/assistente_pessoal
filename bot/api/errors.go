@@ -33,6 +33,7 @@ const (
 	CodeConsentRevoked   = "consent_revoked"
 	CodePhoneInUse       = "phone_already_in_use"
 	CodeOriginForbidden  = "origin_forbidden"
+	CodeMedicationDup    = "medication_duplicate"
 )
 
 // writeError serializa um envelope JSON com o status http apropriado.

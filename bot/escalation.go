@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -111,180 +112,315 @@ func NewEscalationEngine(db *DB, n Notifier) *EscalationEngine {
 	return &EscalationEngine{db: db, notifier: n}
 }
 
-// HandlePending decide se essa pending deve receber nova tentativa, escalar
-// para familia, ou ser deixada em paz (intervalo ainda nao fechou).
-//
-// Fluxo:
-//   1. Politica desconhecida ou nil → return (sem escalacao).
-//   2. last_attempt_at != nil && now - last < Interval → return (cedo).
-//   3. nextAttempt > MaxAttempts && EscalateTo=family → escalateToFamily.
-//   4. nextAttempt > MaxAttempts && outro → markMissedAndResolve.
-//   5. caso comum → manda mensagem ao proprio user, registra escalation,
-//      bumpa attempt em pending_confirmations.
-func (e *EscalationEngine) HandlePending(now time.Time, pc *PendingConfirmation) {
-	if pc == nil {
-		return
-	}
-	if pc.EscalationPolicy == nil || *pc.EscalationPolicy == "" {
-		return // sem politica = sem escalacao
-	}
-	pol, ok := escalationPolicies[*pc.EscalationPolicy]
-	if !ok {
-		log.Printf("escalation: unknown policy %q on pending %d", *pc.EscalationPolicy, pc.ID)
-		return
-	}
+// Acoes que classify pode decidir para um pending.
+const (
+	actNone = iota
+	actNudge
+	actEscalate
+)
 
-	user, err := e.db.GetUserByID(pc.UserID)
-	if err != nil {
-		log.Printf("escalation pc %d: user lookup: %v", pc.ID, err)
-		return
+// pendingItem casa um pending com o medicamento + instante resolvidos, pra
+// processar (e agrupar mensagens) sem reler o DB.
+type pendingItem struct {
+	pc          *PendingConfirmation
+	pol         EscalationPolicy
+	med         *Medication // pode ser nil (lookup falhou)
+	scheduledAt time.Time
+}
+
+// classify decide o que fazer com um pending AGORA, sem efeito colateral: nudge
+// gentil, escalar (deadline), ou nada. Retorna o item resolvido (med +
+// scheduledAt) pra quem for executar/agrupar. ok=false quando o pending nao
+// tem politica valida (sem escalacao).
+func (e *EscalationEngine) classify(now time.Time, pc *PendingConfirmation) (action int, item pendingItem, ok bool) {
+	if pc == nil || pc.EscalationPolicy == nil || *pc.EscalationPolicy == "" {
+		return actNone, pendingItem{}, false
+	}
+	pol, found := escalationPolicies[*pc.EscalationPolicy]
+	if !found {
+		log.Printf("escalation: unknown policy %q on pending %d", *pc.EscalationPolicy, pc.ID)
+		return actNone, pendingItem{}, false
 	}
 
 	var med *Medication
 	if pc.Kind == "medication" {
 		mi := parseMedicationIntent(pc)
 		if mi != nil && mi.MedicationID > 0 {
-			m, mErr := e.db.GetMedicationByID(mi.MedicationID)
-			if mErr == nil {
+			if m, mErr := e.db.GetMedicationByID(mi.MedicationID); mErr == nil {
 				med = m
 			}
 		}
 	}
-
 	scheduledAt := medScheduledAt(pc)
 	tolerance := DefaultToleranceMinutes
 	if med != nil && med.ToleranceMinutes > 0 {
 		tolerance = med.ToleranceMinutes
 	}
+	item = pendingItem{pc: pc, pol: pol, med: med, scheduledAt: scheduledAt}
+
 	deadline := scheduledAt.Add(time.Duration(tolerance) * time.Minute)
-
-	// Deadline da tolerancia: a familia eh avisada em segredo, e a dose vai
-	// pra 'nao confirmada'. A familia NUNCA eh avisada antes disto.
 	if !now.Before(deadline) {
-		switch pol.EscalateTo {
-		case EscalateToFamily:
-			e.escalateToFamily(now, pc, user, med)
-		default:
-			e.markMissedAndResolve(pc)
-		}
-		return
+		return actEscalate, item, true
 	}
 
-	// Dentro da janela de tolerancia: no maximo UM lembrete gentil.
+	// Dentro da janela: no maximo UM lembrete gentil.
 	if pc.AttemptNumber >= 1 {
-		return // ja cutucamos uma vez; silencio ate o deadline
+		return actNone, item, true
 	}
-
-	// Quando cutucar: no horario que o idoso disse (se adiou), senao no meio
-	// da janela de tolerancia. Evita cobrar logo de cara e parecer ansioso.
+	// Quando cutucar: no horario que o idoso disse (se adiou), senao no meio da
+	// janela de tolerancia.
 	nudgeAt := scheduledAt.Add(time.Duration(tolerance) * time.Minute / 2)
 	if pc.DeferredUntil != nil {
 		nudgeAt = *pc.DeferredUntil
 	}
 	if now.Before(nudgeAt) {
-		return
+		return actNone, item, true
 	}
+	return actNudge, item, true
+}
 
-	ec := EscalationContext{
-		User:          user,
-		Medication:    med,
-		ScheduledAt:   scheduledAt,
-		Recipient:     user,
-		DeferredUntil: pc.DeferredUntil,
-	}
-	if err := e.notifier.Send(context.Background(), user, gentleNudgeMsg(ec)); err != nil {
-		log.Printf("escalation pc %d: notifier failed: %v", pc.ID, err)
-		// Nao bumpa attempt — proxima rodada tenta de novo. Recovery em
-		// queda momentanea do canal de envio.
+// HandlePending processa UM pending. Mantido pra reuso/teste — em producao o
+// scheduler chama ProcessPendings (agrupa mensagens por usuario). Aqui o grupo
+// eh de tamanho 1, entao as mensagens saem na forma simples (single-med).
+func (e *EscalationEngine) HandlePending(now time.Time, pc *PendingConfirmation) {
+	action, item, ok := e.classify(now, pc)
+	if !ok || action == actNone {
 		return
 	}
-	if err := e.db.RecordEscalationAttempt(pc.ID, pol.Name, 1, user.ID, e.notifier.Channel(), now); err != nil {
-		if !errors.Is(err, ErrIntakeLogDuplicate) {
-			log.Printf("escalation pc %d: record attempt: %v", pc.ID, err)
-		}
+	user, err := e.db.GetUserByID(pc.UserID)
+	if err != nil {
+		log.Printf("escalation pc %d: user lookup: %v", pc.ID, err)
+		return
 	}
-	if err := e.db.UpdatePendingAttempt(pc.ID, 1, now); err != nil {
-		log.Printf("escalation pc %d: update pending: %v", pc.ID, err)
+	switch action {
+	case actNudge:
+		e.sendNudges(now, user, []pendingItem{item})
+	case actEscalate:
+		if item.pol.EscalateTo == EscalateToFamily {
+			e.escalateToFamily(now, user, []pendingItem{item})
+		} else {
+			e.markMissed([]pendingItem{item})
+		}
 	}
 }
 
-// escalateToFamily envia mensagem para guardians vinculados em family_links
-// com notify_on_medication_miss=1. Marca intake_log como 'escalated' e
-// resolve pending. Audita o evento.
-//
-// Sem guardian → markMissedAndResolve (sem alerta, mas log de missed).
-//
-// Cada guardian eh uma row separada em escalations (UNIQUE pega duplicidade).
-// Falha de envio individual nao impede tentativa pra outros guardians.
-func (e *EscalationEngine) escalateToFamily(now time.Time, pc *PendingConfirmation, user *User, med *Medication) {
-	guardians, err := e.db.ListGuardiansForUser(user.ID, "notify_on_medication_miss")
-	if err != nil {
-		log.Printf("escalation pc %d: list guardians: %v", pc.ID, err)
-	}
-
-	if len(guardians) == 0 {
-		// Sem familia pra avisar. Marca como missed e segue.
-		e.markMissedAndResolve(pc)
-		return
-	}
-
-	scheduledAt := medScheduledAt(pc)
-	const familyAttempt = 2 // 1 = lembrete gentil ao idoso; 2 = aviso a familia
-	policyName := "medication_default"
-	if pc.EscalationPolicy != nil {
-		policyName = *pc.EscalationPolicy
-	}
-	for i := range guardians {
-		g := guardians[i]
-		ec := EscalationContext{
-			User:          user,
-			Medication:    med,
-			ScheduledAt:   scheduledAt,
-			Recipient:     &g,
-			DeferredUntil: pc.DeferredUntil,
+// ProcessPendings eh o caminho de PRODUCAO: agrupa os pendings por usuario e
+// MANDA UMA MENSAGEM por etapa (lembrete gentil agrupado; aviso a familia
+// agrupado por guardiao). O controle continua granular — cada pending tem seu
+// proprio intake_log/resolucao —, so a mensagem eh agrupada.
+func (e *EscalationEngine) ProcessPendings(now time.Time, pendings []PendingConfirmation) {
+	byUser := map[int64][]*PendingConfirmation{}
+	var order []int64
+	for i := range pendings {
+		pc := &pendings[i]
+		if _, seen := byUser[pc.UserID]; !seen {
+			order = append(order, pc.UserID)
 		}
-		msg := familyMissMsg(ec)
-		if err := e.notifier.Send(context.Background(), &g, msg); err != nil {
-			log.Printf("escalation pc %d: notify guardian %d: %v", pc.ID, g.ID, err)
+		byUser[pc.UserID] = append(byUser[pc.UserID], pc)
+	}
+	for _, uid := range order {
+		user, err := e.db.GetUserByID(uid)
+		if err != nil {
+			log.Printf("escalation: user %d lookup: %v", uid, err)
 			continue
 		}
-		if err := e.db.RecordEscalationAttempt(pc.ID, policyName, familyAttempt, g.ID, e.notifier.Channel(), now); err != nil {
-			if !errors.Is(err, ErrIntakeLogDuplicate) {
-				log.Printf("escalation pc %d: record family attempt: %v", pc.ID, err)
+		var nudges, family, missed []pendingItem
+		for _, pc := range byUser[uid] {
+			action, item, ok := e.classify(now, pc)
+			if !ok {
+				continue
+			}
+			switch action {
+			case actNudge:
+				nudges = append(nudges, item)
+			case actEscalate:
+				if item.pol.EscalateTo == EscalateToFamily {
+					family = append(family, item)
+				} else {
+					missed = append(missed, item)
+				}
 			}
 		}
-	}
-
-	// Atualiza intake_log para 'escalated', resolve pending.
-	if pc.Kind == "medication" {
-		mi := parseMedicationIntent(pc)
-		if mi != nil && mi.MedicationID > 0 {
-			if err := e.db.UpdateIntakeStatus(mi.MedicationID, mi.ScheduledAt, IntakeEscalated, ""); err != nil {
-				log.Printf("escalation pc %d: update intake escalated: %v", pc.ID, err)
-			}
+		if len(nudges) > 0 {
+			e.sendNudges(now, user, nudges)
+		}
+		if len(family) > 0 {
+			e.escalateToFamily(now, user, family)
+		}
+		if len(missed) > 0 {
+			e.markMissed(missed)
 		}
 	}
-	if err := e.db.ResolvePendingConfirmation(pc.ID, "escalated"); err != nil {
-		log.Printf("escalation pc %d: resolve: %v", pc.ID, err)
-	}
-	NewAuditLog(e.db).Log(user.ID, "medication_escalated", "",
-		fmt.Sprintf("pc=%d guardians=%d", pc.ID, len(guardians)))
 }
 
-// markMissedAndResolve marca intake_log como 'missed', resolve pending e
-// audita. Usado quando esgotou tentativas sem guardian, ou quando politica
-// nao define escalacao pra familia.
-func (e *EscalationEngine) markMissedAndResolve(pc *PendingConfirmation) {
-	if pc.Kind == "medication" {
-		mi := parseMedicationIntent(pc)
-		if mi != nil && mi.MedicationID > 0 {
-			if err := e.db.UpdateIntakeStatus(mi.MedicationID, mi.ScheduledAt, IntakeMissed, ""); err != nil {
-				log.Printf("escalation pc %d: update intake missed: %v", pc.ID, err)
+// sendNudges manda UM lembrete gentil ao proprio idoso cobrindo todos os
+// `items` (1 = forma simples; N = lista agrupada). So bumpa attempt/registra
+// apos envio OK — falha de canal deixa pra proxima rodada.
+func (e *EscalationEngine) sendNudges(now time.Time, user *User, items []pendingItem) {
+	if len(items) == 0 {
+		return
+	}
+	var msg string
+	if len(items) == 1 {
+		msg = gentleNudgeMsg(EscalationContext{
+			User: user, Medication: items[0].med, ScheduledAt: items[0].scheduledAt,
+			Recipient: user, DeferredUntil: items[0].pc.DeferredUntil,
+		})
+	} else {
+		msg = groupedNudgeMsg(user.Name, medNamesOf(items))
+	}
+	if err := e.notifier.Send(context.Background(), user, msg); err != nil {
+		log.Printf("escalation: nudge send to user %d failed: %v", user.ID, err)
+		return
+	}
+	for _, it := range items {
+		if err := e.db.RecordEscalationAttempt(it.pc.ID, policyNameOf(it.pc), 1, user.ID, e.notifier.Channel(), now); err != nil {
+			if !errors.Is(err, ErrIntakeLogDuplicate) {
+				log.Printf("escalation pc %d: record attempt: %v", it.pc.ID, err)
+			}
+		}
+		if err := e.db.UpdatePendingAttempt(it.pc.ID, 1, now); err != nil {
+			log.Printf("escalation pc %d: update pending: %v", it.pc.ID, err)
+		}
+	}
+}
+
+// escalateToFamily avisa, EM SEGREDO, os guardians (notify_on_medication_miss=1)
+// sobre `items` (1 = msg simples; N = lista agrupada). Cada guardiao recebe UMA
+// mensagem cobrindo todos os remedios nao confirmados. Marca cada dose como
+// 'escalated' e resolve cada pending. Sem guardiao → markMissed.
+func (e *EscalationEngine) escalateToFamily(now time.Time, user *User, items []pendingItem) {
+	if len(items) == 0 {
+		return
+	}
+	guardians, err := e.db.ListGuardiansForUser(user.ID, "notify_on_medication_miss")
+	if err != nil {
+		log.Printf("escalation user %d: list guardians: %v", user.ID, err)
+	}
+	if len(guardians) == 0 {
+		e.markMissed(items)
+		return
+	}
+
+	const familyAttempt = 2 // 1 = lembrete gentil ao idoso; 2 = aviso a familia
+	for i := range guardians {
+		g := guardians[i]
+		var msg string
+		if len(items) == 1 {
+			msg = familyMissMsg(EscalationContext{
+				User: user, Medication: items[0].med, ScheduledAt: items[0].scheduledAt,
+				Recipient: &g, DeferredUntil: items[0].pc.DeferredUntil,
+			})
+		} else {
+			msg = groupedFamilyMissMsg(user, items)
+		}
+		if err := e.notifier.Send(context.Background(), &g, msg); err != nil {
+			log.Printf("escalation user %d: notify guardian %d: %v", user.ID, g.ID, err)
+			continue
+		}
+		for _, it := range items {
+			if err := e.db.RecordEscalationAttempt(it.pc.ID, policyNameOf(it.pc), familyAttempt, g.ID, e.notifier.Channel(), now); err != nil {
+				if !errors.Is(err, ErrIntakeLogDuplicate) {
+					log.Printf("escalation pc %d: record family attempt: %v", it.pc.ID, err)
+				}
 			}
 		}
 	}
-	if err := e.db.ResolvePendingConfirmation(pc.ID, "missed"); err != nil {
-		log.Printf("escalation pc %d: resolve missed: %v", pc.ID, err)
+
+	for _, it := range items {
+		if it.med != nil {
+			if err := e.db.UpdateIntakeStatus(it.med.ID, it.scheduledAt, IntakeEscalated, ""); err != nil {
+				log.Printf("escalation pc %d: update intake escalated: %v", it.pc.ID, err)
+			}
+		}
+		if err := e.db.ResolvePendingConfirmation(it.pc.ID, "escalated"); err != nil {
+			log.Printf("escalation pc %d: resolve: %v", it.pc.ID, err)
+		}
+		NewAuditLog(e.db).Log(user.ID, "medication_escalated", "",
+			fmt.Sprintf("pc=%d guardians=%d", it.pc.ID, len(guardians)))
 	}
-	NewAuditLog(e.db).Log(pc.UserID, "medication_missed", "", fmt.Sprintf("pc=%d", pc.ID))
+}
+
+// markMissed marca cada dose de `items` como 'missed' e resolve o pending. Sem
+// alerta — usado quando nao ha guardian ou a politica nao escala pra familia.
+func (e *EscalationEngine) markMissed(items []pendingItem) {
+	for _, it := range items {
+		if it.med != nil {
+			if err := e.db.UpdateIntakeStatus(it.med.ID, it.scheduledAt, IntakeMissed, ""); err != nil {
+				log.Printf("escalation pc %d: update intake missed: %v", it.pc.ID, err)
+			}
+		}
+		if err := e.db.ResolvePendingConfirmation(it.pc.ID, "missed"); err != nil {
+			log.Printf("escalation pc %d: resolve missed: %v", it.pc.ID, err)
+		}
+		NewAuditLog(e.db).Log(it.pc.UserID, "medication_missed", "", fmt.Sprintf("pc=%d", it.pc.ID))
+	}
+}
+
+// policyNameOf devolve o nome da politica do pending, com fallback seguro.
+func policyNameOf(pc *PendingConfirmation) string {
+	if pc.EscalationPolicy != nil && *pc.EscalationPolicy != "" {
+		return *pc.EscalationPolicy
+	}
+	return "medication_default"
+}
+
+// medNamesOf extrai os nomes dos medicamentos dos items (fallback "o remédio").
+func medNamesOf(items []pendingItem) []string {
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		if it.med != nil {
+			out = append(out, it.med.Name)
+		} else {
+			out = append(out, "o remédio")
+		}
+	}
+	return out
+}
+
+// groupedNudgeMsg eh o lembrete gentil agrupado (>=2 remedios). Mesmas regras
+// do single: tom leve, sem pressa, sem mencionar familia, sem orientar dose.
+func groupedNudgeMsg(userName string, medNames []string) string {
+	return fmt.Sprintf("%s, passando pra lembrar dos remédios: %s. Sem pressa — me avisa quando tomar.",
+		firstName(userName), joinNames(medNames))
+}
+
+// groupedFamilyMissMsg eh o aviso SECRETO agrupado ao guardiao (>=2 remedios).
+// Verdadeiro (reflete adiamento por remedio), sobrio, deixa a decisao clinica
+// com a familia/medico. Mantem as marcas de seguranca ("nao confirm",
+// "nao oriento").
+func groupedFamilyMissMsg(user *User, items []pendingItem) string {
+	elderName := firstName(user.Name)
+	parts := make([]string, 0, len(items))
+	for _, it := range items {
+		medName := "o remédio"
+		if it.med != nil {
+			medName = it.med.Name
+		}
+		p := fmt.Sprintf("%s das %s", medName, it.scheduledAt.In(BRT()).Format("15h"))
+		if it.pc.DeferredUntil != nil {
+			p += fmt.Sprintf(" (disse que tomaria por volta das %s)", it.pc.DeferredUntil.In(BRT()).Format("15h04"))
+		}
+		parts = append(parts, p)
+	}
+	return fmt.Sprintf(
+		"Oi. Ainda não confirmei que %s tomou: %s. Anotei como não confirmadas. "+
+			"Se achar melhor, vale dar uma olhada e, se precisar, conferir com o médico — "+
+			"eu não oriento sobre dose atrasada por segurança.",
+		elderName, joinNames(parts),
+	)
+}
+
+// joinNames junta itens em PT-BR: "A", "A e B", "A, B e C".
+func joinNames(items []string) string {
+	switch len(items) {
+	case 0:
+		return ""
+	case 1:
+		return items[0]
+	case 2:
+		return items[0] + " e " + items[1]
+	default:
+		return strings.Join(items[:len(items)-1], ", ") + " e " + items[len(items)-1]
+	}
 }

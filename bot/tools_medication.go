@@ -40,14 +40,70 @@ import (
 // medicationToolHandlers eh o subset registrado em tools.go::toolHandlers.
 // Mantido aqui para evitar declaracoes duplicadas no init de tools.go.
 var medicationToolHandlers = map[string]ToolHandler{
-	"cadastrar_medicamento":  handleCadastrarMedicamento,
-	"listar_medicamentos":    handleListarMedicamentos,
-	"editar_medicamento":     handleEditarMedicamento,
-	"cancelar_medicamento":   handleCancelarMedicamento,
-	"marcar_remedio_tomado":  handleMarcarRemedioTomado,
-	"adiar_remedio":          handleAdiarRemedio,
-	"pular_dose":             handlePularDose,
-	"extrair_receita_imagem": handleExtrairReceitaImagem,
+	"cadastrar_medicamento":       handleCadastrarMedicamento,
+	"buscar_medicamento_catalogo": handleBuscarMedicamentoCatalogo,
+	"listar_medicamentos":         handleListarMedicamentos,
+	"editar_medicamento":          handleEditarMedicamento,
+	"cancelar_medicamento":        handleCancelarMedicamento,
+	"marcar_remedio_tomado":       handleMarcarRemedioTomado,
+	"adiar_remedio":               handleAdiarRemedio,
+	"pular_dose":                  handlePularDose,
+	"extrair_receita_imagem":      handleExtrairReceitaImagem,
+}
+
+// =========================================================================
+// buscar_medicamento_catalogo
+// =========================================================================
+
+type buscarMedicamentoCatalogoParams struct {
+	Query string `json:"query"`
+	Limit int    `json:"limit"`
+}
+
+// handleBuscarMedicamentoCatalogo resolve o que o usuario digitou/falou contra
+// o catalogo oficial (ANVISA/CMED), corrigindo erros de grafia e fonetica. NAO
+// persiste nada: devolve candidatos ranqueados para o LLM CONFIRMAR em
+// linguagem natural antes de chamar cadastrar_medicamento com o nome/dose certos.
+func handleBuscarMedicamentoCatalogo(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {
+	var p buscarMedicamentoCatalogoParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "", fmt.Errorf("parse params: %w", err)
+	}
+	q := strings.TrimSpace(p.Query)
+	if q == "" {
+		return "Preciso do nome (mesmo aproximado) do remédio pra procurar no catálogo.", nil
+	}
+	limit := p.Limit
+	if limit <= 0 || limit > 8 {
+		limit = 5
+	}
+	matches, err := agent.db.ResolveDrug(q, limit)
+	if err != nil {
+		return "", fmt.Errorf("resolve drug %q: %w", q, err)
+	}
+	if len(matches) == 0 {
+		return fmt.Sprintf(
+			"Não encontrei %q no catálogo da ANVISA. Pode ser um nome pouco comum, manipulado, ou com grafia bem diferente. Siga com o que o usuário informou — NÃO invente nome nem dose.",
+			q,
+		), nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Correspondências no catálogo ANVISA para %q (mais provável primeiro):\n", q)
+	for _, m := range matches {
+		name := m.CommercialName
+		if m.Concentration != "" {
+			name += " " + m.Concentration
+		}
+		ingredient := strings.ToLower(strings.TrimSpace(m.ActiveIngredient))
+		if ingredient != "" && normalizeName(ingredient) != normalizeName(m.CommercialName) {
+			fmt.Fprintf(&b, "- %s — princípio ativo: %s\n", name, ingredient)
+		} else {
+			fmt.Fprintf(&b, "- %s\n", name)
+		}
+	}
+	b.WriteString("\nConfirme com o usuário, em linguagem natural e SEM menu numerado, qual é o correto (ex: \"Você quis dizer o X de Ymg?\"). Depois cadastre usando exatamente o nome e a dose do item confirmado. Se nenhum bater, pergunte ao usuário em vez de chutar.")
+	return b.String(), nil
 }
 
 // =========================================================================
@@ -150,6 +206,9 @@ func persistMedicationFromIntent(db *DB, ownerID, creatorID int64, mi *Medicatio
 		CreatedByUserID:  creatorID,
 		ToleranceMinutes: mi.ToleranceMinutes,
 		LateDosePolicy:   policy,
+		// Cadastro via bot defaulta pra exigir confirmacao — comportamento
+		// seguro de cuidado. Desligar fica no painel (form), por enquanto.
+		RequireConfirmation: true,
 	}
 	if err := db.CreateMedication(med); err != nil {
 		return nil, fmt.Errorf("create medication: %w", err)
@@ -301,7 +360,7 @@ func handleEditarMedicamento(ctx context.Context, agent *Agent, user *User, para
 		pNewPolicy = &validated
 	}
 	if pNewName != nil || pNewDose != nil || pNewInstr != nil || p.NewToleranceMin != nil || pNewPolicy != nil {
-		if err := agent.db.UpdateMedicationFields(med.ID, pNewName, pNewDose, pNewInstr, p.NewToleranceMin, pNewPolicy); err != nil {
+		if err := agent.db.UpdateMedicationFields(med.ID, pNewName, pNewDose, pNewInstr, p.NewToleranceMin, pNewPolicy, nil); err != nil {
 			return "", fmt.Errorf("update medication: %w", err)
 		}
 	}
@@ -409,6 +468,17 @@ func handleMarcarRemedioTomado(ctx context.Context, agent *Agent, user *User, pa
 		return "", fmt.Errorf("parse params: %w", err)
 	}
 
+	// "Tomei" GENERICO (sem citar remedio): se ha mais de uma dose pendente
+	// agora (lembrete agrupado), o idoso quer dizer que tomou TODAS. Marca todas
+	// de uma vez. Se citar um remedio especifico, cai no caminho granular abaixo.
+	if p.MedicationID == 0 && strings.TrimSpace(p.NameQuery) == "" {
+		if msg, handled := marcarTodasPendentes(agent, user); handled {
+			return msg, nil
+		}
+		// Nenhuma pendente agora — segue pro caminho normal (tomada fora de
+		// lembrete, resolvida por horario mais proximo).
+	}
+
 	pc, err := agent.db.GetActivePendingForUserAndMedication(user.ID, p.MedicationID)
 	if err != nil {
 		return "", fmt.Errorf("get pending: %w", err)
@@ -472,6 +542,49 @@ func handleMarcarRemedioTomado(ctx context.Context, agent *Agent, user *User, pa
 
 	// Resposta neutra — sem reforco positivo. Vide regra no escalation.go.
 	return fmt.Sprintf("Anotado, %s.", firstName(user.Name)), nil
+}
+
+// marcarTodasPendentes marca como tomadas TODAS as doses de medicacao
+// pendentes do usuario agora. Retorna (mensagem, true) quando agiu em lote
+// (>=2 pendentes); (zero, false) quando ha 0 ou 1 pendente — nesse caso o
+// caller segue pelo caminho granular (que cobre o single com recalculo de
+// horario e o "tomou fora de lembrete").
+func marcarTodasPendentes(agent *Agent, user *User) (string, bool) {
+	pendings, err := agent.db.ListActiveMedicationPendingsForUser(user.ID)
+	if err != nil {
+		log.Printf("marcar_remedio_tomado: list pendings: %v", err)
+		return "", false
+	}
+	if len(pendings) < 2 {
+		return "", false // deixa o caminho granular resolver (single / fora de lembrete)
+	}
+
+	var names []string
+	for i := range pendings {
+		pc := &pendings[i]
+		mi := parseMedicationIntent(pc)
+		if mi == nil || mi.MedicationID == 0 {
+			continue
+		}
+		if err := agent.db.UpdateIntakeStatus(mi.MedicationID, mi.ScheduledAt, IntakeTaken, "tomei (todos)"); err != nil {
+			log.Printf("marcar_remedio_tomado(todos): update intake: %v", err)
+		}
+		if err := agent.db.ResolvePendingConfirmation(pc.ID, "confirmed"); err != nil {
+			log.Printf("marcar_remedio_tomado(todos): resolve pending: %v", err)
+		}
+		med, _ := agent.db.GetMedicationByID(mi.MedicationID)
+		medName := "remedio"
+		if med != nil {
+			medName = med.Name
+		}
+		names = append(names, medName)
+		agent.audit.Log(user.ID, "medication_taken", medName,
+			fmt.Sprintf("med_id=%d|pc=%d|via=batch", mi.MedicationID, pc.ID))
+	}
+	if len(names) == 0 {
+		return "", false
+	}
+	return fmt.Sprintf("Anotado, %s. Marquei %s como tomados.", firstName(user.Name), joinNames(names)), true
 }
 
 // =========================================================================
@@ -632,7 +745,9 @@ func handleExtrairReceitaImagem(ctx context.Context, agent *Agent, user *User, p
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Extraídos %d medicamentos da receita. ", len(p.Items)))
 	sb.WriteString("Apresentar item-a-item ao usuário em linguagem natural, sem menu numerado, ")
-	sb.WriteString("perguntando o horário de cada um, e chamar cadastrar_medicamento ao confirmar:\n")
+	sb.WriteString("perguntando o horário de cada um, e chamar cadastrar_medicamento ao confirmar. ")
+	sb.WriteString("O OCR de receita erra com frequência — quando houver correspondência no catálogo, ")
+	sb.WriteString("confirme com o usuário o nome/dose do catálogo (sem afirmar que está certo) antes de cadastrar:\n")
 	for i, it := range p.Items {
 		line := fmt.Sprintf("%d. %s", i+1, it.Name)
 		if strings.TrimSpace(it.Dose) != "" {
@@ -643,6 +758,22 @@ func handleExtrairReceitaImagem(ctx context.Context, agent *Agent, user *User, p
 		}
 		if strings.TrimSpace(it.DurationText) != "" {
 			line += " (duração: " + it.DurationText + ")"
+		}
+		// Enriquecimento best-effort: resolve o nome lido pelo OCR contra o
+		// catalogo. So anexa quando ha correspondencia forte (>=0.7) e ela
+		// difere do que foi lido — sinal pro agente CONFIRMAR a correcao, nunca
+		// aplicar sozinho. Falha/catalogo vazio: segue sem sugestao.
+		if matches, err := agent.db.ResolveDrug(it.Name, 1); err == nil && len(matches) > 0 {
+			top := matches[0]
+			suggestion := top.CommercialName
+			if top.Concentration != "" {
+				suggestion += " " + top.Concentration
+			}
+			differs := normalizeName(top.CommercialName) != normalizeName(it.Name) ||
+				(top.Concentration != "" && normalizeName(top.Concentration) != normalizeName(it.Dose))
+			if top.Confidence >= 0.7 && differs {
+				line += fmt.Sprintf(" [catálogo sugere: %s — confirmar com o usuário]", suggestion)
+			}
 		}
 		sb.WriteString(line + "\n")
 	}

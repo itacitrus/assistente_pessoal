@@ -217,7 +217,10 @@ func BuildDependentStatus(ctx context.Context, db *DB, _ llm.ReportProvider, dep
 		rep.DaysSinceLastTalk = -1
 	}
 
-	medStats, err := db.GetMedicationStats7d(dep.ID, weekAgo, now)
+	// Aderencia usa a MESMA janela `days` (default 14) que rotula o card no
+	// painel ("Aderência (14 dias)") e o detalhamento de tomadas — antes lia 7d
+	// e divergia do rotulo. weekAgo segue valendo para as outras metricas (7d).
+	medStats, err := db.GetMedicationStats7d(dep.ID, windowStart, now)
 	if err != nil {
 		return nil, fmt.Errorf("med stats: %w", err)
 	}

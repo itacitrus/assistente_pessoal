@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -97,6 +98,11 @@ func validatePendingKind(k string) error {
 
 type DB struct {
 	conn *sql.DB
+
+	// Indice em memoria do catalogo de medicamentos (drug_catalog), construido
+	// sob demanda na primeira resolucao. Ver drug_catalog.go.
+	drugMu  sync.RWMutex
+	drugIdx []drugEntry
 }
 
 func NewDB(path string) (*DB, error) {
@@ -265,7 +271,7 @@ func (db *DB) migrate() error {
 		id              INTEGER PRIMARY KEY AUTOINCREMENT,
 		medication_id   INTEGER NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
 		scheduled_at    DATETIME NOT NULL,
-		status          TEXT NOT NULL CHECK(status IN ('pending','taken','skipped','missed','escalated')),
+		status          TEXT NOT NULL CHECK(status IN ('pending','taken','skipped','missed','escalated','unknown')),
 		confirmed_at    DATETIME,
 		response_text   TEXT,
 		created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -520,6 +526,50 @@ func (db *DB) migrate() error {
 		// sessao (e nao a um cookie) faz o estado sobreviver a reload e dispensa
 		// reencaminhar um segundo cookie no SSR do painel.
 		`ALTER TABLE web_sessions ADD COLUMN impersonated_user_id INTEGER REFERENCES users(id)`,
+
+		// Catalogo de medicamentos (fonte: Lista CMED/ANVISA). Tabela de
+		// REFERENCIA estatica, populada fora do runtime do bot pelo script
+		// scripts/ingest_drug_catalog.py — o bot apenas LE (resolucao fuzzy/
+		// fonetica em drug_catalog.go). Cada linha eh uma APRESENTACAO especifica
+		// (ex: "Losartana 50 MG" e "Losartana 100 MG" sao linhas distintas), o
+		// que alimenta direto o autocomplete do cadastro de remedio.
+		//   concentration = dose extraida do inicio da apresentacao ("50 MG").
+		//   presentation  = string crua da CMED (forma + embalagem).
+		//   norm_*        = chave normalizada (minusculo, sem acento/pontuacao)
+		//                   pre-computada na ingestao para acelerar o match.
+		// O DDL eh espelhado em scripts/ingest_drug_catalog.py (CREATE IF NOT
+		// EXISTS) para o script ser auto-suficiente num banco recem-criado;
+		// manter as duas definicoes em sincronia.
+		`CREATE TABLE IF NOT EXISTS drug_catalog (
+			id                INTEGER PRIMARY KEY AUTOINCREMENT,
+			commercial_name   TEXT NOT NULL,
+			active_ingredient TEXT NOT NULL DEFAULT '',
+			concentration     TEXT NOT NULL DEFAULT '',
+			presentation      TEXT NOT NULL DEFAULT '',
+			lab               TEXT NOT NULL DEFAULT '',
+			ean               TEXT NOT NULL DEFAULT '',
+			anvisa_reg        TEXT NOT NULL DEFAULT '',
+			product_type      TEXT NOT NULL DEFAULT '',
+			tarja             TEXT NOT NULL DEFAULT '',
+			therapeutic_class TEXT NOT NULL DEFAULT '',
+			norm_name         TEXT NOT NULL DEFAULT '',
+			norm_ingredient   TEXT NOT NULL DEFAULT '',
+			source_version    TEXT NOT NULL DEFAULT '',
+			ingest_token      TEXT NOT NULL DEFAULT '',
+			created_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+
+		// Vincula um cadastro de remedio a uma apresentacao do catalogo, quando
+		// o usuario seleciona um item resolvido (web autocomplete ou confirmacao
+		// via bot). NULL = remedio digitado livre, sem correspondencia no catalogo.
+		`ALTER TABLE medications ADD COLUMN catalog_id INTEGER REFERENCES drug_catalog(id)`,
+
+		// Fase 3.2 (idosos): exigir confirmacao de toma. 1 (default) = o bot
+		// pede confirmacao e escala (cutucao + aviso a familia) se nao confirmar.
+		// 0 = adulto que so quer ser lembrado, sem o trabalho de confirmar: o bot
+		// lembra mas NAO cobra nem escala; se nao confirmar, a dose vira 'unknown'
+		// (nem tomada nem perdida — "nao sei") apos a janela de tolerancia.
+		`ALTER TABLE medications ADD COLUMN require_confirmation INTEGER NOT NULL DEFAULT 1`,
 	}
 	for _, stmt := range additive {
 		if _, err := db.conn.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
@@ -530,9 +580,83 @@ func (db *DB) migrate() error {
 	// CONVENCAO: indices em colunas adicionadas via additive migration vao
 	// AQUI, nao no schema base. Garante que a coluna existe antes do CREATE
 	// INDEX rodar em banco antigo (em primeiro deploy pos-migration).
-	postAdditive := `CREATE INDEX IF NOT EXISTS idx_users_type ON users(type);`
+	postAdditive := `
+		CREATE INDEX IF NOT EXISTS idx_users_type ON users(type);
+		CREATE INDEX IF NOT EXISTS idx_drug_catalog_norm_name ON drug_catalog(norm_name);
+		CREATE INDEX IF NOT EXISTS idx_drug_catalog_norm_ingredient ON drug_catalog(norm_ingredient);
+		-- Chave natural estavel: a ingestao faz upsert por (norm_name, concentration),
+		-- preservando os ids entre edicoes da CMED. Sem isto, um DELETE+reinsert
+		-- reatribuiria ids e deixaria medications.catalog_id apontando pra lugar errado.
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_drug_catalog_natkey ON drug_catalog(norm_name, concentration);
+	`
 	if _, err := db.conn.Exec(postAdditive); err != nil {
 		return fmt.Errorf("post-additive migration: %w", err)
+	}
+
+	if err := db.migrateIntakeStatusCheck(); err != nil {
+		return fmt.Errorf("intake status check migration: %w", err)
+	}
+	return nil
+}
+
+// migrateIntakeStatusCheck adiciona o status 'unknown' ao CHECK de
+// medication_intake_log. SQLite NAO permite ALTER de CHECK constraint, entao
+// reconstruimos a tabela (create-copy-drop-rename) preservando dados, FK e
+// UNIQUE. Idempotente: detecta pela DDL atual se 'unknown' ja esta presente e
+// pula. Roda numa transacao com foreign_keys desligado (procedimento oficial
+// de table rebuild do SQLite).
+func (db *DB) migrateIntakeStatusCheck() error {
+	var ddl string
+	err := db.conn.QueryRow(
+		`SELECT sql FROM sqlite_master WHERE type='table' AND name='medication_intake_log'`,
+	).Scan(&ddl)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // tabela ainda nao existe (banco novo ja nasce com 'unknown')
+	}
+	if err != nil {
+		return fmt.Errorf("inspect intake DDL: %w", err)
+	}
+	if strings.Contains(ddl, "'unknown'") {
+		return nil // ja migrado
+	}
+
+	// foreign_keys precisa estar OFF durante o rename pra nao quebrar a FK
+	// medication_id; o PRAGMA nao surte efeito dentro de transacao, entao fica
+	// fora dela.
+	if _, err := db.conn.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+		return fmt.Errorf("disable fk: %w", err)
+	}
+	defer db.conn.Exec(`PRAGMA foreign_keys=ON`)
+
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	stmts := []string{
+		`CREATE TABLE medication_intake_log_new (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			medication_id   INTEGER NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+			scheduled_at    DATETIME NOT NULL,
+			status          TEXT NOT NULL CHECK(status IN ('pending','taken','skipped','missed','escalated','unknown')),
+			confirmed_at    DATETIME,
+			response_text   TEXT,
+			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(medication_id, scheduled_at)
+		)`,
+		`INSERT INTO medication_intake_log_new (id, medication_id, scheduled_at, status, confirmed_at, response_text, created_at)
+		 SELECT id, medication_id, scheduled_at, status, confirmed_at, response_text, created_at FROM medication_intake_log`,
+		`DROP TABLE medication_intake_log`,
+		`ALTER TABLE medication_intake_log_new RENAME TO medication_intake_log`,
+		`CREATE INDEX IF NOT EXISTS idx_intake_med_time ON medication_intake_log(medication_id, scheduled_at)`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("rebuild intake table (%.40s): %w", s, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit rebuild: %w", err)
 	}
 	return nil
 }
@@ -822,9 +946,22 @@ func (db *DB) CreatePendingConfirmation(pc *PendingConfirmation) error {
 	if kindForFilter == "" {
 		kindForFilter = "event"
 	}
-	db.conn.Exec(`UPDATE pending_confirmations SET status = 'cancelled'
-		WHERE user_id = ? AND status = 'pending' AND kind = ?`,
-		pc.UserID, kindForFilter)
+	if kindForFilter == "medication" {
+		// Fase 3.2: lembrete agrupado. Varios remedios podem vencer no mesmo
+		// horario e cada um tem seu proprio pending (controle granular). Por
+		// isso, ao criar um lembrete de remedio, supersede APENAS a dose
+		// anterior DO MESMO medicamento — nunca os outros remedios pendentes.
+		// Pendings de cadastro (sem medication_id) nao cancelam nada.
+		db.conn.Exec(`UPDATE pending_confirmations SET status = 'cancelled'
+			WHERE user_id = ? AND status = 'pending' AND kind = 'medication'
+			  AND json_extract(event_data, '$.medication.medication_id') IS NOT NULL
+			  AND json_extract(event_data, '$.medication.medication_id') = json_extract(?, '$.medication.medication_id')`,
+			pc.UserID, pc.EventData)
+	} else {
+		db.conn.Exec(`UPDATE pending_confirmations SET status = 'cancelled'
+			WHERE user_id = ? AND status = 'pending' AND kind = ?`,
+			pc.UserID, kindForFilter)
+	}
 
 	result, err := db.conn.Exec(
 		`INSERT INTO pending_confirmations (user_id, event_data, kind, escalation_policy)

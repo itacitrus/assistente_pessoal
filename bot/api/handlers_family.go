@@ -483,6 +483,8 @@ func (s *Server) handleCreateDependentMedication(w http.ResponseWriter, r *http.
 		switch {
 		case errors.Is(err, ErrNotFound):
 			writeError(w, http.StatusForbidden, CodeForbidden, "Você não é responsável por este dependente.")
+		case errors.Is(err, ErrMedicationDuplicate):
+			writeError(w, http.StatusConflict, CodeMedicationDup, msgMedicationDuplicate)
 		case errors.Is(err, ErrValidation):
 			writeError(w, http.StatusBadRequest, CodeValidation, err.Error())
 		default:
@@ -543,6 +545,8 @@ func (s *Server) handleUpdateDependentMedication(w http.ResponseWriter, r *http.
 		switch {
 		case errors.Is(err, ErrNotFound):
 			writeError(w, http.StatusNotFound, CodeNotFound, "Medicamento não encontrado.")
+		case errors.Is(err, ErrMedicationDuplicate):
+			writeError(w, http.StatusConflict, CodeMedicationDup, msgMedicationDuplicate)
 		case errors.Is(err, ErrValidation):
 			writeError(w, http.StatusBadRequest, CodeValidation, err.Error())
 		default:
@@ -551,6 +555,31 @@ func (s *Server) handleUpdateDependentMedication(w http.ResponseWriter, r *http.
 		return
 	}
 	writeJSON(w, http.StatusOK, *item)
+}
+
+// handleListDependentIntakes — GET /family/dependents/{id}/intakes.
+// Query: ?days (1..90, default 14), ?medication_id (filtra um remedio).
+func (s *Server) handleListDependentIntakes(w http.ResponseWriter, r *http.Request, depID int64) {
+	user := userFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Não autenticado.")
+		return
+	}
+	days := parseDaysParam(r, 14, 90)
+	medID := parseInt64Query(r, "medication_id")
+	intakes, err := s.store.ListDependentIntakes(r.Context(), user.ID, depID, days, medID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeError(w, http.StatusForbidden, CodeForbidden, "Você não é responsável por este dependente.")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao listar histórico de tomadas.")
+		return
+	}
+	if intakes == nil {
+		intakes = []IntakeEntry{}
+	}
+	writeJSON(w, http.StatusOK, IntakesResponse{Intakes: intakes, Days: days})
 }
 
 // handleUnlinkDependent — DELETE /family/dependents/{id}. Remove o vinculo
@@ -571,6 +600,41 @@ func (s *Server) handleUnlinkDependent(w http.ResponseWriter, r *http.Request, d
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
+
+// parseDaysParam le ?days da query, com default e teto (clamp 1..max). Valor
+// invalido ou ausente cai no default. Usado pelo historico de tomadas.
+func parseDaysParam(r *http.Request, def, max int) int {
+	v := strings.TrimSpace(r.URL.Query().Get("days"))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return def
+	}
+	if n > max {
+		return max
+	}
+	return n
+}
+
+// parseInt64Query le um inteiro positivo da query; 0 (filtro inativo) se
+// ausente ou invalido.
+func parseInt64Query(r *http.Request, key string) int64 {
+	v := strings.TrimSpace(r.URL.Query().Get(key))
+	if v == "" {
+		return 0
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// msgMedicationDuplicate eh a mensagem 409 mostrada quando o cadastro/edicao
+// bateria numa copia identica (mesmo nome, dose e horario) ja ativa.
+const msgMedicationDuplicate = "Já existe um remédio igual cadastrado (mesmo nome, dose e horário). Edite o existente em vez de cadastrar de novo."
 
 // validateCreateMedication valida o body de criacao de medicamento. Retorna
 // string vazia se ok, mensagem de erro PT-BR caso contrario.

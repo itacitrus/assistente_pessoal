@@ -160,6 +160,10 @@ type MedicationItem struct {
 	// LateDosePolicy: orientacao para dose atrasada. Um de: consult_doctor
 	// (padrao), skip, take_keep_next, take_recalculate.
 	LateDosePolicy string `json:"late_dose_policy"`
+	// RequireConfirmation: true (default) = o bot pede confirmacao de toma e
+	// escala se nao confirmar. false = so lembra (sem cobrar/escalar); dose nao
+	// confirmada vira "nao sei".
+	RequireConfirmation bool `json:"require_confirmation"`
 	// Campos estruturados do PRIMEIRO schedule, para o form de edicao
 	// pre-preencher (o texto humano `Schedule` cobre todos os schedules). Times
 	// em "HH:MM"; Frequency "daily"|"weekly"; Days subset mon..sun (weekly).
@@ -171,6 +175,24 @@ type MedicationItem struct {
 // MedicationsResponse eh o payload de GET /family/dependents/{id}/medications.
 type MedicationsResponse struct {
 	Medications []MedicationItem `json:"medications"`
+}
+
+// IntakeEntry eh uma ocorrencia de dose no historico de tomadas. Status um de:
+// pending|taken|skipped|missed|escalated. CONTRATO ESPELHADO PELO FRONTEND.
+type IntakeEntry struct {
+	MedicationID   int64      `json:"medication_id"`
+	MedicationName string     `json:"medication_name"`
+	Dose           string     `json:"dose"`
+	ScheduledAt    time.Time  `json:"scheduled_at"`
+	Status         string     `json:"status"`
+	ConfirmedAt    *time.Time `json:"confirmed_at,omitempty"`
+}
+
+// IntakesResponse eh o payload de GET .../intakes. `Days` ecoa a janela usada
+// (default 14) para o frontend titular o detalhamento coerente com o card.
+type IntakesResponse struct {
+	Intakes []IntakeEntry `json:"intakes"`
+	Days    int           `json:"days"`
 }
 
 // CreateMedicationRequest eh o body de POST /family/dependents/{id}/medications.
@@ -191,6 +213,32 @@ type CreateMedicationRequest struct {
 	// LateDosePolicy: orientacao para dose atrasada. Vazio = consult_doctor.
 	// Aceita: consult_doctor, skip, take_keep_next, take_recalculate.
 	LateDosePolicy string `json:"late_dose_policy,omitempty"`
+	// CatalogID: id da apresentacao em drug_catalog quando o usuario selecionou
+	// um item do autocomplete (busca no catalogo ANVISA/CMED). 0/omitido =
+	// digitado livre, sem vinculo.
+	CatalogID int64 `json:"catalog_id,omitempty"`
+	// RequireConfirmation: ponteiro pra distinguir "ausente" (cliente antigo →
+	// default true no backend) de "presente com valor". true = exige confirmacao
+	// + escala; false = so lembra, dose nao confirmada vira "nao sei".
+	RequireConfirmation *bool `json:"require_confirmation,omitempty"`
+}
+
+// DrugMatch eh um candidato do catalogo de medicamentos (ANVISA/CMED) devolvido
+// pela busca com correcao fuzzy/fonetica. Confidence in (0,1].
+type DrugMatch struct {
+	ID               int64   `json:"id"`
+	CommercialName   string  `json:"commercial_name"`
+	ActiveIngredient string  `json:"active_ingredient"`
+	Concentration    string  `json:"concentration"`
+	Presentation     string  `json:"presentation"`
+	ProductType      string  `json:"product_type"`
+	Tarja            string  `json:"tarja"`
+	Confidence       float64 `json:"confidence"`
+}
+
+// DrugSearchResponse eh o payload do GET /me/drugs/search.
+type DrugSearchResponse struct {
+	Matches []DrugMatch `json:"matches"`
 }
 
 // MedicationDuration descreve por quanto tempo o tratamento dura. O backend
@@ -256,11 +304,14 @@ type StatusResponse struct {
 
 // MedicationStats eh subset publico do synthesis.MedicationStats.
 type MedicationStats struct {
-	Scheduled     int     `json:"scheduled"`
-	Taken         int     `json:"taken"`
-	Missed        int     `json:"missed"`
-	Skipped       int     `json:"skipped"`
-	Pending       int     `json:"pending"`
+	Scheduled int `json:"scheduled"`
+	Taken     int `json:"taken"`
+	Missed    int `json:"missed"`
+	Skipped   int `json:"skipped"`
+	Pending   int `json:"pending"`
+	// Unknown: doses de remedios que nao exigem confirmacao e nao foram
+	// confirmadas — "nao sei". Ficam FORA do denominador da aderencia.
+	Unknown       int     `json:"unknown"`
 	AdherenceFrac float64 `json:"adherence_frac"`
 }
 

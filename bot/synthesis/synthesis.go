@@ -100,11 +100,14 @@ type MissedDose struct {
 // Synthesize recebe a versao "wire" (medicationStatsW) — stats internas
 // nao saem do servidor.
 type MedicationStats struct {
-	Scheduled     int          `json:"scheduled"`
-	Taken         int          `json:"taken"`
-	Missed        int          `json:"missed"`
-	Skipped       int          `json:"skipped"`
-	Pending       int          `json:"pending"`
+	Scheduled int `json:"scheduled"`
+	Taken     int `json:"taken"`
+	Missed    int `json:"missed"`
+	Skipped   int `json:"skipped"`
+	Pending   int `json:"pending"`
+	// Unknown: doses de remedios sem exigencia de confirmacao, nao confirmadas.
+	// Ficam FORA do denominador da aderencia.
+	Unknown       int          `json:"unknown"`
 	AdherenceFrac float64      `json:"adherence_frac"`
 	MissedDoses   []MissedDose `json:"missed_doses"`
 }

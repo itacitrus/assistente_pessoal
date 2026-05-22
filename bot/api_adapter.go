@@ -539,6 +539,7 @@ func (a *apiAdapter) BuildDependentStatus(ctx context.Context, guardianID, depen
 			Missed:        report.Medication.Missed,
 			Skipped:       report.Medication.Skipped,
 			Pending:       report.Medication.Pending,
+			Unknown:       report.Medication.Unknown,
 			AdherenceFrac: report.Medication.AdherenceFrac,
 		},
 		ProactiveAttempts: api.ProactiveStats{

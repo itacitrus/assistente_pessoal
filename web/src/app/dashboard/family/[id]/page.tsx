@@ -80,7 +80,11 @@ export default async function DependentDetailPage({ params }: PageProps) {
       <StatusHeader status={status} relationship={relationship} />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <MetricCard data={status.medication} days={status.days} />
+        <MetricCard
+          data={status.medication}
+          days={status.days}
+          detailHref={`/dashboard/family/${id}/aderencia`}
+        />
         <SynthesisCard
           synthesis={status.synthesis}
           available={status.synthesis_available !== false}

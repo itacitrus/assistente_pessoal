@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -34,9 +35,9 @@ func (db *DB) CreateMedication(m *Medication) error {
 		return err
 	}
 	res, err := db.conn.Exec(
-		`INSERT INTO medications (user_id, name, dose, instructions, active, created_by_user_id, tolerance_minutes, late_dose_policy)
-		 VALUES (?, ?, ?, ?, 1, ?, ?, ?)`,
-		m.UserID, m.Name, m.Dose, m.Instructions, createdBy, tolerance, string(policy))
+		`INSERT INTO medications (user_id, name, dose, instructions, active, created_by_user_id, tolerance_minutes, late_dose_policy, catalog_id, require_confirmation)
+		 VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+		m.UserID, m.Name, m.Dose, m.Instructions, createdBy, tolerance, string(policy), nullableID(m.CatalogID), boolToInt(m.RequireConfirmation))
 	if err != nil {
 		return fmt.Errorf("insert medication: %w", err)
 	}
@@ -48,22 +49,172 @@ func (db *DB) CreateMedication(m *Medication) error {
 	return nil
 }
 
+// rowQuerier abstrai QueryRowContext pra reusar a checagem de duplicidade
+// tanto numa conexao fixada (transacao) quanto na conexao normal do pool.
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// duplicateMedicationID procura um medicamento ATIVO do mesmo dono com
+// nome+dose iguais (ignorando caixa e espacos nas bordas) E que tenha um
+// schedule com a MESMA RRULE (mesmo horario) — a definicao de "copia
+// identica". excludeID != 0 ignora aquele id (edicao do proprio remedio).
+// Retorna o id encontrado, ou 0 se nao ha duplicata.
+func duplicateMedicationID(ctx context.Context, q rowQuerier, userID, excludeID int64, name, dose, rrule string) (int64, error) {
+	var id int64
+	err := q.QueryRowContext(ctx, `
+		SELECT m.id FROM medications m
+		JOIN medication_schedules ms ON ms.medication_id = m.id
+		WHERE m.user_id = ? AND m.active = 1 AND m.id != ?
+		  AND LOWER(TRIM(m.name)) = LOWER(TRIM(?))
+		  AND LOWER(TRIM(COALESCE(m.dose,''))) = LOWER(TRIM(?))
+		  AND ms.rrule = ?
+		LIMIT 1`,
+		userID, excludeID, name, dose, rrule).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("check duplicate medication: %w", err)
+	}
+	return id, nil
+}
+
+// CreateMedicationWithSchedule cria o medicamento + 1 schedule de forma ATOMICA
+// e bloqueia cadastro duplicado: se ja existe um medicamento ativo do mesmo
+// dono com nome+dose iguais e o MESMO horario (RRULE), devolve
+// ErrMedicationDuplicate sem inserir nada.
+//
+// A checagem + os inserts rodam numa transacao BEGIN IMMEDIATE sobre uma
+// conexao FIXADA: o lock de escrita do SQLite eh adquirido ANTES do SELECT,
+// entao dois cadastros concorrentes serializam e o segundo enxerga o primeiro.
+// Isso fecha a janela de corrida entre checar e inserir — a chave de unicidade
+// cruza duas tabelas (medications + medication_schedules), entao um indice
+// UNIQUE simples nao cobriria.
+func (db *DB) CreateMedicationWithSchedule(m *Medication, s *MedicationSchedule) error {
+	if strings.TrimSpace(m.Name) == "" {
+		return fmt.Errorf("medication name required")
+	}
+	if m.UserID == 0 {
+		return fmt.Errorf("medication user_id required")
+	}
+	if strings.TrimSpace(s.RRULE) == "" {
+		return fmt.Errorf("schedule rrule required")
+	}
+	createdBy := m.CreatedByUserID
+	if createdBy == 0 {
+		createdBy = m.UserID
+	}
+	tolerance := m.ToleranceMinutes
+	if tolerance <= 0 {
+		tolerance = DefaultToleranceMinutes
+	}
+	policy, err := ValidateLateDosePolicy(string(m.LateDosePolicy))
+	if err != nil {
+		return err
+	}
+	if s.StartDate.IsZero() {
+		s.StartDate = time.Now().In(BRT())
+	}
+	startStr := s.StartDate.Format(dateLayout)
+	var endStr sql.NullString
+	if s.EndDate != nil {
+		endStr = sql.NullString{String: s.EndDate.Format(dateLayout), Valid: true}
+	}
+
+	ctx := context.Background()
+	conn, err := db.conn.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire conn: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	// rollback desfaz tudo e propaga a causa — usado em todo caminho de erro.
+	rollback := func(cause error) error {
+		_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		return cause
+	}
+
+	dupID, err := duplicateMedicationID(ctx, conn, m.UserID, 0, m.Name, m.Dose, s.RRULE)
+	if err != nil {
+		return rollback(err)
+	}
+	if dupID != 0 {
+		return rollback(ErrMedicationDuplicate)
+	}
+
+	res, err := conn.ExecContext(ctx,
+		`INSERT INTO medications (user_id, name, dose, instructions, active, created_by_user_id, tolerance_minutes, late_dose_policy, catalog_id, require_confirmation)
+		 VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+		m.UserID, m.Name, m.Dose, m.Instructions, createdBy, tolerance, string(policy), nullableID(m.CatalogID), boolToInt(m.RequireConfirmation))
+	if err != nil {
+		return rollback(fmt.Errorf("insert medication: %w", err))
+	}
+	medID, _ := res.LastInsertId()
+
+	sres, err := conn.ExecContext(ctx,
+		`INSERT INTO medication_schedules (medication_id, rrule, start_date, end_date, critical)
+		 VALUES (?, ?, ?, ?, ?)`,
+		medID, s.RRULE, startStr, endStr, boolToInt(s.Critical))
+	if err != nil {
+		return rollback(fmt.Errorf("insert medication_schedule: %w", err))
+	}
+	schedID, _ := sres.LastInsertId()
+
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return rollback(fmt.Errorf("commit: %w", err))
+	}
+
+	m.ID = medID
+	m.Active = true
+	m.CreatedByUserID = createdBy
+	m.ToleranceMinutes = tolerance
+	m.LateDosePolicy = policy
+	s.ID = schedID
+	s.MedicationID = medID
+	return nil
+}
+
+// DuplicateActiveMedicationExists checa, fora de transacao, se ja existe um
+// medicamento ativo do dono com nome+dose iguais e a MESMA RRULE, ignorando
+// excludeID (o proprio remedio sendo editado). Usado no caminho de EDICAO; o
+// cadastro novo usa CreateMedicationWithSchedule (transacional, race-proof).
+func (db *DB) DuplicateActiveMedicationExists(userID, excludeID int64, name, dose, rrule string) (bool, error) {
+	id, err := duplicateMedicationID(context.Background(), db.conn, userID, excludeID, name, dose, rrule)
+	return id != 0, err
+}
+
 // scanMedicationRow centraliza o scan de uma row de medications na ordem
 // canonica das colunas. Mantem GetMedicationByID e ListActiveMedications em
 // sincronia quando colunas sao adicionadas.
 func scanMedicationRow(s interface{ Scan(...any) error }, m *Medication) error {
 	var active int
 	var policy string
+	var catalogID sql.NullInt64
+	var requireConfirm int
 	if err := s.Scan(&m.ID, &m.UserID, &m.Name, &m.Dose, &m.Instructions, &active,
-		&m.CreatedByUserID, &m.ToleranceMinutes, &policy, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		&m.CreatedByUserID, &m.ToleranceMinutes, &policy, &catalogID, &requireConfirm, &m.CreatedAt, &m.UpdatedAt); err != nil {
 		return err
 	}
 	m.Active = active != 0
 	m.LateDosePolicy = LateDosePolicy(policy)
+	m.CatalogID = catalogID.Int64 // 0 quando NULL
+	m.RequireConfirmation = requireConfirm != 0
 	return nil
 }
 
-const medicationColumns = `id, user_id, name, dose, instructions, active, created_by_user_id, tolerance_minutes, late_dose_policy, created_at, updated_at`
+const medicationColumns = `id, user_id, name, dose, instructions, active, created_by_user_id, tolerance_minutes, late_dose_policy, catalog_id, require_confirmation, created_at, updated_at`
+
+// nullableID converte um id 0 em NULL para colunas FK opcionais.
+func nullableID(id int64) any {
+	if id == 0 {
+		return nil
+	}
+	return id
+}
 
 // GetMedicationByID busca uma medicacao por id. ErrMedicationNotFound se
 // nao existe (independente de active).
@@ -107,7 +258,7 @@ func (db *DB) ListActiveMedications(userID int64) ([]Medication, error) {
 // ou zero (numero/bool zerado) NAO sobrescreve — caller usa apenas os campos
 // que quer mudar. Atualiza updated_at sempre. Retorna ErrMedicationNotFound
 // se id nao existe.
-func (db *DB) UpdateMedicationFields(id int64, newName, newDose, newInstructions *string, newTolerance *int, newPolicy *LateDosePolicy) error {
+func (db *DB) UpdateMedicationFields(id int64, newName, newDose, newInstructions *string, newTolerance *int, newPolicy *LateDosePolicy, newRequireConfirmation *bool) error {
 	sets := []string{"updated_at = CURRENT_TIMESTAMP"}
 	args := []any{}
 	if newName != nil {
@@ -137,6 +288,10 @@ func (db *DB) UpdateMedicationFields(id int64, newName, newDose, newInstructions
 		}
 		sets = append(sets, "late_dose_policy = ?")
 		args = append(args, string(p))
+	}
+	if newRequireConfirmation != nil {
+		sets = append(sets, "require_confirmation = ?")
+		args = append(args, boolToInt(*newRequireConfirmation))
 	}
 	if len(sets) == 1 {
 		// nada pra mudar — protecao contra UPDATE no-op acidental
@@ -421,6 +576,106 @@ func (db *DB) ListIntakeLogsForMedication(medID int64, limit int) ([]MedicationI
 	return out, rows.Err()
 }
 
+// ListIntakeHistory devolve as ocorrencias de dose (com nome+dose do remedio
+// resolvidos via join) de userID a partir de `from`, ordenadas por
+// scheduled_at desc. medID != 0 filtra um unico medicamento. Inclui doses de
+// remedios ja desativados (historico imutavel). Limita a `limit` (default 500).
+func (db *DB) ListIntakeHistory(userID, medID int64, from time.Time, limit int) ([]IntakeHistoryEntry, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	q := `
+		SELECT m.id, m.name, m.dose, l.scheduled_at, l.status, l.confirmed_at
+		FROM medication_intake_log l
+		JOIN medications m ON m.id = l.medication_id
+		WHERE m.user_id = ? AND l.scheduled_at >= ?`
+	args := []any{userID, from.UTC()}
+	if medID != 0 {
+		q += ` AND m.id = ?`
+		args = append(args, medID)
+	}
+	q += ` ORDER BY l.scheduled_at DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := db.conn.Query(q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list intake history: %w", err)
+	}
+	defer rows.Close()
+
+	var out []IntakeHistoryEntry
+	for rows.Next() {
+		var e IntakeHistoryEntry
+		var status string
+		var confirmed sql.NullTime
+		if err := rows.Scan(&e.MedicationID, &e.MedicationName, &e.Dose, &e.ScheduledAt, &status, &confirmed); err != nil {
+			return nil, err
+		}
+		e.Status = IntakeStatus(status)
+		if confirmed.Valid {
+			t := confirmed.Time
+			e.ConfirmedAt = &t
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// MarkStaleNoConfirmDosesUnknown varre doses 'pending' de medicamentos que NAO
+// exigem confirmacao (require_confirmation=0) e, passada a janela de tolerancia
+// (scheduled_at + tolerance_minutes), marca-as 'unknown' — nem tomada nem
+// perdida. Esses remedios nao geram pending_confirmation (sem cutucao/familia),
+// entao o motor de escalacao nunca os toca; este sweeper eh quem fecha o ciclo.
+//
+// A aritmetica de prazo eh feita em Go (nao em SQL) pra evitar divergencia de
+// formato no armazenamento de DATETIME do driver. Idempotente: so mexe em
+// linhas ainda 'pending'. Retorna quantas marcou.
+func (db *DB) MarkStaleNoConfirmDosesUnknown(now time.Time) (int, error) {
+	rows, err := db.conn.Query(`
+		SELECT l.id, l.scheduled_at, m.tolerance_minutes
+		FROM medication_intake_log l
+		JOIN medications m ON m.id = l.medication_id
+		WHERE l.status = 'pending' AND m.require_confirmation = 0`)
+	if err != nil {
+		return 0, fmt.Errorf("scan stale no-confirm doses: %w", err)
+	}
+	defer rows.Close()
+
+	var stale []int64
+	for rows.Next() {
+		var id int64
+		var scheduledAt time.Time
+		var tol int
+		if err := rows.Scan(&id, &scheduledAt, &tol); err != nil {
+			return 0, err
+		}
+		if tol <= 0 {
+			tol = DefaultToleranceMinutes
+		}
+		deadline := scheduledAt.Add(time.Duration(tol) * time.Minute)
+		if !now.Before(deadline) {
+			stale = append(stale, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	n := 0
+	for _, id := range stale {
+		res, err := db.conn.Exec(
+			`UPDATE medication_intake_log SET status = 'unknown'
+			 WHERE id = ? AND status = 'pending'`, id)
+		if err != nil {
+			return n, fmt.Errorf("mark dose unknown: %w", err)
+		}
+		if c, _ := res.RowsAffected(); c > 0 {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // =========================================================================
 // pending_confirmations Fase 3 helpers
 // =========================================================================
@@ -495,6 +750,54 @@ func (db *DB) GetActivePendingForUserAndMedication(userID, medID int64) (*Pendin
 		}
 	}
 	return nil, nil
+}
+
+// HasActiveMedicationPending informa se o usuario tem alguma confirmacao de
+// dose em status='pending'. Usado por medContextActive pra decidir se o turno
+// do idoso toca em remedio (e, com isso, se as regras farmacologicas entram no
+// prompt). Uma dose pendente significa que a resposta dele provavelmente eh
+// sobre o remedio, mesmo que indireta ("agitado", "daqui a pouco").
+func (db *DB) HasActiveMedicationPending(userID int64) (bool, error) {
+	var n int
+	err := db.conn.QueryRow(
+		`SELECT COUNT(1) FROM pending_confirmations
+		 WHERE user_id = ? AND status = 'pending' AND kind = 'medication'`, userID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("has active medication pending: %w", err)
+	}
+	return n > 0, nil
+}
+
+// ListActiveMedicationPendingsForUser devolve TODAS as pendings de medicacao
+// em aberto do usuario (mais recentes primeiro). Usado quando o idoso confirma
+// genericamente ("tomei") sem citar qual remedio — marcamos todas as doses
+// pendentes daquele momento como tomadas.
+func (db *DB) ListActiveMedicationPendingsForUser(userID int64) ([]PendingConfirmation, error) {
+	rows, err := db.conn.Query(
+		`SELECT pc.id, pc.user_id, pc.event_data, pc.status, pc.created_at,
+		        pc.kind, pc.escalation_policy, pc.last_attempt_at, pc.attempt_number, pc.deferred_until
+		 FROM pending_confirmations pc
+		 WHERE pc.user_id = ? AND pc.status = 'pending' AND pc.kind = 'medication'
+		 ORDER BY pc.created_at DESC`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list active medication pendings: %w", err)
+	}
+	defer rows.Close()
+
+	var out []PendingConfirmation
+	for rows.Next() {
+		var pc PendingConfirmation
+		var kind, policy sql.NullString
+		var lastAttempt, deferred sql.NullTime
+		var attempt sql.NullInt64
+		if err := rows.Scan(&pc.ID, &pc.UserID, &pc.EventData, &pc.Status, &pc.CreatedAt,
+			&kind, &policy, &lastAttempt, &attempt, &deferred); err != nil {
+			return nil, err
+		}
+		fillPendingExtras(&pc, kind, policy, lastAttempt, attempt, deferred)
+		out = append(out, pc)
+	}
+	return out, rows.Err()
 }
 
 // SetPendingDeferredUntil grava o horario que o idoso disse que vai tomar.

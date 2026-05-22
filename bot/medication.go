@@ -34,6 +34,18 @@ type Medication struct {
 	// mantem o comportamento seguro (decisao do medico).
 	LateDosePolicy LateDosePolicy
 
+	// RequireConfirmation: true (default) = o bot pede confirmacao de toma e
+	// escala (cutucao + aviso a familia) se nao confirmar. false = so lembra,
+	// sem cobrar nem escalar; dose nao confirmada vira 'unknown' apos a janela
+	// de tolerancia. Configuravel por medicamento pelo responsavel/titular.
+	RequireConfirmation bool
+
+	// CatalogID referencia a apresentacao em drug_catalog (Lista CMED/ANVISA)
+	// quando o remedio foi cadastrado a partir de uma selecao no autocomplete.
+	// 0 = NULL (digitado livre, sem correspondencia). O id eh estavel entre
+	// reingestoes (upsert por chave natural), entao a referencia nao expira.
+	CatalogID int64
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -101,6 +113,19 @@ type MedicationIntakeLog struct {
 	CreatedAt    time.Time
 }
 
+// IntakeHistoryEntry eh uma ocorrencia de dose com o nome+dose do medicamento
+// ja resolvidos (join), para exibir historico de tomadas no painel/detalhe de
+// aderencia sem o caller resolver nome por id. Inclui doses de remedios ja
+// desativados — historico eh imutavel.
+type IntakeHistoryEntry struct {
+	MedicationID   int64
+	MedicationName string
+	Dose           string
+	ScheduledAt    time.Time // UTC
+	Status         IntakeStatus
+	ConfirmedAt    *time.Time
+}
+
 // IntakeStatus enumera os estados de uma tomada agendada. O CHECK constraint
 // no DDL espelha exatamente esta lista.
 type IntakeStatus string
@@ -111,6 +136,10 @@ const (
 	IntakeSkipped   IntakeStatus = "skipped"   // user explicitamente pulou
 	IntakeMissed    IntakeStatus = "missed"    // sem guardian / esgotou tentativas
 	IntakeEscalated IntakeStatus = "escalated" // escalou pra familia
+	// IntakeUnknown: dose de remedio que NAO exige confirmacao e nao foi
+	// confirmada dentro da janela. Nem tomada nem perdida — "nao sei". Nao conta
+	// contra a aderencia (fica fora do denominador).
+	IntakeUnknown IntakeStatus = "unknown"
 )
 
 // Escalation eh uma row por tentativa por destinatario. Um pending_confirmation
@@ -242,6 +271,11 @@ var (
 	// o registro ja existe (UNIQUE constraint). Tratado como sinal idempotente
 	// pelo scheduler — nao eh erro real.
 	ErrIntakeLogDuplicate = errors.New("intake log already exists for this scheduled_at")
+
+	// ErrMedicationDuplicate indica que ja existe um medicamento ativo do mesmo
+	// dono com nome+dose iguais e o MESMO horario (RRULE). Trava contra cadastro
+	// duplicado: o caller deve traduzir em 409 com mensagem amigavel.
+	ErrMedicationDuplicate = errors.New("an identical active medication already exists")
 )
 
 // firstName extrai primeiro nome para mensagens informais.

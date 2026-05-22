@@ -83,6 +83,10 @@ type Store interface {
 	CreateDependentMedication(ctx context.Context, guardianID, dependentID int64, in CreateMedicationRequest) (*MedicationItem, error)
 	UpdateDependentMedication(ctx context.Context, guardianID, dependentID, medID int64, in CreateMedicationRequest) (*MedicationItem, error)
 	DeactivateDependentMedication(ctx context.Context, guardianID, dependentID, medID int64) error
+	// ListDependentIntakes devolve o historico de tomadas do dependente nos
+	// ultimos `days` dias. medID != 0 filtra um unico medicamento (validado como
+	// pertencente ao dependente). Ordenado por scheduled_at desc.
+	ListDependentIntakes(ctx context.Context, guardianID, dependentID int64, days int, medID int64) ([]IntakeEntry, error)
 
 	// Medicacao do proprio usuario (titular). Mesmo motor de lembrete/escalacao
 	// dos dependentes; dono == criador. Sem checagem de guardiao — eh o proprio
@@ -91,6 +95,9 @@ type Store interface {
 	CreateMyMedication(ctx context.Context, userID int64, in CreateMedicationRequest) (*MedicationItem, error)
 	UpdateMyMedication(ctx context.Context, userID, medID int64, in CreateMedicationRequest) (*MedicationItem, error)
 	DeactivateMyMedication(ctx context.Context, userID, medID int64) error
+	// ListMyIntakes: historico de tomadas do proprio titular nos ultimos `days`
+	// dias. medID != 0 filtra um medicamento (validado como do proprio user).
+	ListMyIntakes(ctx context.Context, userID int64, days int, medID int64) ([]IntakeEntry, error)
 
 	// Me / agenda ----------------------------------------------------------
 	// UpcomingEvents le o Google Calendar do proprio usuario (proximos 14d,
@@ -122,6 +129,13 @@ type Store interface {
 	// viagens. Le o DB direto. available=false quando tudo vazio.
 	ProfileFacts(ctx context.Context, userID int64) (ProfileFactsResponse, error)
 
+	// Catalogo de medicamentos -------------------------------------------
+	// ResolveDrug busca no catalogo (ANVISA/CMED) ate `limit` apresentacoes
+	// que melhor correspondem a `query`, com correcao fuzzy/fonetica. Usado
+	// pelo autocomplete do cadastro de remedio. query vazia ou catalogo nao
+	// populado -> lista vazia (sem erro).
+	ResolveDrug(ctx context.Context, query string, limit int) ([]DrugMatch, error)
+
 	// Audit ---------------------------------------------------------------
 	Audit(ctx context.Context, userID int64, action, target, details string)
 
@@ -146,4 +160,7 @@ var (
 	ErrSessionExpired = errors.New("api: session expired")
 	ErrConsentRevoked = errors.New("api: consent revoked")
 	ErrValidation     = errors.New("api: validation failed")
+	// ErrMedicationDuplicate: ja existe um medicamento ativo igual (mesmo nome,
+	// dose e horario). Handlers mapeiam pra 409.
+	ErrMedicationDuplicate = errors.New("api: duplicate medication")
 )

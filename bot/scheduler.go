@@ -75,6 +75,9 @@ func (s *Scheduler) Start() {
 	// Fase 3 (idosos): jobs de medicacao + escalacao.
 	s.cron.AddFunc("* * * * *", s.checkMedicationReminders)
 	s.cron.AddFunc("* * * * *", s.checkMedicationEscalation)
+	// Fase 3.2: fecha doses de remedios "so lembrete" (require_confirmation=0)
+	// que passaram da tolerancia sem confirmacao — marca 'unknown'.
+	s.cron.AddFunc("* * * * *", s.checkMedicationUnknownDoses)
 
 	// Fase 4 (idosos): companion proatividade. Cron 1-min com gating
 	// minute%15==0 dentro do job — evita rajada.

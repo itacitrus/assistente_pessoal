@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -67,13 +68,14 @@ func (a *apiAdapter) buildMedicationItem(m *Medication) api.MedicationItem {
 		Dose:             m.Dose,
 		Instructions:     m.Instructions,
 		Schedule:         text,
-		Active:           m.Active,
-		EndsAt:           endsAt,
-		ToleranceMinutes: m.ToleranceMinutes,
-		LateDosePolicy:   string(m.LateDosePolicy),
-		Times:            times,
-		Frequency:        freq,
-		Days:             days,
+		Active:              m.Active,
+		EndsAt:              endsAt,
+		ToleranceMinutes:    m.ToleranceMinutes,
+		LateDosePolicy:      string(m.LateDosePolicy),
+		RequireConfirmation: m.RequireConfirmation,
+		Times:               times,
+		Frequency:           freq,
+		Days:                days,
 	}
 }
 
@@ -144,6 +146,68 @@ func summarizeSchedules(scheds []MedicationSchedule) (text string, endsAt *strin
 	return text, endsAt
 }
 
+// ListDependentIntakes devolve o historico de tomadas do dependente, validando
+// guardiao. medID != 0 exige que o medicamento pertenca ao dependente (nao
+// vaza existencia de remedio alheio).
+func (a *apiAdapter) ListDependentIntakes(ctx context.Context, guardianID, dependentID int64, days int, medID int64) ([]api.IntakeEntry, error) {
+	ok, err := a.db.IsGuardianOf(guardianID, dependentID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, api.ErrNotFound
+	}
+	if medID != 0 {
+		med, err := a.db.GetMedicationByID(medID)
+		if err != nil || med.UserID != dependentID {
+			return nil, api.ErrNotFound
+		}
+	}
+	return a.listIntakesForOwner(dependentID, days, medID)
+}
+
+// ListMyIntakes devolve o historico de tomadas do proprio titular. medID != 0
+// exige que o medicamento seja dele.
+func (a *apiAdapter) ListMyIntakes(ctx context.Context, userID int64, days int, medID int64) ([]api.IntakeEntry, error) {
+	if medID != 0 {
+		med, err := a.db.GetMedicationByID(medID)
+		if err != nil || med.UserID != userID {
+			return nil, api.ErrNotFound
+		}
+	}
+	return a.listIntakesForOwner(userID, days, medID)
+}
+
+// listIntakesForOwner eh o caminho comum: resolve a janela (default 14d) e
+// mapeia o historico do DB pra forma publica. Autorizacao fica a cargo do
+// caller.
+func (a *apiAdapter) listIntakesForOwner(ownerID int64, days int, medID int64) ([]api.IntakeEntry, error) {
+	if days <= 0 {
+		days = 14
+	}
+	from := time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour)
+	rows, err := a.db.ListIntakeHistory(ownerID, medID, from, 500)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]api.IntakeEntry, 0, len(rows))
+	for _, e := range rows {
+		ent := api.IntakeEntry{
+			MedicationID:   e.MedicationID,
+			MedicationName: e.MedicationName,
+			Dose:           e.Dose,
+			ScheduledAt:    e.ScheduledAt,
+			Status:         string(e.Status),
+		}
+		if e.ConfirmedAt != nil {
+			t := *e.ConfirmedAt
+			ent.ConfirmedAt = &t
+		}
+		out = append(out, ent)
+	}
+	return out, nil
+}
+
 // CreateDependentMedication cria o medicamento (dono=dependente, criado pelo
 // guardiao) + 1 schedule. Audita medication_created no contexto do guardiao.
 func (a *apiAdapter) CreateDependentMedication(ctx context.Context, guardianID, dependentID int64, in api.CreateMedicationRequest) (*api.MedicationItem, error) {
@@ -180,6 +244,15 @@ func (a *apiAdapter) CreateMyMedication(ctx context.Context, userID int64, in ap
 	return item, nil
 }
 
+// requireConfirmDefault resolve o ponteiro opcional do request: ausente (nil) =
+// exigir confirmacao (default seguro). Presente = honra a escolha do usuario.
+func requireConfirmDefault(p *bool) bool {
+	if p == nil {
+		return true
+	}
+	return *p
+}
+
 // createMedicationForOwner eh o caminho comum: monta a RRULE + resolve a data
 // de termino (duracao) + persiste medicamento e schedule. Autorizacao fica a
 // cargo do caller. start = agora no fuso BRT (dia de inicio do tratamento).
@@ -199,25 +272,29 @@ func (a *apiAdapter) createMedicationForOwner(ownerID, createdByID int64, in api
 		return nil, fmt.Errorf("%w: %v", api.ErrValidation, err)
 	}
 	med := &Medication{
-		UserID:           ownerID,
-		Name:             strings.TrimSpace(in.Name),
-		Dose:             strings.TrimSpace(in.Dose),
-		Instructions:     strings.TrimSpace(in.Instructions),
-		CreatedByUserID:  createdByID,
-		ToleranceMinutes: in.ToleranceMinutes,
-		LateDosePolicy:   policy,
-	}
-	if err := a.db.CreateMedication(med); err != nil {
-		return nil, fmt.Errorf("create medication: %w", err)
+		UserID:              ownerID,
+		Name:                strings.TrimSpace(in.Name),
+		Dose:                strings.TrimSpace(in.Dose),
+		Instructions:        strings.TrimSpace(in.Instructions),
+		CreatedByUserID:     createdByID,
+		ToleranceMinutes:    in.ToleranceMinutes,
+		LateDosePolicy:      policy,
+		CatalogID:           in.CatalogID,
+		RequireConfirmation: requireConfirmDefault(in.RequireConfirmation),
 	}
 	sched := &MedicationSchedule{
-		MedicationID: med.ID,
-		RRULE:        rrule,
-		StartDate:    start,
-		EndDate:      endDate,
+		RRULE:     rrule,
+		StartDate: start,
+		EndDate:   endDate,
 	}
-	if err := a.db.CreateMedicationSchedule(sched); err != nil {
-		return nil, fmt.Errorf("create medication schedule: %w", err)
+	// Trava de cadastro duplicado: medicamento + schedule sao criados numa
+	// transacao atomica que recusa uma copia identica (mesmo nome+dose+horario)
+	// ja ativa para o dono.
+	if err := a.db.CreateMedicationWithSchedule(med, sched); err != nil {
+		if errors.Is(err, ErrMedicationDuplicate) {
+			return nil, api.ErrMedicationDuplicate
+		}
+		return nil, fmt.Errorf("create medication: %w", err)
 	}
 	med.Active = true
 	item := a.buildMedicationItem(med)
@@ -285,7 +362,17 @@ func (a *apiAdapter) updateMedicationForOwner(ownerID, medID int64, in api.Creat
 	dose := strings.TrimSpace(in.Dose)
 	instr := strings.TrimSpace(in.Instructions)
 	tol := in.ToleranceMinutes
-	if err := a.db.UpdateMedicationFields(medID, &name, &dose, &instr, &tol, &policy); err != nil {
+	// Mesma trava do cadastro, aplicada na edicao: editar este remedio pra ficar
+	// igual a OUTRO ja ativo (mesmo nome+dose+horario) eh recusado. excludeID =
+	// medID pra nao colidir consigo mesmo.
+	dup, err := a.db.DuplicateActiveMedicationExists(ownerID, medID, name, dose, rruleStr)
+	if err != nil {
+		return nil, fmt.Errorf("check duplicate medication: %w", err)
+	}
+	if dup {
+		return nil, api.ErrMedicationDuplicate
+	}
+	if err := a.db.UpdateMedicationFields(medID, &name, &dose, &instr, &tol, &policy, in.RequireConfirmation); err != nil {
 		return nil, fmt.Errorf("update medication fields: %w", err)
 	}
 	// Substitui o(s) schedule(s) pelo novo conjunto.
@@ -496,4 +583,32 @@ func capitalizeFirst(s string) string {
 	r := []rune(s)
 	r[0] = []rune(strings.ToUpper(string(r[0])))[0]
 	return string(r)
+}
+
+// =========================================================================
+// Adapter: catalogo de medicamentos (busca fuzzy/fonetica)
+// =========================================================================
+
+// ResolveDrug delega ao resolver do catalogo (drug_catalog.go) e mapeia o
+// resultado para o DTO da API. Sem checagem de posse: o catalogo eh dado
+// publico (ANVISA/CMED), so exige usuario autenticado no handler.
+func (a *apiAdapter) ResolveDrug(ctx context.Context, query string, limit int) ([]api.DrugMatch, error) {
+	matches, err := a.db.ResolveDrug(query, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]api.DrugMatch, len(matches))
+	for i, m := range matches {
+		out[i] = api.DrugMatch{
+			ID:               m.ID,
+			CommercialName:   m.CommercialName,
+			ActiveIngredient: m.ActiveIngredient,
+			Concentration:    m.Concentration,
+			Presentation:     m.Presentation,
+			ProductType:      m.ProductType,
+			Tarja:            m.Tarja,
+			Confidence:       m.Confidence,
+		}
+	}
+	return out, nil
 }

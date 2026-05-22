@@ -66,9 +66,10 @@ func (e stringErr) Error() string { return string(e) }
 func mkMedForUser(t *testing.T, db *DB, user *User, name, rrule string, critical bool) (*Medication, *MedicationSchedule) {
 	t.Helper()
 	m := &Medication{
-		UserID: user.ID,
-		Name:   name,
-		Dose:   "50mg",
+		UserID:              user.ID,
+		Name:                name,
+		Dose:                "50mg",
+		RequireConfirmation: true,
 	}
 	if err := db.CreateMedication(m); err != nil {
 		t.Fatalf("create medication: %v", err)
@@ -223,7 +224,7 @@ func TestUpdateMedicationFields(t *testing.T) {
 
 	newDose := "100mg"
 	newInstr := "com agua"
-	if err := db.UpdateMedicationFields(m.ID, nil, &newDose, &newInstr, nil, nil); err != nil {
+	if err := db.UpdateMedicationFields(m.ID, nil, &newDose, &newInstr, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := db.GetMedicationByID(m.ID)
@@ -237,12 +238,22 @@ func TestUpdateMedicationFields(t *testing.T) {
 	// Atualiza tolerancia + politica.
 	newTol := 45
 	newPol := LatePolicyTakeKeepNext
-	if err := db.UpdateMedicationFields(m.ID, nil, nil, nil, &newTol, &newPol); err != nil {
+	if err := db.UpdateMedicationFields(m.ID, nil, nil, nil, &newTol, &newPol, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = db.GetMedicationByID(m.ID)
 	if got.ToleranceMinutes != 45 || got.LateDosePolicy != LatePolicyTakeKeepNext {
 		t.Fatalf("tolerance/policy update mismatch: %+v", got)
+	}
+
+	// Liga/desliga require_confirmation.
+	off := false
+	if err := db.UpdateMedicationFields(m.ID, nil, nil, nil, nil, nil, &off); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = db.GetMedicationByID(m.ID)
+	if got.RequireConfirmation {
+		t.Fatalf("require_confirmation should be false after update")
 	}
 }
 

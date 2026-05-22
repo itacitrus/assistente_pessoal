@@ -152,7 +152,6 @@ func TestCompanionPrompt_HasCriticalElements(t *testing.T) {
 	requires := []string{
 		"amigo Zello", "188", "192", "alertar_familia",
 		"VALIDAR SEM PRENDER NA TRISTEZA",
-		"REGRA FARMACOLÓGICA",
 		"PROTOCOLO DE RISCO CRÍTICO",
 		"social_context",
 		"risco:",

@@ -9,15 +9,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Switch } from "@/components/ui/switch";
 import { ApiError } from "@/lib/api";
 import {
   createDependentMedication,
   updateDependentMedication,
 } from "@/lib/api/family";
-import { createMyMedication, updateMyMedication } from "@/lib/api/me";
+import { createMyMedication, searchDrugs, updateMyMedication } from "@/lib/api/me";
 import { cn } from "@/lib/utils";
 import type {
   CreateMedicationBody,
+  DrugMatch,
   LateDosePolicy,
   MedicationDuration,
   MedicationDurationUnit,
@@ -140,8 +142,60 @@ export function MedicationForm({
   const [latePolicy, setLatePolicy] = React.useState<LateDosePolicy>(
     medication?.late_dose_policy ?? "consult_doctor",
   );
+  // Default true (exigir confirmação) quando o campo não veio (cadastro novo).
+  const [requireConfirmation, setRequireConfirmation] = React.useState(
+    medication?.require_confirmation ?? true,
+  );
   const [status, setStatus] = React.useState<Status>("idle");
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
+
+  // Autocomplete do catálogo ANVISA/CMED. catalogId vincula o cadastro à
+  // apresentação escolhida; some quando o usuário edita o nome à mão.
+  const [catalogId, setCatalogId] = React.useState<number | undefined>(
+    undefined,
+  );
+  const [suggestions, setSuggestions] = React.useState<DrugMatch[]>([]);
+  const [showSuggest, setShowSuggest] = React.useState(false);
+  // Pula a busca quando o nome muda por seleção (não por digitação) — e na
+  // montagem (modo edição já vem com nome preenchido).
+  const suppressSearchRef = React.useRef(true);
+
+  React.useEffect(() => {
+    if (suppressSearchRef.current) {
+      suppressSearchRef.current = false;
+      return;
+    }
+    const q = name.trim();
+    if (q.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => {
+      searchDrugs(q, 8, ctrl.signal)
+        .then((res) => {
+          setSuggestions(res.matches);
+          setShowSuggest(true);
+        })
+        .catch(() => {
+          // Autocomplete é best-effort: aborts e falhas de rede não atrapalham
+          // o cadastro manual.
+        });
+    }, 250);
+    return () => {
+      clearTimeout(timer);
+      ctrl.abort();
+    };
+  }, [name]);
+
+  function selectSuggestion(m: DrugMatch) {
+    suppressSearchRef.current = true;
+    setName(m.commercial_name);
+    if (m.concentration.trim()) setDose(m.concentration.trim());
+    setCatalogId(m.id);
+    setSuggestions([]);
+    setShowSuggest(false);
+  }
 
   const validTimes = times.map((t) => t.trim()).filter((t) => TIME_RE.test(t));
 
@@ -208,6 +262,10 @@ export function MedicationForm({
     setUntilDate("");
     setToleranceMin(String(DEFAULT_TOLERANCE_MIN));
     setLatePolicy("consult_doctor");
+    setRequireConfirmation(true);
+    setCatalogId(undefined);
+    setSuggestions([]);
+    setShowSuggest(false);
     setStatus("idle");
   }
 
@@ -227,7 +285,9 @@ export function MedicationForm({
       ...(frequency === "weekly" ? { days } : {}),
       ...(buildDuration() ? { duration: buildDuration() } : {}),
       ...(Number.isFinite(tolerance) ? { tolerance_minutes: tolerance } : {}),
+      ...(catalogId ? { catalog_id: catalogId } : {}),
       late_dose_policy: latePolicy,
+      require_confirmation: requireConfirmation,
     };
 
     try {
@@ -261,13 +321,67 @@ export function MedicationForm({
     <form onSubmit={handleSubmit} className="space-y-6" noValidate>
       <div className="space-y-2">
         <Label htmlFor="med-name">Nome do remédio</Label>
-        <Input
-          id="med-name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Losartana"
-          required
-        />
+        <div className="relative">
+          <Input
+            id="med-name"
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              setCatalogId(undefined);
+            }}
+            onFocus={() => {
+              if (suggestions.length > 0) setShowSuggest(true);
+            }}
+            onBlur={() => {
+              // Atrasa pra o clique numa sugestão registrar antes de fechar.
+              window.setTimeout(() => setShowSuggest(false), 150);
+            }}
+            placeholder="Losartana"
+            autoComplete="off"
+            role="combobox"
+            aria-expanded={showSuggest && suggestions.length > 0}
+            aria-autocomplete="list"
+            required
+          />
+          {showSuggest && suggestions.length > 0 && (
+            <ul
+              className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-md border bg-background py-1 shadow-md"
+              role="listbox"
+            >
+              {suggestions.map((m) => (
+                <li key={m.id} role="option" aria-selected={catalogId === m.id}>
+                  <button
+                    type="button"
+                    // onMouseDown (não onClick) pra disparar antes do onBlur do input.
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      selectSuggestion(m);
+                    }}
+                    className="flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-muted focus:bg-muted focus:outline-none"
+                  >
+                    <span className="text-sm font-medium">
+                      {m.commercial_name}
+                      {m.concentration ? (
+                        <span className="text-muted-foreground">
+                          {" "}
+                          · {m.concentration}
+                        </span>
+                      ) : null}
+                    </span>
+                    {m.active_ingredient ? (
+                      <span className="text-xs capitalize text-muted-foreground">
+                        {m.active_ingredient.toLowerCase()}
+                      </span>
+                    ) : null}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Comece a digitar — sugerimos nomes e doses do catálogo da ANVISA.
+        </p>
       </div>
 
       <div className="space-y-2">
@@ -465,11 +579,30 @@ export function MedicationForm({
 
       <fieldset className="space-y-3">
         <legend className="text-sm font-medium leading-none">
+          Exigir confirmação de toma
+        </legend>
+        <label className="flex items-start justify-between gap-4 rounded-lg border p-3">
+          <span className="text-sm text-muted-foreground">
+            {requireConfirmation
+              ? "O Zello pede confirmação e, se não vier, lembra de novo e avisa você. Recomendado para quem precisa de acompanhamento."
+              : "O Zello só lembra na hora, sem cobrar resposta. Se não confirmar, a dose fica como “não sei” (nem tomada, nem perdida). Bom para quem é independente e só quer o lembrete."}
+          </span>
+          <Switch
+            checked={requireConfirmation}
+            onCheckedChange={setRequireConfirmation}
+            aria-label="Exigir confirmação de toma"
+          />
+        </label>
+      </fieldset>
+
+      <fieldset className="space-y-3">
+        <legend className="text-sm font-medium leading-none">
           Tolerância de atraso
         </legend>
         <p className="text-sm text-muted-foreground">
-          Quanto tempo depois do horário o Zello espera antes de avisar você
-          (em segredo, sem pressionar o titular).
+          {requireConfirmation
+            ? "Quanto tempo depois do horário o Zello espera antes de avisar você (em segredo, sem pressionar o titular)."
+            : "Quanto tempo depois do horário o Zello espera antes de marcar a dose como “não sei” (sem aviso a ninguém)."}
         </p>
         <div className="flex items-center gap-2">
           <Input

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import {
   Card,
   CardContent,
@@ -13,9 +15,11 @@ export interface MetricCardProps {
   data: MedicationStats;
   /** Janela em dias (default 14). Usada para o titulo do card. */
   days?: number;
+  /** Se presente, mostra um link "Ver doses dia a dia" para o detalhamento. */
+  detailHref?: string;
 }
 
-export function MetricCard({ data, days = 14 }: MetricCardProps) {
+export function MetricCard({ data, days = 14, detailHref }: MetricCardProps) {
   const title = `Aderência (${days} dias)`;
   if (data.scheduled === 0) {
     return (
@@ -29,13 +33,40 @@ export function MetricCard({ data, days = 14 }: MetricCardProps) {
       </Card>
     );
   }
+  // Doses "não sei" (remédios só-lembrete) ficam fora do cálculo — não dá pra
+  // creditar nem penalizar uma toma nunca conferida.
+  const confirmable = data.scheduled - (data.unknown ?? 0);
+  if (confirmable <= 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{title}</CardTitle>
+          <CardDescription>
+            Os remédios desta janela são só lembrete (sem confirmação exigida),
+            então não há aderência para calcular.
+          </CardDescription>
+        </CardHeader>
+        {detailHref ? (
+          <CardContent>
+            <Link
+              href={detailHref}
+              className="inline-flex text-sm font-medium text-[--zello-emerald] hover:underline"
+            >
+              Ver doses dia a dia →
+            </Link>
+          </CardContent>
+        ) : null}
+      </Card>
+    );
+  }
   const pct = Math.round(data.adherence_frac * 100);
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">{title}</CardTitle>
         <CardDescription>
-          {data.taken} de {data.scheduled} doses tomadas.
+          {data.taken} de {confirmable} doses tomadas
+          {data.unknown ? ` · ${data.unknown} sem confirmação exigida` : ""}.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -57,6 +88,14 @@ export function MetricCard({ data, days = 14 }: MetricCardProps) {
             style={{ width: `${pct}%` }}
           />
         </div>
+        {detailHref ? (
+          <Link
+            href={detailHref}
+            className="mt-4 inline-flex text-sm font-medium text-[--zello-emerald] hover:underline"
+          >
+            Ver doses dia a dia →
+          </Link>
+        ) : null}
       </CardContent>
     </Card>
   );

@@ -4,7 +4,9 @@ import type {
   AgendaEventsResponse,
   AgendaResponse,
   CreateMedicationBody,
+  DrugSearchResponse,
   InsightsResponse,
+  IntakesResponse,
   MedicationItem,
   MedicationsResponse,
   ProfileFacts,
@@ -131,6 +133,26 @@ export async function getMyMedications(
 }
 
 /**
+ * GET /api/v1/me/drugs/search?q=&limit=
+ * Autocomplete do cadastro: resolve o termo (com correção de grafia/fonética)
+ * contra o catálogo ANVISA/CMED. `q` com menos de 2 chars devolve lista vazia.
+ */
+export async function searchDrugs(
+  q: string,
+  limit = 8,
+  signal?: AbortSignal,
+): Promise<DrugSearchResponse> {
+  const trimmed = q.trim();
+  if (trimmed.length < 2) return { matches: [] };
+  const qs = new URLSearchParams({ q: trimmed, limit: String(limit) });
+  const res = await fetchApi<DrugSearchResponse>(
+    `/api/v1/me/drugs/search?${qs}`,
+    { method: "GET", signal },
+  );
+  return { matches: res.matches ?? [] };
+}
+
+/**
  * POST /api/v1/me/medications
  * Cadastra um remédio do próprio titular. Mesmo body do dependente (inclui a
  * duração opcional). Devolve 201 com o MedicationItem criado.
@@ -168,6 +190,25 @@ export async function deleteMyMedication(
   return fetchApi<{ ok: boolean }>(`/api/v1/me/medications/${id}`, {
     method: "DELETE",
   });
+}
+
+/**
+ * GET /api/v1/me/intakes
+ * Histórico de tomadas do próprio titular nos últimos `days` dias (default 14,
+ * teto 90). `medicationId` filtra um único remédio. Normaliza array nil -> [].
+ */
+export async function getMyIntakes(
+  opts: { days?: number; medicationId?: number; cookieHeader?: string } = {},
+): Promise<IntakesResponse> {
+  const qs = new URLSearchParams();
+  if (opts.days) qs.set("days", String(opts.days));
+  if (opts.medicationId) qs.set("medication_id", String(opts.medicationId));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  const res = await fetchApi<IntakesResponse>(`/api/v1/me/intakes${suffix}`, {
+    method: "GET",
+    cookie: opts.cookieHeader,
+  });
+  return { intakes: res.intakes ?? [], days: res.days };
 }
 
 /**

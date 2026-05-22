@@ -50,6 +50,10 @@ type fakeStore struct {
 	// ProfileFacts fixture por userID.
 	profileFacts map[int64]ProfileFactsResponse
 
+	// Catalogo de medicamentos: fixture devolvido por ResolveDrug quando a
+	// query tem >=2 chars. Filtro real fica no resolver de producao.
+	drugMatches []DrugMatch
+
 	// Synthesize counter — proves cache works.
 	synthesizeCalls atomic.Int64
 
@@ -697,6 +701,19 @@ func (s *fakeStore) ProfileFacts(_ context.Context, userID int64) (ProfileFactsR
 	return resp, nil
 }
 
+func (s *fakeStore) ResolveDrug(_ context.Context, query string, limit int) ([]DrugMatch, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len([]rune(query)) < 2 {
+		return nil, nil
+	}
+	out := s.drugMatches
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (s *fakeStore) ListDependentMedications(_ context.Context, guardianID, dependentID int64) ([]MedicationItem, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -743,6 +760,19 @@ func (s *fakeStore) DeactivateDependentMedication(_ context.Context, guardianID,
 		}
 	}
 	return ErrNotFound
+}
+
+func (s *fakeStore) ListDependentIntakes(_ context.Context, guardianID, dependentID int64, _ int, _ int64) ([]IntakeEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.linksByGD[joinGDKey(guardianID, dependentID)]; !ok {
+		return nil, ErrNotFound
+	}
+	return []IntakeEntry{}, nil
+}
+
+func (s *fakeStore) ListMyIntakes(_ context.Context, _ int64, _ int, _ int64) ([]IntakeEntry, error) {
+	return []IntakeEntry{}, nil
 }
 
 func (s *fakeStore) ListMyMedications(_ context.Context, userID int64) ([]MedicationItem, error) {

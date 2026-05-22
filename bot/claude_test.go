@@ -105,12 +105,12 @@ func TestMarkLastMessageForCache(t *testing.T) {
 
 func TestBuildToolDefinitions(t *testing.T) {
 	tools := buildToolDefinitions()
-	// 16 originais (inclui conectar_agenda) + 8 da Fase 3/3.1 (medicacao +
-	// receita + adiar_remedio) + 4 da Fase 4 (alertar_familia,
-	// pausar_proatividade, comentar_imagem, comentar_link) + 2 da Fase 5
-	// (status_dependente, listar_dependentes) = 30.
-	if len(tools) != 30 {
-		t.Fatalf("expected 30 tools, got %d", len(tools))
+	// 16 originais (inclui conectar_agenda) + 9 da Fase 3/3.1 (medicacao +
+	// receita + adiar_remedio + buscar_medicamento_catalogo) + 4 da Fase 4
+	// (alertar_familia, pausar_proatividade, comentar_imagem, comentar_link) +
+	// 2 da Fase 5 (status_dependente, listar_dependentes) = 31.
+	if len(tools) != 31 {
+		t.Fatalf("expected 31 tools, got %d", len(tools))
 	}
 
 	names := map[string]bool{}
@@ -125,9 +125,9 @@ func TestBuildToolDefinitions(t *testing.T) {
 		"salvar_memoria", "buscar_memoria", "gerar_link_meet", "convidar_externo",
 		"registrar_viagem", "listar_viagens", "cancelar_viagem", "responder_permissao",
 		// Fase 3 (idosos): medicacao
-		"cadastrar_medicamento", "listar_medicamentos", "editar_medicamento",
-		"cancelar_medicamento", "marcar_remedio_tomado", "adiar_remedio", "pular_dose",
-		"extrair_receita_imagem",
+		"cadastrar_medicamento", "buscar_medicamento_catalogo", "listar_medicamentos",
+		"editar_medicamento", "cancelar_medicamento", "marcar_remedio_tomado",
+		"adiar_remedio", "pular_dose", "extrair_receita_imagem",
 		// Fase 4 (idosos): companion + media
 		"alertar_familia", "pausar_proatividade", "comentar_imagem", "comentar_link",
 		// Fase 5 (idosos): relatorio longitudinal pra responsavel

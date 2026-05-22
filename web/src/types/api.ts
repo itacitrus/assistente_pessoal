@@ -162,6 +162,31 @@ export interface SnapshotPoint {
   confidence: number | null; // 1..5 ou null (0 do backend = sem dado)
 }
 
+/** Status de uma ocorrência de dose. Espelha api.IntakeEntry.Status. */
+export type IntakeStatus =
+  | "pending"
+  | "taken"
+  | "skipped"
+  | "missed"
+  | "escalated"
+  | "unknown";
+
+/** Espelha api.IntakeEntry — uma ocorrência de dose no histórico de tomadas. */
+export interface IntakeEntry {
+  medication_id: number;
+  medication_name: string;
+  dose: string;
+  scheduled_at: string; // ISO8601 (UTC)
+  status: IntakeStatus;
+  confirmed_at?: string; // ISO8601, presente quando tomada/registrada
+}
+
+/** Espelha api.IntakesResponse — payload de GET .../intakes. */
+export interface IntakesResponse {
+  intakes: IntakeEntry[];
+  days: number;
+}
+
 /** Espelha api.MedicationStats. */
 export interface MedicationStats {
   scheduled: number;
@@ -169,6 +194,9 @@ export interface MedicationStats {
   missed: number;
   skipped: number;
   pending: number;
+  /** Doses de remédios que não exigem confirmação e não foram confirmadas —
+   *  "não sei". Ficam FORA do denominador da aderência. */
+  unknown: number;
   adherence_frac: number; // 0..1
 }
 
@@ -407,6 +435,9 @@ export interface MedicationItem {
   tolerance_minutes: number;
   /** Orientação para dose atrasada, definida pelo responsável. */
   late_dose_policy: LateDosePolicy;
+  /** true = exige confirmação (cobra + escala). false = só lembra; dose não
+   *  confirmada vira "não sei". */
+  require_confirmation: boolean;
   /** Campos estruturados do primeiro schedule, para o form de edição pré-preencher. */
   times: string[];
   frequency: MedicationFrequency;
@@ -463,6 +494,27 @@ export interface CreateMedicationBody {
   tolerance_minutes?: number;
   /** Orientação para dose atrasada. Omitido = consult_doctor. */
   late_dose_policy?: LateDosePolicy;
+  /** Id da apresentação no catálogo ANVISA/CMED quando o nome foi escolhido no
+   *  autocomplete. Omitido = digitado livre. */
+  catalog_id?: number;
+  /** Exigir confirmação de toma. Omitido = true (default seguro). */
+  require_confirmation?: boolean;
+}
+
+/** Candidato do catálogo de medicamentos (ANVISA/CMED) para o autocomplete. */
+export interface DrugMatch {
+  id: number;
+  commercial_name: string;
+  active_ingredient: string;
+  concentration: string;
+  presentation: string;
+  product_type: string;
+  tarja: string;
+  confidence: number;
+}
+
+export interface DrugSearchResponse {
+  matches: DrugMatch[];
 }
 
 /** Unidade do período relativo de um tratamento temporário. */
