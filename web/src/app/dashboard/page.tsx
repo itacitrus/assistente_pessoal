@@ -318,7 +318,7 @@ function InsightsSection({ insights }: { insights: InsightsResponse }) {
         </span>
         {!insights.pending ? (
           <div className="ml-auto">
-            <InsightsRefreshButton />
+            <InsightsRefreshButton lastUpdated={insights.generated_at} />
           </div>
         ) : null}
       </header>

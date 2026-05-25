@@ -17,7 +17,13 @@ import { cn } from "@/lib/utils";
  * mostramos a mensagem ("já atualizou hoje"). Os wrappers abaixo fixam a action
  * (server components não podem passar funções como prop).
  */
-function RefreshPanelButton({ action }: { action: () => Promise<unknown> }) {
+function RefreshPanelButton({
+  action,
+  lastUpdated,
+}: {
+  action: () => Promise<unknown>;
+  lastUpdated?: string | null;
+}) {
   const router = useRouter();
   const [status, setStatus] = React.useState<"idle" | "loading" | "error">(
     "idle",
@@ -41,6 +47,8 @@ function RefreshPanelButton({ action }: { action: () => Promise<unknown> }) {
     }
   }
 
+  const updatedLabel = formatUpdatedAt(lastUpdated);
+
   return (
     <div className="flex flex-col items-end gap-1">
       <Button
@@ -60,21 +68,52 @@ function RefreshPanelButton({ action }: { action: () => Promise<unknown> }) {
         <p className="max-w-[16rem] text-right text-xs text-muted-foreground">
           {msg}
         </p>
+      ) : updatedLabel ? (
+        <p className="text-right text-xs text-muted-foreground">
+          Atualizado {updatedLabel}
+        </p>
       ) : null}
     </div>
   );
 }
 
+/**
+ * formatUpdatedAt formata um timestamp ISO (momento, em UTC) para "em DD/MM
+ * às HH:mm" no fuso local. Diferente de data de calendário, aqui a conversão
+ * de fuso é correta (é um instante). Retorna "" se ausente/ inválido.
+ */
+function formatUpdatedAt(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const data = d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+  const hora = d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  return `em ${data} às ${hora}`;
+}
+
 /** Botão de atualizar os Insights do titular (1x/dia). */
-export function InsightsRefreshButton() {
-  return <RefreshPanelButton action={() => refreshMyInsights()} />;
+export function InsightsRefreshButton({
+  lastUpdated,
+}: {
+  lastUpdated?: string | null;
+}) {
+  return (
+    <RefreshPanelButton action={() => refreshMyInsights()} lastUpdated={lastUpdated} />
+  );
 }
 
 /** Botão de atualizar o relatório de um dependente (1x/dia). */
 export function DependentRefreshButton({
   dependentId,
+  lastUpdated,
 }: {
   dependentId: number;
+  lastUpdated?: string | null;
 }) {
-  return <RefreshPanelButton action={() => refreshDependent(dependentId)} />;
+  return (
+    <RefreshPanelButton
+      action={() => refreshDependent(dependentId)}
+      lastUpdated={lastUpdated}
+    />
+  );
 }

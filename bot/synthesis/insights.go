@@ -129,10 +129,25 @@ func AgendaInsights(ctx context.Context, client ReportClient, in AgendaInsightsI
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		return AgendaInsightsOutput{}, fmt.Errorf("%w: %v (raw=%q)", ErrParse, err, truncate(raw, 200))
 	}
+	NormalizeAgendaInsightsOutput(&out)
 	if err := ValidateAgendaInsightsOutput(out); err != nil {
 		return AgendaInsightsOutput{}, fmt.Errorf("%w: %v", ErrValidation, err)
 	}
 	return out, nil
+}
+
+// NormalizeAgendaInsightsOutput clampa os limites cosmeticos (quantidade/
+// tamanho) antes da validacao, pra um estouro pequeno do modelo nao derrubar a
+// pagina. Casos genuinos (vazio, kind invalido) seguem barrados pela validacao.
+func NormalizeAgendaInsightsOutput(o *AgendaInsightsOutput) {
+	o.Summary = clampLen(strings.TrimSpace(o.Summary), 500)
+	if len(o.Insights) > 6 {
+		o.Insights = o.Insights[:6]
+	}
+	for i := range o.Insights {
+		o.Insights[i].Title = clampLen(strings.TrimSpace(o.Insights[i].Title), 120)
+		o.Insights[i].Detail = clampLen(strings.TrimSpace(o.Insights[i].Detail), 400)
+	}
 }
 
 // ValidateAgendaInsightsOutput aplica o contrato:

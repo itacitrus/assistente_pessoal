@@ -64,6 +64,9 @@ func Synthesize(ctx context.Context, client ReportClient, in ReportInput) (Repor
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		return ReportOutput{}, fmt.Errorf("%w: %v (raw=%q)", ErrParse, err, truncate(raw, 200))
 	}
+	// Clampa limites cosmeticos (tamanho/quantidade) que o modelo as vezes
+	// estoura — assim a validacao so falha no que importa (privacidade etc).
+	NormalizeReportOutput(&out)
 	if err := ValidateReportOutput(out); err != nil {
 		return ReportOutput{}, fmt.Errorf("%w: %v", ErrValidation, err)
 	}

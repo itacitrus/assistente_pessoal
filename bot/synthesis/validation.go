@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // quoteRegex matcha provavel citacao literal: texto entre aspas retas ou
@@ -179,6 +180,46 @@ func ValidateReportOutput(o ReportOutput) error {
 		}
 	}
 	return nil
+}
+
+// clampLen corta `s` para no maximo `maxBytes` bytes, respeitando fronteira de
+// rune (UTF-8) e preferindo cortar no ultimo espaco pra nao quebrar palavra.
+// Acrescenta "…" quando trunca. As validacoes de tamanho sao em bytes (len),
+// entao o orcamento ja desconta o "…" (3 bytes).
+func clampLen(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	limit := maxBytes - len("…")
+	if limit < 0 {
+		limit = 0
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	if sp := strings.LastIndexByte(s[:cut], ' '); sp > limit/2 {
+		cut = sp
+	}
+	return strings.TrimRight(s[:cut], " ") + "…"
+}
+
+// NormalizeReportOutput clampa os limites COSMETICOS (tamanho/quantidade) que o
+// modelo as vezes estoura — em vez de rejeitar a sintese inteira. Chamado antes
+// de ValidateReportOutput, que segue barrando o que importa de verdade
+// (tendencia/nivel invalido, resumo vazio, citacao literal, termo clinico).
+// Sem isso, um "1 recomendacao a mais" ou "21 chars a mais" derrubava o painel.
+func NormalizeReportOutput(o *ReportOutput) {
+	o.Resumo = clampLen(strings.TrimSpace(o.Resumo), 500)
+	o.Comparacao = clampLen(strings.TrimSpace(o.Comparacao), 200)
+	o.HumorRecente = clampLen(strings.TrimSpace(o.HumorRecente), 200)
+	o.PontoDeAtencao = clampLen(strings.TrimSpace(o.PontoDeAtencao), 200)
+	if len(o.RecomendacoesCarinhosas) > 3 {
+		o.RecomendacoesCarinhosas = o.RecomendacoesCarinhosas[:3]
+	}
+	for i := range o.RecomendacoesCarinhosas {
+		o.RecomendacoesCarinhosas[i] = clampLen(strings.TrimSpace(o.RecomendacoesCarinhosas[i]), 200)
+	}
 }
 
 // validateScore aceita 0 (= NULL no banco) ate 5.

@@ -53,6 +53,30 @@ func TestSynthesize_ProducesTendencyFromSnapshots(t *testing.T) {
 	}
 }
 
+func TestSynthesize_ClampsCosmeticOverflow(t *testing.T) {
+	client := &fakeReport{out: ReportOutput{
+		Tendencia:               "melhorando",
+		NivelPreocupacao:        "tranquilo",
+		Resumo:                  "Tudo certo essa semana.",
+		PontoDeAtencao:          strings.Repeat("a", 260), // > 200 bytes
+		RecomendacoesCarinhosas: []string{"um", "dois", "tres", "quatro"},
+	}}
+	out, err := Synthesize(context.Background(), client, ReportInput{
+		Dependent: User{ID: 1, Name: "Antonia"},
+		Days:      14,
+		Snapshots: genTrendSnapshots(14, "up"),
+	})
+	if err != nil {
+		t.Fatalf("Synthesize deveria clampar e nao falhar: %v", err)
+	}
+	if len(out.RecomendacoesCarinhosas) != 3 {
+		t.Errorf("recomendacoes = %d, want 3 (clamp)", len(out.RecomendacoesCarinhosas))
+	}
+	if len(out.PontoDeAtencao) > 200 {
+		t.Errorf("ponto_de_atencao = %d bytes, want <= 200 (clamp)", len(out.PontoDeAtencao))
+	}
+}
+
 func TestSynthesize_HandlesEmptyWindow(t *testing.T) {
 	client := &fakeReport{out: ReportOutput{
 		Tendencia:        "indeterminado",

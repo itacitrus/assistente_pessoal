@@ -78,7 +78,10 @@ export default async function DependentDetailPage({ params }: PageProps) {
         >
           ← Voltar ao painel
         </Link>
-        <DependentRefreshButton dependentId={Number(id)} />
+        <DependentRefreshButton
+          dependentId={Number(id)}
+          lastUpdated={status.synthesis_generated_at}
+        />
       </div>
 
       <StatusHeader status={status} relationship={relationship} />

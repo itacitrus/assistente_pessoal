@@ -454,15 +454,17 @@ func (s *Server) handleRefreshDependent(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	scope := fmt.Sprintf("dependent:%d", depID)
-	allowed, err := s.store.ManualRefreshAllowed(r.Context(), user.ID, scope)
+	// Limite POR PERFIL/dia: a chave eh o dependente (qualquer responsavel
+	// compartilha a cota do dia daquele perfil), com a fronteira no dia local
+	// do proprio dependente.
+	allowed, err := s.store.ManualRefreshAllowed(r.Context(), depID, "report")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao verificar limite.")
 		return
 	}
 	if !allowed {
 		writeError(w, http.StatusTooManyRequests, CodeRateLimited,
-			"Você já atualizou este relatório hoje. Tente novamente amanhã.")
+			"Este relatório já foi atualizado hoje. Tente novamente amanhã.")
 		return
 	}
 
@@ -475,8 +477,8 @@ func (s *Server) handleRefreshDependent(w http.ResponseWriter, r *http.Request, 
 			"Não consegui atualizar agora. Tente novamente em instantes.")
 		return
 	}
-	if mErr := s.store.MarkManualRefresh(r.Context(), user.ID, scope); mErr != nil {
-		log.Printf("manual dependent refresh: mark guardian=%d dep=%d: %v", user.ID, depID, mErr)
+	if mErr := s.store.MarkManualRefresh(r.Context(), depID, "report"); mErr != nil {
+		log.Printf("manual dependent refresh: mark dep=%d: %v", depID, mErr)
 	}
 	s.statusCache.Invalidate(fmt.Sprintf("%d-%d", depID, days))
 	s.store.Audit(r.Context(), user.ID, "dependent_manual_refresh", "",
