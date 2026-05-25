@@ -35,7 +35,9 @@ type fakeStore struct {
 
 	snapshots map[int64][]SnapshotPoint // userID -> sorted points
 
-	reviewedAlerts map[int64]string // alertID -> nota de revisao
+	reviewedAlerts    map[int64]string // alertID -> nota de revisao
+	synthesisRegens   int              // contador de RegenerateDependentSynthesis
+	manualRefreshUsed map[string]bool  // "userID-scope" -> ja usou hoje
 
 	// Audit log buffer.
 	audits []fakeAudit
@@ -587,6 +589,32 @@ func (s *fakeStore) ReviewDependentAlert(_ context.Context, guardianID, dependen
 	}
 	s.reviewedAlerts[alertID] = note
 	return true, nil
+}
+
+func (s *fakeStore) RegenerateDependentSynthesis(_ context.Context, guardianID, dependentID int64, days int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.synthesisRegens++
+	return nil
+}
+
+func (s *fakeStore) ManualRefreshAllowed(_ context.Context, userID int64, scope string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.manualRefreshUsed == nil {
+		return true, nil
+	}
+	return !s.manualRefreshUsed[fmt.Sprintf("%d-%s", userID, scope)], nil
+}
+
+func (s *fakeStore) MarkManualRefresh(_ context.Context, userID int64, scope string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.manualRefreshUsed == nil {
+		s.manualRefreshUsed = map[string]bool{}
+	}
+	s.manualRefreshUsed[fmt.Sprintf("%d-%s", userID, scope)] = true
+	return nil
 }
 
 func (s *fakeStore) UpcomingEvents(_ context.Context, userID int64) ([]AgendaEvent, error) {

@@ -30,6 +30,7 @@ import { ConnectGoogleButton } from "@/components/me/ConnectGoogleButton";
 import { PeopleManager } from "@/components/me/PeopleManager";
 import { DependentList } from "@/components/family/DependentList";
 import { PendingAutoRefresh } from "@/components/PendingAutoRefresh";
+import { InsightsRefreshButton } from "@/components/RefreshPanelButton";
 import { ApiError } from "@/lib/api";
 import { getMe } from "@/lib/api/auth";
 import { getMyAgenda, getMyInsights, getProfileFacts } from "@/lib/api/me";
@@ -315,6 +316,11 @@ function InsightsSection({ insights }: { insights: InsightsResponse }) {
           <Sparkles className="h-3 w-3" aria-hidden />
           gerado por IA
         </span>
+        {!insights.pending ? (
+          <div className="ml-auto">
+            <InsightsRefreshButton />
+          </div>
+        ) : null}
       </header>
 
       {insights.pending ? (

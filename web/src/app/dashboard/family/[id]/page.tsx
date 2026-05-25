@@ -8,6 +8,7 @@ import { DependentDataForm } from "@/components/family/DependentDataForm";
 import { MetricCard } from "@/components/family/MetricCard";
 import { StatusHeader } from "@/components/family/StatusHeader";
 import { PendingAutoRefresh } from "@/components/PendingAutoRefresh";
+import { DependentRefreshButton } from "@/components/RefreshPanelButton";
 import { SynthesisCard } from "@/components/family/SynthesisCard";
 import { Pill } from "lucide-react";
 
@@ -70,12 +71,15 @@ export default async function DependentDetailPage({ params }: PageProps) {
 
   return (
     <div className="space-y-6">
-      <Link
-        href="/dashboard"
-        className="text-sm text-muted-foreground hover:text-foreground"
-      >
-        ← Voltar ao painel
-      </Link>
+      <div className="flex items-start justify-between gap-3">
+        <Link
+          href="/dashboard"
+          className="text-sm text-muted-foreground hover:text-foreground"
+        >
+          ← Voltar ao painel
+        </Link>
+        <DependentRefreshButton dependentId={Number(id)} />
+      </div>
 
       <StatusHeader status={status} relationship={relationship} />
 

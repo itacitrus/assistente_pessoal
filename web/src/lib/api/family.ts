@@ -255,6 +255,17 @@ export async function resendDependentWelcome(
 }
 
 /**
+ * POST /api/v1/family/dependents/{id}/refresh
+ * Botão "Atualizar" do relatório: regenera a síntese na hora (1x/dia).
+ */
+export async function refreshDependent(id: number): Promise<{ ok: boolean }> {
+  return fetchApi<{ ok: boolean }>(
+    `/api/v1/family/dependents/${id}/refresh`,
+    { method: "POST" },
+  );
+}
+
+/**
  * POST /api/v1/family/dependents/{id}/alerts/{alertId}/review
  * Marca um sinal como revisado pelo responsavel (some da lista "em aberto").
  * `note` e uma anotacao curta opcional ("liguei, esta bem").

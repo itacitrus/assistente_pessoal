@@ -578,6 +578,16 @@ func (db *DB) migrate() error {
 		`ALTER TABLE escalations ADD COLUMN reviewed_by INTEGER REFERENCES users(id)`,
 		`ALTER TABLE escalations ADD COLUMN reviewed_at DATETIME`,
 		`ALTER TABLE escalations ADD COLUMN review_note TEXT NOT NULL DEFAULT ''`,
+
+		// Fase 6 (web): rate-limit do botao "Atualizar" manual do painel — 1x/dia
+		// por usuario, por escopo ("insights" | "dependent:{id}"). UMA linha por
+		// (user, scope); last_refresh_at compara contra a meia-noite local.
+		`CREATE TABLE IF NOT EXISTS manual_refreshes (
+			user_id         INTEGER NOT NULL REFERENCES users(id),
+			scope           TEXT    NOT NULL,
+			last_refresh_at DATETIME NOT NULL,
+			PRIMARY KEY (user_id, scope)
+		)`,
 	}
 	for _, stmt := range additive {
 		if _, err := db.conn.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column") {

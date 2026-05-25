@@ -154,6 +154,8 @@ func (s *Server) Mount(mux *http.ServeMux) {
 		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMeAgendaEvents))))
 	mux.Handle(s.route("/api/v1/me/insights"),
 		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMeInsights))))
+	mux.Handle(s.route("/api/v1/me/insights/refresh"),
+		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMeInsightsRefresh))))
 	mux.Handle(s.route("/api/v1/me/activity"),
 		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMeActivity))))
 	mux.Handle(s.route("/api/v1/me/profile-facts"),
@@ -267,6 +269,12 @@ func (s *Server) handleDependentResource(w http.ResponseWriter, r *http.Request)
 		s.routeDependentMedications(w, r, depID, subParts)
 	case "alerts":
 		s.routeDependentAlerts(w, r, depID, subParts)
+	case "refresh":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
+			return
+		}
+		s.handleRefreshDependent(w, r, depID)
 	case "intakes":
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")

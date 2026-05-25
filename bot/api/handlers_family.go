@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -421,6 +423,65 @@ func (s *Server) handleDependentTimeline(w http.ResponseWriter, r *http.Request,
 	s.store.Audit(r.Context(), user.ID, "timeline_consulted", "",
 		fmt.Sprintf("dependent_id=%d|days=%d|points=%d", depID, days, len(points)))
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleRefreshDependent — POST /family/dependents/{id}/refresh. Botao
+// "Atualizar" do relatorio: regenera a sintese longitudinal na hora (Sonnet),
+// limitado a 1x/dia por usuario. So conta no limite se der certo.
+func (s *Server) handleRefreshDependent(w http.ResponseWriter, r *http.Request, depID int64) {
+	user := userFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Não autenticado.")
+		return
+	}
+	ok, err := s.store.IsGuardianOf(r.Context(), user.ID, depID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao verificar autorizacao.")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusForbidden, CodeForbidden, "Você não é responsável por este dependente.")
+		return
+	}
+	consent, err := s.store.GetDependentConsent(r.Context(), user.ID, depID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao verificar consentimento.")
+		return
+	}
+	if consent == "revoked" {
+		writeError(w, http.StatusForbidden, CodeConsentRevoked,
+			"O dependente revogou o consentimento de relatório agregado.")
+		return
+	}
+
+	scope := fmt.Sprintf("dependent:%d", depID)
+	allowed, err := s.store.ManualRefreshAllowed(r.Context(), user.ID, scope)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao verificar limite.")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusTooManyRequests, CodeRateLimited,
+			"Você já atualizou este relatório hoje. Tente novamente amanhã.")
+		return
+	}
+
+	days := 14
+	ctx, cancel := context.WithTimeout(r.Context(), manualRefreshCtxTimeout)
+	defer cancel()
+	if err := s.store.RegenerateDependentSynthesis(ctx, user.ID, depID, days); err != nil {
+		log.Printf("manual dependent refresh guardian=%d dep=%d: %v", user.ID, depID, err)
+		writeError(w, http.StatusInternalServerError, CodeInternal,
+			"Não consegui atualizar agora. Tente novamente em instantes.")
+		return
+	}
+	if mErr := s.store.MarkManualRefresh(r.Context(), user.ID, scope); mErr != nil {
+		log.Printf("manual dependent refresh: mark guardian=%d dep=%d: %v", user.ID, depID, mErr)
+	}
+	s.statusCache.Invalidate(fmt.Sprintf("%d-%d", depID, days))
+	s.store.Audit(r.Context(), user.ID, "dependent_manual_refresh", "",
+		fmt.Sprintf("dependent_id=%d|days=%d", depID, days))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // reviewAlertNoteMaxLen limita a nota de revisao — eh um lembrete curto do

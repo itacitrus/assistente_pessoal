@@ -322,13 +322,20 @@ type ProactiveStats struct {
 	LastAcked     bool       `json:"last_acked"`
 }
 
-// AlertSummary eh subset publico de FamilyAlert (sem message: privacidade).
+// AlertSummary eh subset publico de FamilyAlert. Nunca expoe a `message`/raw
+// da conversa; mas para sinais preocupantes inclui Summary (o que foi
+// observado) e Recommended (sugestao) — resumos do LLM, o MESMO conteudo que ja
+// vai ao responsavel por WhatsApp no momento do alerta. Sem isso, o
+// responsavel nao tem como decidir a revisao. Vazio para alertas
+// auto-explicativos (dose perdida, sem responder).
 type AlertSummary struct {
-	ID         int64     `json:"id"`
-	PolicyName string    `json:"policy_name"`
-	Severity   string    `json:"severity"`
-	Status     string    `json:"status"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID          int64     `json:"id"`
+	PolicyName  string    `json:"policy_name"`
+	Severity    string    `json:"severity"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	Summary     string    `json:"summary,omitempty"`
+	Recommended string    `json:"recommended,omitempty"`
 }
 
 // SynthesisSummary eh subset publico de synthesis.ReportOutput.

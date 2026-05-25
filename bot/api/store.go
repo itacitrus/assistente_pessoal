@@ -79,6 +79,16 @@ type Store interface {
 	// alerta pertence ao dependente. Retorna (false) se nada casou (alerta
 	// inexistente, de outro dependente, ou ja revisado).
 	ReviewDependentAlert(ctx context.Context, guardianID, dependentID, alertID int64, note string) (bool, error)
+	// RegenerateDependentSynthesis regenera+persiste a sintese longitudinal do
+	// dependente (Sonnet). Usado pelo botao "Atualizar" manual do painel.
+	RegenerateDependentSynthesis(ctx context.Context, guardianID, dependentID int64, days int) error
+
+	// Refresh manual rate-limit (1x/dia por usuario, por escopo) -------------
+	// ManualRefreshAllowed informa se o usuario ainda pode acionar o refresh
+	// manual de `scope` hoje (dia local). MarkManualRefresh registra que usou.
+	// Escopos: "insights" (titular) e "dependent:{id}" (relatorio de familia).
+	ManualRefreshAllowed(ctx context.Context, userID int64, scope string) (bool, error)
+	MarkManualRefresh(ctx context.Context, userID int64, scope string) error
 
 	// Medicacao do dependente ---------------------------------------------
 	// Todas validam IsGuardianOf(guardianID, dependentID) internamente e

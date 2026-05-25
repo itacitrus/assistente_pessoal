@@ -109,3 +109,8 @@ func (c *insightsCache) Set(key string, value *InsightsResponse) {
 		expiry: time.Now().UTC().Add(c.ttl),
 	})
 }
+
+// Invalidate remove a entrada do cache (usado apos refresh manual).
+func (c *insightsCache) Invalidate(key string) {
+	c.m.Delete(key)
+}

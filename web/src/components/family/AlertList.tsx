@@ -99,6 +99,16 @@ function AlertRow({
           <p className="text-sm font-medium leading-snug">
             {humanizePolicy(alert.policy_name)}
           </p>
+          {alert.summary ? (
+            <p className="mt-1 text-sm leading-snug text-foreground/80">
+              {alert.summary}
+            </p>
+          ) : null}
+          {alert.recommended ? (
+            <p className="mt-1 text-xs leading-snug text-muted-foreground">
+              <span className="font-medium">Sugestão:</span> {alert.recommended}
+            </p>
+          ) : null}
           <p className="mt-1 text-xs text-muted-foreground">
             {humanizeAge(alert.created_at)}
           </p>

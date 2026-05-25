@@ -91,6 +91,16 @@ export async function getMyInsights(
 }
 
 /**
+ * POST /api/v1/me/insights/refresh
+ * Botão "Atualizar" do painel: regenera os insights na hora (1x/dia).
+ */
+export async function refreshMyInsights(): Promise<{ ok: boolean }> {
+  return fetchApi<{ ok: boolean }>(`/api/v1/me/insights/refresh`, {
+    method: "POST",
+  });
+}
+
+/**
  * GET /api/v1/me/activity?limit=100
  *
  * Devolve o historico completo de atividade relevante do usuario (o backend

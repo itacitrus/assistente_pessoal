@@ -520,6 +520,67 @@ func (a *apiAdapter) ReviewDependentAlert(ctx context.Context, guardianID, depen
 	return a.db.ReviewAlert(alertID, dependentID, guardianID, note)
 }
 
+// RegenerateDependentSynthesis regenera a sintese longitudinal do dependente.
+// A autorizacao eh feita no handler (IsGuardianOf + consent).
+func (a *apiAdapter) RegenerateDependentSynthesis(ctx context.Context, guardianID, dependentID int64, days int) error {
+	dep, err := a.db.GetUserByID(dependentID)
+	if err != nil {
+		return err
+	}
+	return RegenerateDependentSynthesis(ctx, a.db, a.report, dep, days)
+}
+
+// manualRefreshDayStart calcula a meia-noite local do usuario (em UTC) pra
+// servir de fronteira do limite diario. Usa o fuso resolvido por
+// GetEventTimezone (default BRT).
+func (a *apiAdapter) manualRefreshDayStart(userID int64) time.Time {
+	now := time.Now()
+	tz := a.db.GetEventTimezone(userID, now)
+	if tz == nil {
+		tz = BRT()
+	}
+	local := now.In(tz)
+	return time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, tz).UTC()
+}
+
+func (a *apiAdapter) ManualRefreshAllowed(ctx context.Context, userID int64, scope string) (bool, error) {
+	return a.db.ManualRefreshAllowed(userID, scope, a.manualRefreshDayStart(userID))
+}
+
+func (a *apiAdapter) MarkManualRefresh(ctx context.Context, userID int64, scope string) error {
+	return a.db.MarkManualRefresh(userID, scope, time.Now().UTC())
+}
+
+// alertSafeSummary extrai, dos `details` pipe-separated do alerta, um resumo
+// seguro pra mostrar ao responsavel. So para sinais preocupantes
+// (severe_signal*): `reason` (o que foi observado) e `recommended`/
+// `recommended_action` (sugestao) — resumos do LLM ja enviados por WhatsApp,
+// nunca a conversa crua. Demais policies (dose perdida, inatividade) sao
+// auto-explicativas pelo label e nao expoem detalhe.
+func alertSafeSummary(policyName, details string) (summary, recommended string) {
+	if !strings.HasPrefix(policyName, "severe_signal") {
+		return "", ""
+	}
+	kv := parsePipeKV(details)
+	rec := kv["recommended"]
+	if rec == "" {
+		rec = kv["recommended_action"]
+	}
+	return kv["reason"], rec
+}
+
+// parsePipeKV quebra "a=1|b=2" em map. Valores nunca contem '|' (sanitizeForDetails
+// troca por '/'), entao o split simples basta.
+func parsePipeKV(s string) map[string]string {
+	out := map[string]string{}
+	for _, part := range strings.Split(s, "|") {
+		if i := strings.Index(part, "="); i > 0 {
+			out[strings.TrimSpace(part[:i])] = strings.TrimSpace(part[i+1:])
+		}
+	}
+	return out
+}
+
 // BuildDependentStatus delega pra mesma BuildDependentStatus que o chat usa,
 // depois converte pro shape api.StatusResponse.
 func (a *apiAdapter) BuildDependentStatus(ctx context.Context, guardianID, dependentID int64, days int) (*api.StatusResponse, error) {
@@ -574,12 +635,15 @@ func (a *apiAdapter) BuildDependentStatus(ctx context.Context, guardianID, depen
 		resp.ProactiveAttempts.LastAttemptAt = &t
 	}
 	for _, alert := range report.AlertsOpen {
+		summary, recommended := alertSafeSummary(alert.PolicyName, alert.Message)
 		resp.AlertsOpen = append(resp.AlertsOpen, api.AlertSummary{
-			ID:         alert.ID,
-			PolicyName: alert.PolicyName,
-			Severity:   alert.Severity,
-			Status:     alert.Status,
-			CreatedAt:  alert.CreatedAt,
+			ID:          alert.ID,
+			PolicyName:  alert.PolicyName,
+			Severity:    alert.Severity,
+			Status:      alert.Status,
+			CreatedAt:   alert.CreatedAt,
+			Summary:     summary,
+			Recommended: recommended,
 		})
 	}
 	for _, snap := range report.Snapshots {

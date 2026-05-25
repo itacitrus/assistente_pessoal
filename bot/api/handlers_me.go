@@ -200,6 +200,53 @@ func (s *Server) handleMeInsights(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// manualRefreshCtxTimeout limita a regeneracao sincrona do botao "Atualizar".
+// Abaixo do idle timeout do ALB (~60s) pra falhar com erro claro em vez de 504.
+const manualRefreshCtxTimeout = 50 * time.Second
+
+// handleMeInsightsRefresh — POST /api/v1/me/insights/refresh. Botao "Atualizar"
+// do painel do titular: regenera os insights de agenda na hora (Sonnet),
+// limitado a 1x/dia por usuario. So conta no limite se a regeneracao der certo.
+func (s *Server) handleMeInsightsRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
+		return
+	}
+	user := userFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Não autenticado.")
+		return
+	}
+	allowed, err := s.store.ManualRefreshAllowed(r.Context(), user.ID, "insights")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao verificar limite.")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusTooManyRequests, CodeRateLimited,
+			"Você já atualizou os insights hoje. Tente novamente amanhã.")
+		return
+	}
+
+	days := 30
+	ctx, cancel := context.WithTimeout(r.Context(), manualRefreshCtxTimeout)
+	defer cancel()
+	if err := s.RegenerateInsightsForUser(ctx, user.ID, days); err != nil {
+		log.Printf("manual insights refresh user=%d: %v", user.ID, err)
+		writeError(w, http.StatusInternalServerError, CodeInternal,
+			"Não consegui atualizar agora. Tente novamente em instantes.")
+		return
+	}
+	// So marca a cota apos sucesso. Invalida o cache L1 pra o proximo GET servir
+	// o resultado fresco (o L2 ja foi persistido pelo RegenerateInsightsForUser).
+	if mErr := s.store.MarkManualRefresh(r.Context(), user.ID, "insights"); mErr != nil {
+		log.Printf("manual insights refresh: mark user=%d: %v", user.ID, mErr)
+	}
+	s.insightsCache.Invalidate(fmt.Sprintf("%d-%d", user.ID, days))
+	s.store.Audit(r.Context(), user.ID, "me_insights_manual_refresh", "", fmt.Sprintf("days=%d", days))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // triggerInsightsRegen regenera os insights de agenda em background (Sonnet),
 // no maximo um por (user, days) de cada vez. Usado pelo caminho de request
 // (nao bloqueia o load). A logica de geracao fica em regenerateInsights, que

@@ -207,13 +207,19 @@ export interface ProactiveStats {
   last_acked: boolean;
 }
 
-/** Espelha api.AlertSummary — sem campo "message" por privacidade. */
+/**
+ * Espelha api.AlertSummary. Nunca traz a conversa crua; para sinais
+ * preocupantes traz `summary` (o que foi observado) e `recommended` (sugestão)
+ * — resumos do LLM, o mesmo que já chega ao responsável por WhatsApp.
+ */
 export interface AlertSummary {
   id: number;
   policy_name: string;
   severity: AlertSeverity;
   status: AlertStatus;
   created_at: string;
+  summary?: string;
+  recommended?: string;
 }
 
 /** Espelha api.SynthesisSummary. */
