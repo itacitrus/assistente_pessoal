@@ -73,13 +73,22 @@ function AlertRow({
     "idle",
   );
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
+  // "há X dias" depende do "agora"; renderizar no SSR e hidratar no cliente
+  // pode divergir e quebrar a hidratação. Só mostramos após montar.
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
 
   async function handleConfirm() {
     setStatus("saving");
     setErrorMsg(null);
     try {
       await reviewDependentAlert(dependentId, alert.id, note.trim());
-      // Recarrega os dados do servidor — o alerta revisado sai da lista.
+      // Sucesso: fecha o formulário e sai do estado "salvando" antes do refresh
+      // (não fica preso em "Salvando..." se a re-renderização atrasar). O
+      // router.refresh re-busca os dados e o alerta revisado sai da lista.
+      setOpen(false);
+      setNote("");
+      setStatus("idle");
       router.refresh();
     } catch (err) {
       setStatus("error");
@@ -110,7 +119,7 @@ function AlertRow({
             </p>
           ) : null}
           <p className="mt-1 text-xs text-muted-foreground">
-            {humanizeAge(alert.created_at)}
+            {mounted ? humanizeAge(alert.created_at) : " "}
           </p>
         </div>
         {!open ? (

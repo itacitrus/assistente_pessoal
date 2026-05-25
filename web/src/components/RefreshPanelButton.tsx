@@ -29,6 +29,10 @@ function RefreshPanelButton({
     "idle",
   );
   const [msg, setMsg] = React.useState<string | null>(null);
+  // A data formatada depende do fuso local; renderizar no SSR (UTC) e hidratar
+  // no cliente (BRT) gera mismatch de hidratação. Só mostramos após montar.
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
 
   async function onClick() {
     setStatus("loading");
@@ -47,7 +51,7 @@ function RefreshPanelButton({
     }
   }
 
-  const updatedLabel = formatUpdatedAt(lastUpdated);
+  const updatedLabel = mounted ? formatUpdatedAt(lastUpdated) : "";
 
   return (
     <div className="flex flex-col items-end gap-1">
