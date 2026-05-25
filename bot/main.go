@@ -265,6 +265,13 @@ func runBot() {
 		AdminPhones:    resolveAdminPhones(),
 	})
 
+	// Refresh diario dos insights de agenda do titular: o scheduler nao conhece
+	// o package api, entao injetamos a geracao do apiServer (que tem report
+	// client + store). Espelha SetSynthesisGeneratorForSchedule.
+	SetInsightsGeneratorForSchedule(func(ctx context.Context, userID int64, days int) error {
+		return apiServer.RegenerateInsightsForUser(ctx, userID, days)
+	})
+
 	go startHTTPServer(cal, db, cfg, apiServer)
 
 	sigCh := make(chan os.Signal, 1)

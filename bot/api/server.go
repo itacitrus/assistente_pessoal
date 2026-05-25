@@ -265,6 +265,8 @@ func (s *Server) handleDependentResource(w http.ResponseWriter, r *http.Request)
 		s.handleDependentTimeline(w, r, depID)
 	case "medications":
 		s.routeDependentMedications(w, r, depID, subParts)
+	case "alerts":
+		s.routeDependentAlerts(w, r, depID, subParts)
 	case "intakes":
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
@@ -317,6 +319,34 @@ func (s *Server) routeDependentMedications(w http.ResponseWriter, r *http.Reques
 	default:
 		writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
 	}
+}
+
+// routeDependentAlerts roteia /family/dependents/{id}/alerts/{alertId}/review.
+// subParts[0] == "alerts". Unica acao por enquanto: POST .../review.
+func (s *Server) routeDependentAlerts(w http.ResponseWriter, r *http.Request, depID int64, subParts []string) {
+	if len(subParts) == 1 || strings.TrimSpace(subParts[1]) == "" {
+		writeError(w, http.StatusNotFound, CodeNotFound, "Rota não encontrada.")
+		return
+	}
+	rest := strings.SplitN(strings.Trim(subParts[1], "/"), "/", 2)
+	alertID, err := strconv.ParseInt(rest[0], 10, 64)
+	if err != nil || alertID <= 0 {
+		writeError(w, http.StatusBadRequest, CodeValidation, "ID do alerta inválido.")
+		return
+	}
+	action := ""
+	if len(rest) == 2 {
+		action = rest[1]
+	}
+	if action != "review" {
+		writeError(w, http.StatusNotFound, CodeNotFound, "Rota não encontrada.")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
+		return
+	}
+	s.handleReviewDependentAlert(w, r, depID, alertID)
 }
 
 // handleLinkResource roteia /family/links/{id}/notify.

@@ -255,6 +255,22 @@ export async function resendDependentWelcome(
 }
 
 /**
+ * POST /api/v1/family/dependents/{id}/alerts/{alertId}/review
+ * Marca um sinal como revisado pelo responsavel (some da lista "em aberto").
+ * `note` e uma anotacao curta opcional ("liguei, esta bem").
+ */
+export async function reviewDependentAlert(
+  dependentId: number,
+  alertId: number,
+  note: string,
+): Promise<{ ok: boolean }> {
+  return fetchApi<{ ok: boolean }>(
+    `/api/v1/family/dependents/${dependentId}/alerts/${alertId}/review`,
+    { method: "POST", json: { note } },
+  );
+}
+
+/**
  * POST /api/v1/family/dependents/{id}/google
  * Faz o Zello enviar ao PROPRIO dependente, no WhatsApp dele, o link de
  * conexao com o Google Calendar. Quem autoriza eh o dependente no aparelho

@@ -1,6 +1,9 @@
 package main
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // SnapshotWriter eh o gancho que a Fase 5 vai injetar pra escrever
 // snapshots psicologicos diarios (Haiku 4.5). A Fase 4 deixa a interface
@@ -27,6 +30,13 @@ type SnapshotWriter interface {
 	// Implementacoes devem ser non-blocking (caller chama em goroutine
 	// com timeout 30s) e idempotentes (UPSERT por (user_id, date)).
 	MaybeUpdateSnapshot(ctx context.Context, userID int64) error
+
+	// UpdateSnapshotForDay roda a mesma pipeline de MaybeUpdateSnapshot mas
+	// para um dia-alvo explicito (instante qualquer DENTRO do dia desejado;
+	// a impl resolve o fuso do user e normaliza pra meia-noite local). Usado
+	// pelo catchup do scheduler pra preencher dias PASSADOS sem snapshot —
+	// MaybeUpdateSnapshot sozinho so opera "hoje" e nao consegue backfillar.
+	UpdateSnapshotForDay(ctx context.Context, userID int64, day time.Time) error
 }
 
 // noopSnapshotWriter e o default — nao faz nada. Ate Fase 5 mergear,
@@ -35,3 +45,8 @@ type noopSnapshotWriter struct{}
 
 // MaybeUpdateSnapshot sempre retorna nil sem efeito.
 func (noopSnapshotWriter) MaybeUpdateSnapshot(_ context.Context, _ int64) error { return nil }
+
+// UpdateSnapshotForDay sempre retorna nil sem efeito.
+func (noopSnapshotWriter) UpdateSnapshotForDay(_ context.Context, _ int64, _ time.Time) error {
+	return nil
+}

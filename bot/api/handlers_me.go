@@ -201,9 +201,9 @@ func (s *Server) handleMeInsights(w http.ResponseWriter, r *http.Request) {
 }
 
 // triggerInsightsRegen regenera os insights de agenda em background (Sonnet),
-// no maximo um por (user, days) de cada vez. Persiste o resultado — inclusive
-// available=false (sem dado suficiente / provider ausente), pra nao re-disparar
-// a cada load. Em falha de IA, NAO persiste (proximo load tenta de novo).
+// no maximo um por (user, days) de cada vez. Usado pelo caminho de request
+// (nao bloqueia o load). A logica de geracao fica em regenerateInsights, que
+// tambem alimenta o refresh diario agendado.
 func (s *Server) triggerInsightsRegen(userID int64, days int) {
 	key := fmt.Sprintf("%d-%d", userID, days)
 	if _, busy := s.insightsInFlight.LoadOrStore(key, struct{}{}); busy {
@@ -213,51 +213,64 @@ func (s *Server) triggerInsightsRegen(userID int64, days int) {
 		defer s.insightsInFlight.Delete(key)
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
-
-		in, err := s.store.AgendaInsightsData(ctx, userID, days)
-		if err != nil {
-			log.Printf("insights regen: gather user=%d: %v", userID, err)
-			return
+		if err := s.regenerateInsights(ctx, userID, days); err != nil {
+			log.Printf("insights regen user=%d days=%d: %v", userID, days, err)
 		}
-		in.PeriodDays = days
-
-		resp := &InsightsResponse{
-			GeneratedAt: time.Now().UTC(),
-			PeriodDays:  days,
-			Insights:    []InsightItem{},
-		}
-		if s.reportClient == nil || !in.HasEnoughData() {
-			// Sem dado suficiente: persiste available=false (com summary
-			// explicativo) pra servir instantaneo e nao re-disparar.
-			resp.Available = false
-			resp.Summary = insightsUnavailableSummary(in)
-			if serr := s.store.SaveUserInsights(ctx, userID, days, resp); serr != nil {
-				log.Printf("insights regen: save (unavailable) user=%d: %v", userID, serr)
-			}
-			return
-		}
-
-		out, err := synthesis.AgendaInsights(ctx, s.reportClient, in)
-		if err != nil {
-			// Falha de IA: nao persiste (retry no proximo load). Audita.
-			s.store.Audit(ctx, userID, "me_insights_generated", "",
-				fmt.Sprintf("days=%d|status=error", days))
-			log.Printf("insights regen: AgendaInsights user=%d: %v", userID, err)
-			return
-		}
-		items := make([]InsightItem, 0, len(out.Insights))
-		for _, ins := range out.Insights {
-			items = append(items, InsightItem{Title: ins.Title, Detail: ins.Detail, Kind: ins.Kind})
-		}
-		resp.Available = true
-		resp.Summary = out.Summary
-		resp.Insights = items
-		if serr := s.store.SaveUserInsights(ctx, userID, days, resp); serr != nil {
-			log.Printf("insights regen: save user=%d: %v", userID, serr)
-		}
-		s.store.Audit(ctx, userID, "me_insights_generated", "",
-			fmt.Sprintf("days=%d|status=ok|insights=%d|persisted=true", days, len(items)))
 	}()
+}
+
+// RegenerateInsightsForUser regenera e persiste os insights de (user, days) de
+// forma SINCRONA. Exposto pro refresh diario agendado (scheduler), que injeta
+// isto via SetInsightsGeneratorForSchedule. O caminho de request usa
+// triggerInsightsRegen (assincrono + single-flight).
+func (s *Server) RegenerateInsightsForUser(ctx context.Context, userID int64, days int) error {
+	return s.regenerateInsights(ctx, userID, days)
+}
+
+// regenerateInsights e a pipeline de geracao (gather -> gate -> Sonnet ->
+// persist). Persiste tambem available=false (sem dado suficiente / provider
+// ausente) pra servir instantaneo e nao re-disparar. Em falha de IA, NAO
+// persiste (proximo load/refresh tenta de novo) e devolve o erro.
+func (s *Server) regenerateInsights(ctx context.Context, userID int64, days int) error {
+	in, err := s.store.AgendaInsightsData(ctx, userID, days)
+	if err != nil {
+		return fmt.Errorf("gather: %w", err)
+	}
+	in.PeriodDays = days
+
+	resp := &InsightsResponse{
+		GeneratedAt: time.Now().UTC(),
+		PeriodDays:  days,
+		Insights:    []InsightItem{},
+	}
+	if s.reportClient == nil || !in.HasEnoughData() {
+		resp.Available = false
+		resp.Summary = insightsUnavailableSummary(in)
+		if serr := s.store.SaveUserInsights(ctx, userID, days, resp); serr != nil {
+			return fmt.Errorf("save (unavailable): %w", serr)
+		}
+		return nil
+	}
+
+	out, err := synthesis.AgendaInsights(ctx, s.reportClient, in)
+	if err != nil {
+		s.store.Audit(ctx, userID, "me_insights_generated", "",
+			fmt.Sprintf("days=%d|status=error", days))
+		return fmt.Errorf("agenda insights: %w", err)
+	}
+	items := make([]InsightItem, 0, len(out.Insights))
+	for _, ins := range out.Insights {
+		items = append(items, InsightItem{Title: ins.Title, Detail: ins.Detail, Kind: ins.Kind})
+	}
+	resp.Available = true
+	resp.Summary = out.Summary
+	resp.Insights = items
+	if serr := s.store.SaveUserInsights(ctx, userID, days, resp); serr != nil {
+		return fmt.Errorf("save: %w", serr)
+	}
+	s.store.Audit(ctx, userID, "me_insights_generated", "",
+		fmt.Sprintf("days=%d|status=ok|insights=%d|persisted=true", days, len(items)))
+	return nil
 }
 
 // handleMeGoogleConnect — POST /api/v1/me/google/connect-url. Devolve a URL

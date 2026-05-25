@@ -47,6 +47,16 @@ interface ChartPoint {
   confidence: number | null;
 }
 
+// formatDayMonth converte "YYYY-MM-DD" em "dd/MM" tratando a string como data
+// de calendario (sem fuso). Evita `new Date(iso)`, que interpreta a data como
+// UTC e, ao formatar em BRT (UTC-3), recua um dia — e, pior, em entrada vazia
+// ou invalida produzia o epoch ("31/12"). Retorna "" se a string nao casar.
+function formatDayMonth(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? "");
+  if (!m) return "";
+  return `${m[3]}/${m[2]}`;
+}
+
 export function PsychTimeline({ snapshots }: PsychTimelineProps) {
   if (snapshots.length === 0) {
     return (
@@ -80,10 +90,7 @@ function SingleChart({
 }) {
   const data: ChartPoint[] = (snapshots ?? []).map((s) => ({
     date: s.date,
-    dateLabel: new Date(s.date).toLocaleDateString("pt-BR", {
-      day: "2-digit",
-      month: "2-digit",
-    }),
+    dateLabel: formatDayMonth(s.date),
     value: s[cfg.key],
     confidence: s.confidence,
   }));

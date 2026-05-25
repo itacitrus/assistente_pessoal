@@ -145,9 +145,7 @@ func (db *DB) GetSnapshotsForUserDateRange(userID int64, from, to time.Time) ([]
 		); err != nil {
 			return nil, fmt.Errorf("scan snapshot: %w", err)
 		}
-		if d, err := time.Parse("2006-01-02", dateStr); err == nil {
-			s.SnapshotDate = d
-		}
+		s.SnapshotDate = parseSnapshotDate(dateStr)
 		if hum.Valid {
 			s.HumorScore = int(hum.Int64)
 		}
@@ -178,6 +176,29 @@ func (db *DB) GetSnapshot(userID int64, date time.Time) (*synthesis.DailySnapsho
 		return nil, nil
 	}
 	return &snaps[0], nil
+}
+
+// parseSnapshotDate le a coluna snapshot_date de forma tolerante. O writer
+// atual grava "YYYY-MM-DD", mas linhas antigas podem ter ficado como timestamp
+// completo (ex: "2026-05-25T00:00:00Z" ou "2026-05-25 00:00:00+00:00") se foram
+// inseridas por versoes que bindavam time.Time direto. Sem isso, o time.Parse
+// estrito falhava silenciosamente e deixava SnapshotDate no valor-zero
+// (0001-01-01), que o frontend renderizava como "31/12" (epoch deslocado pra
+// BRT). Tenta date-only; depois o prefixo de 10 chars (YYYY-MM-DD) de qualquer
+// timestamp; por fim RFC3339. Retorna zero se nada casar.
+func parseSnapshotDate(s string) time.Time {
+	if d, err := time.Parse("2006-01-02", s); err == nil {
+		return d
+	}
+	if len(s) >= 10 {
+		if d, err := time.Parse("2006-01-02", s[:10]); err == nil {
+			return d
+		}
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+	}
+	return time.Time{}
 }
 
 // nullIfZero converte 0 em sql.NullInt64{Valid:false} (=> NULL no banco).
@@ -622,6 +643,25 @@ func (db *DB) UpdateEscalationStatus(escID int64, status string) error {
 	}
 	_, err := db.conn.Exec(`UPDATE escalations SET status = ? WHERE id = ?`, status, escID)
 	return err
+}
+
+// ReviewAlert marca um alerta (escalation) como revisado pelo responsavel:
+// status -> 'acknowledged' (some da lista "em aberto"), grava quem/quando e a
+// nota. O WHERE amarra user_id=dependentID E status aberto, entao a operacao e
+// idempotente E ja barra alerta de outro dependente (defesa em profundidade
+// alem do check de vinculo no handler). Retorna (false) se nada casou — alerta
+// inexistente, de outro dependente, ou ja revisado.
+func (db *DB) ReviewAlert(alertID, dependentID, reviewerID int64, note string) (bool, error) {
+	res, err := db.conn.Exec(`
+		UPDATE escalations
+		   SET status = 'acknowledged', reviewed_by = ?, reviewed_at = ?, review_note = ?
+		 WHERE id = ? AND COALESCE(user_id, 0) = ? AND status IN ('pending','sent')`,
+		reviewerID, time.Now().UTC(), note, alertID, dependentID)
+	if err != nil {
+		return false, fmt.Errorf("review alert: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 // =========================================================================

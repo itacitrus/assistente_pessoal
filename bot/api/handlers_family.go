@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -420,6 +421,60 @@ func (s *Server) handleDependentTimeline(w http.ResponseWriter, r *http.Request,
 	s.store.Audit(r.Context(), user.ID, "timeline_consulted", "",
 		fmt.Sprintf("dependent_id=%d|days=%d|points=%d", depID, days, len(points)))
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// reviewAlertNoteMaxLen limita a nota de revisao — eh um lembrete curto do
+// responsavel ("liguei, esta bem"), nao prontuario.
+const reviewAlertNoteMaxLen = 500
+
+// handleReviewDependentAlert — POST /family/dependents/{id}/alerts/{alertId}/review.
+// Marca o sinal como revisado pelo responsavel (status->acknowledged, some da
+// lista "em aberto") e guarda uma nota curta opcional. Idempotente: revisar de
+// novo (ou alerta inexistente/de outro dependente) responde 404.
+func (s *Server) handleReviewDependentAlert(w http.ResponseWriter, r *http.Request, depID, alertID int64) {
+	user := userFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Não autenticado.")
+		return
+	}
+	ok, err := s.store.IsGuardianOf(r.Context(), user.ID, depID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao verificar autorizacao.")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusForbidden, CodeForbidden, "Você não é responsável por este dependente.")
+		return
+	}
+
+	// Body opcional: { "note": "..." }. Corpo vazio = revisar sem nota.
+	var req struct {
+		Note string `json:"note"`
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, CodeValidation, "JSON inválido.")
+			return
+		}
+	}
+	note := strings.TrimSpace(req.Note)
+	if len(note) > reviewAlertNoteMaxLen {
+		writeError(w, http.StatusBadRequest, CodeValidation, "Nota muito longa.")
+		return
+	}
+
+	reviewed, err := s.store.ReviewDependentAlert(r.Context(), user.ID, depID, alertID, note)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao revisar alerta.")
+		return
+	}
+	if !reviewed {
+		writeError(w, http.StatusNotFound, CodeNotFound, "Alerta não encontrado ou já revisado.")
+		return
+	}
+	s.store.Audit(r.Context(), user.ID, "alert_reviewed", "",
+		fmt.Sprintf("dependent_id=%d|alert_id=%d|has_note=%t", depID, alertID, note != ""))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // =========================================================================

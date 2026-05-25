@@ -570,6 +570,14 @@ func (db *DB) migrate() error {
 		// lembra mas NAO cobra nem escala; se nao confirmar, a dose vira 'unknown'
 		// (nem tomada nem perdida — "nao sei") apos a janela de tolerancia.
 		`ALTER TABLE medications ADD COLUMN require_confirmation INTEGER NOT NULL DEFAULT 1`,
+
+		// Fase 6 (idosos/web): tratamento de alertas pelo responsavel. Ao marcar
+		// um sinal como revisado, gravamos quem revisou, quando e uma nota curta.
+		// status passa a 'acknowledged' (some da lista "em aberto"). Nullable —
+		// alertas nao revisados ficam com estes campos vazios.
+		`ALTER TABLE escalations ADD COLUMN reviewed_by INTEGER REFERENCES users(id)`,
+		`ALTER TABLE escalations ADD COLUMN reviewed_at DATETIME`,
+		`ALTER TABLE escalations ADD COLUMN review_note TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range additive {
 		if _, err := db.conn.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column") {

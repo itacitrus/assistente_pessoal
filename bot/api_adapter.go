@@ -513,6 +513,13 @@ func (a *apiAdapter) GetDependentConsent(ctx context.Context, guardianID, depend
 	return a.db.GetDependentConsent(guardianID, dependentID)
 }
 
+// ReviewDependentAlert marca o alerta como revisado. A autorizacao
+// (IsGuardianOf -> 403) eh feita no handler; aqui o ReviewAlert do db amarra o
+// UPDATE a user_id=dependentID como defesa em profundidade.
+func (a *apiAdapter) ReviewDependentAlert(ctx context.Context, guardianID, dependentID, alertID int64, note string) (bool, error) {
+	return a.db.ReviewAlert(alertID, dependentID, guardianID, note)
+}
+
 // BuildDependentStatus delega pra mesma BuildDependentStatus que o chat usa,
 // depois converte pro shape api.StatusResponse.
 func (a *apiAdapter) BuildDependentStatus(ctx context.Context, guardianID, dependentID int64, days int) (*api.StatusResponse, error) {

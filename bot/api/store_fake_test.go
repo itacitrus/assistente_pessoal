@@ -35,6 +35,8 @@ type fakeStore struct {
 
 	snapshots map[int64][]SnapshotPoint // userID -> sorted points
 
+	reviewedAlerts map[int64]string // alertID -> nota de revisao
+
 	// Audit log buffer.
 	audits []fakeAudit
 
@@ -575,6 +577,16 @@ func (s *fakeStore) GetTimeline(_ context.Context, dependentID int64, days int) 
 	out := make([]SnapshotPoint, len(pts))
 	copy(out, pts)
 	return out, nil
+}
+
+func (s *fakeStore) ReviewDependentAlert(_ context.Context, guardianID, dependentID, alertID int64, note string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reviewedAlerts == nil {
+		s.reviewedAlerts = map[int64]string{}
+	}
+	s.reviewedAlerts[alertID] = note
+	return true, nil
 }
 
 func (s *fakeStore) UpcomingEvents(_ context.Context, userID int64) ([]AgendaEvent, error) {

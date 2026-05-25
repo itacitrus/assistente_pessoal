@@ -91,6 +91,10 @@ func (s *Scheduler) Start() {
 	// Refresh diario da sintese longitudinal (Sonnet) — rede de seguranca pra
 	// quem ninguem abriu no painel. Meia-noite local; cooldown interno 23h.
 	s.cron.AddFunc("0 0 * * *", s.runDailySynthesisRefresh)
+	// Refresh diario dos insights de agenda do titular (Sonnet) — mesma rede
+	// de seguranca. 00:30 local (escalonado da sintese p/ nao concentrar IA);
+	// cooldown interno 23h.
+	s.cron.AddFunc("30 0 * * *", s.runDailyInsightsRefresh)
 
 	s.cron.Start()
 	log.Println("Scheduler started")

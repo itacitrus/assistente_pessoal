@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +109,112 @@ func TestGetSnapshot_NotFound(t *testing.T) {
 	}
 	if got != nil {
 		t.Errorf("expected nil, got %+v", got)
+	}
+}
+
+func TestReviewAlert_AcknowledgesScopedAndIdempotent(t *testing.T) {
+	db := setupTestDB(t)
+	elder := makeElder(t, db, "Antonia", "111")
+	guardian := makeGuardian(t, db, "Caio", "222")
+	other := makeElder(t, db, "Bento", "333")
+	db.LinkFamily(guardian.ID, elder.ID, "filho_de")
+
+	now := time.Now().UTC()
+	esc, err := db.RecordSevereSignalEscalation(
+		elder.ID, "severe_signal_safety_net", "warn", "x", guardian.ID, "whatsapp", now)
+	if err != nil {
+		t.Fatalf("record escalation: %v", err)
+	}
+	alertID := esc.ID
+
+	open, _ := db.GetOpenAlertsForUser(elder.ID)
+	if len(open) != 1 {
+		t.Fatalf("expected 1 open alert, got %d", len(open))
+	}
+
+	// Dependente errado: nao casa (escopo).
+	if ok, _ := db.ReviewAlert(alertID, other.ID, guardian.ID, "nope"); ok {
+		t.Error("review with wrong dependent should not match")
+	}
+
+	// Revisa: marca acknowledged, some da lista.
+	ok, err := db.ReviewAlert(alertID, elder.ID, guardian.ID, "liguei, está bem")
+	if err != nil || !ok {
+		t.Fatalf("review: ok=%v err=%v", ok, err)
+	}
+	open, _ = db.GetOpenAlertsForUser(elder.ID)
+	if len(open) != 0 {
+		t.Errorf("expected 0 open alerts after review, got %d", len(open))
+	}
+
+	// Idempotente: revisar de novo nao casa (ja nao esta aberto).
+	if ok, _ := db.ReviewAlert(alertID, elder.ID, guardian.ID, "again"); ok {
+		t.Error("second review should not match (already acknowledged)")
+	}
+
+	// Persistiu reviewer + nota.
+	var by sql.NullInt64
+	var note string
+	if err := db.conn.QueryRow(
+		`SELECT reviewed_by, review_note FROM escalations WHERE id = ?`, alertID,
+	).Scan(&by, &note); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if !by.Valid || by.Int64 != guardian.ID {
+		t.Errorf("reviewed_by = %v, want %d", by, guardian.ID)
+	}
+	if note != "liguei, está bem" {
+		t.Errorf("review_note = %q", note)
+	}
+}
+
+func TestParseSnapshotDate_TolerantFormats(t *testing.T) {
+	want := time.Date(2026, 5, 25, 0, 0, 0, 0, time.UTC)
+	cases := map[string]bool{ // input -> deve casar com want
+		"2026-05-25":                 true, // formato atual (writer)
+		"2026-05-25T00:00:00Z":       true, // timestamp RFC3339 (linha antiga)
+		"2026-05-25 00:00:00+00:00":  true, // timestamp com espaco (driver sqlite)
+		"2026-05-25T13:45:00-03:00":  true, // com hora/fuso — so a data importa
+		"":                           false,
+		"lixo":                       false,
+	}
+	for in, shouldMatch := range cases {
+		got := parseSnapshotDate(in)
+		if shouldMatch {
+			if !got.Equal(want) {
+				t.Errorf("parseSnapshotDate(%q) = %s, want %s", in, got.Format(time.RFC3339), want.Format(time.RFC3339))
+			}
+		} else if !got.IsZero() {
+			t.Errorf("parseSnapshotDate(%q) = %s, want zero", in, got.Format(time.RFC3339))
+		}
+	}
+}
+
+// TestGetSnapshotsForUserDateRange_RecoversTimestampDate garante que uma linha
+// com snapshot_date gravado como timestamp completo (legado) ainda volta com a
+// data correta — nao mais zerada (que virava "31/12" no painel).
+func TestGetSnapshotsForUserDateRange_RecoversTimestampDate(t *testing.T) {
+	db := setupTestDB(t)
+	elder := makeElder(t, db, "Antonia", "111")
+	// Insere direto com snapshot_date em formato timestamp, simulando linha antiga.
+	_, err := db.conn.Exec(`
+		INSERT INTO psych_state_daily (user_id, snapshot_date, humor_score, confidence)
+		VALUES (?, ?, ?, ?)`, elder.ID, "2026-05-25T00:00:00Z", 4, 3)
+	if err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+	from := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC)
+	snaps, err := db.GetSnapshotsForUserDateRange(elder.ID, from, to)
+	if err != nil {
+		t.Fatalf("GetSnapshotsForUserDateRange: %v", err)
+	}
+	if len(snaps) != 1 {
+		t.Fatalf("expected 1 snapshot, got %d", len(snaps))
+	}
+	want := time.Date(2026, 5, 25, 0, 0, 0, 0, time.UTC)
+	if !snaps[0].SnapshotDate.Equal(want) {
+		t.Errorf("SnapshotDate = %s, want %s", snaps[0].SnapshotDate.Format("2006-01-02"), want.Format("2006-01-02"))
 	}
 }
 

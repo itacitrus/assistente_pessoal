@@ -45,12 +45,21 @@ type phase5State struct {
 	// Injetado por main.go (o scheduler nao tem o report client). Se nil, o
 	// refresh diario skipa.
 	synthesisGenFn SynthesisGenerator
+	// insightsGenFn regenera+persiste os insights de agenda (Sonnet) do
+	// titular. Injetado por main.go (delega pro api.Server, que tem report
+	// client + store). Se nil, o refresh diario de insights skipa.
+	insightsGenFn InsightsGenerator
 }
 
 // SynthesisGenerator regenera e persiste a sintese longitudinal de um
 // dependente. Abstrai RegenerateDependentSynthesis pra o scheduler nao
 // precisar carregar o report client.
 type SynthesisGenerator func(ctx context.Context, dep *User, days int) error
+
+// InsightsGenerator regenera e persiste os insights de agenda de um titular
+// (user, days). Abstrai api.Server.RegenerateInsightsForUser pra o scheduler
+// nao precisar conhecer o package api.
+type InsightsGenerator func(ctx context.Context, userID int64, days int) error
 
 // p5State eh a instancia singleton. Uso intencional de package var pra
 // evitar adicionar campos em Scheduler — o Scheduler ja eh grande, e a
@@ -71,6 +80,14 @@ func SetSynthesisGeneratorForSchedule(g SynthesisGenerator) {
 	p5State.mu.Lock()
 	defer p5State.mu.Unlock()
 	p5State.synthesisGenFn = g
+}
+
+// SetInsightsGeneratorForSchedule injeta o gerador de insights de agenda pro
+// refresh diario do titular. Chamado por main.go apos construir o api.Server.
+func SetInsightsGeneratorForSchedule(g InsightsGenerator) {
+	p5State.mu.Lock()
+	defer p5State.mu.Unlock()
+	p5State.insightsGenFn = g
 }
 
 // shouldRunPhase5 retorna true se o cooldown da chave passou. Cooldown
@@ -264,12 +281,23 @@ func humanizeIdleHours(h int) string {
 // runDailyPsychSnapshotCatchup
 // =========================================================================
 //
-// Roda a cada hora. Pra cada idoso ativo com mensagens "ontem em local TZ"
-// mas sem linha em psych_state_daily, chama o snapshot writer (via SnapshotWriter
-// interface — mesma impl que o handler usa).
+// Roda a cada hora. Varre os ultimos `psychCatchupWindowDays` dias e, pra cada
+// idoso ativo naquele dia mas sem linha em psych_state_daily, chama o snapshot
+// writer (via SnapshotWriter interface — mesma impl que o handler usa) pra
+// preencher o dia FALTANTE.
 //
-// Idempotencia: writer faz UPSERT no banco. Se rodou ha pouco e ja existe
-// snapshot com confidence>=2, pulamos pra economizar Haiku.
+// Por que uma janela e nao so "ontem": o caminho de tempo real (handler) so
+// gera o snapshot de HOJE, e melhor-esforco — se o bot reiniciou, deu timeout
+// na goroutine, ou o idoso so voltou a conversar dias depois, aquele dia fica
+// sem snapshot. A janela recupera esses buracos passados; sem ela, um dia
+// perdido nunca mais era escrito (o catchup antigo chamava MaybeUpdateSnapshot,
+// que so opera "hoje", entao nunca conseguia backfillar).
+//
+// Custo controlado: catchupSnapshotForElder pula dias que ja tem snapshot com
+// confidence>=2 e dias sem mensagem local — Haiku so e chamado em buracos reais.
+//
+// Idempotencia: writer faz UPSERT por (user_id, snapshot_date).
+const psychCatchupWindowDays = 7
 
 func (s *Scheduler) runDailyPsychSnapshotCatchup() {
 	if !shouldRunPhase5("psych_snapshot_catchup", 60*time.Minute) {
@@ -285,14 +313,17 @@ func (s *Scheduler) runDailyPsychSnapshotCatchup() {
 		return
 	}
 
-	yesterday := time.Now().Add(-24 * time.Hour)
-	elders, err := s.db.GetUsersWithMessagesOnDay(yesterday)
-	if err != nil {
-		log.Printf("Scheduler[psych_catchup]: list elders with msgs: %v", err)
-		return
-	}
-	for i := range elders {
-		s.catchupSnapshotForElder(writer, &elders[i], yesterday)
+	now := s.nowFunc()
+	for d := 1; d <= psychCatchupWindowDays; d++ {
+		day := now.Add(-time.Duration(d) * 24 * time.Hour)
+		elders, err := s.db.GetUsersWithMessagesOnDay(day)
+		if err != nil {
+			log.Printf("Scheduler[psych_catchup] dia -%d: list elders with msgs: %v", d, err)
+			continue
+		}
+		for i := range elders {
+			s.catchupSnapshotForElder(writer, &elders[i], day)
+		}
 	}
 }
 
@@ -349,6 +380,41 @@ func (s *Scheduler) refreshSynthesisForElder(gen SynthesisGenerator, elder *User
 	}
 }
 
+// =========================================================================
+// runDailyInsightsRefresh — rede de seguranca diaria dos insights do titular
+// =========================================================================
+
+// runDailyInsightsRefresh regenera os insights de agenda (Sonnet) uma vez por
+// dia para cada (user, days) JA persistido. Mesma filosofia do refresh de
+// sintese: a geracao foi tirada do request (deixava o login lento), o frescor
+// vem do regen no read-stale, e ESTE job e a rede de seguranca pra quem nao
+// abre o painel todo dia. So regenera o que ja existe — quem nunca abriu gera
+// no primeiro acesso. Cooldown 23h evita rodar duas vezes apos restart.
+func (s *Scheduler) runDailyInsightsRefresh() {
+	if !shouldRunPhase5("insights_daily_refresh", 23*time.Hour) {
+		return
+	}
+	p5State.mu.Lock()
+	gen := p5State.insightsGenFn
+	p5State.mu.Unlock()
+	if gen == nil {
+		log.Printf("Scheduler[insights_refresh]: generator nao injetado — skip")
+		return
+	}
+	targets, err := s.db.ListAgendaInsightsTargets()
+	if err != nil {
+		log.Printf("Scheduler[insights_refresh]: list targets: %v", err)
+		return
+	}
+	for _, t := range targets {
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		if err := gen(ctx, t.UserID, t.Days); err != nil {
+			log.Printf("Scheduler[insights_refresh] user=%d days=%d: %v", t.UserID, t.Days, err)
+		}
+		cancel()
+	}
+}
+
 // catchupSnapshotForElder roda 1 idoso. Le snapshot existente; se ja tem
 // confidence>=2, skip. Caso contrario, chama writer (que faz UPSERT).
 //
@@ -378,11 +444,25 @@ func (s *Scheduler) catchupSnapshotForElder(writer SnapshotWriter, elder *User, 
 		return
 	}
 
+	// GetUsersWithMessagesOnDay usa janela com folga (+/-14h) pra tolerar fuso,
+	// entao um idoso pode aparecer num dia adjacente sem ter mensagem NAQUELE
+	// dia local. Confirma aqui antes de gastar o writer: reusa o mesmo filtro
+	// de dia-local que o writer aplica, garantindo que so backfillamos dias em
+	// que realmente houve conversa.
+	msgs, err := s.db.GetMessagesSinceForUser(elder.ID, dayDate)
+	if err != nil {
+		log.Printf("Scheduler[psych_catchup] %s: GetMessagesSinceForUser: %v", elder.Name, err)
+		return
+	}
+	if len(filterMessagesInLocalDay(msgs, dayDate, tz)) == 0 {
+		return // sem conversa nesse dia local — nada a backfillar
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	if err := writer.MaybeUpdateSnapshot(ctx, elder.ID); err != nil {
+	if err := writer.UpdateSnapshotForDay(ctx, elder.ID, dayDate); err != nil {
 		// Audit ja foi feito pelo writer; aqui so log nivel scheduler.
-		log.Printf("Scheduler[psych_catchup] %s: MaybeUpdateSnapshot: %v", elder.Name, err)
+		log.Printf("Scheduler[psych_catchup] %s: UpdateSnapshotForDay: %v", elder.Name, err)
 		return
 	}
 }

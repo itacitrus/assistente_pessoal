@@ -92,7 +92,7 @@ export default async function DependentDetailPage({ params }: PageProps) {
       </div>
       <PendingAutoRefresh pending={status.synthesis_available === false} />
 
-      <AlertList alerts={status.alerts_open} />
+      <AlertList alerts={status.alerts_open} dependentId={Number(id)} />
 
       <Link
         href={`/dashboard/family/${id}/medicamentos`}

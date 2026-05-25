@@ -71,8 +71,32 @@ func (w *snapshotWriterImpl) withNow(f func() time.Time) *snapshotWriterImpl {
 	return w
 }
 
-// MaybeUpdateSnapshot eh a entrypoint da interface. Ver doc do tipo.
+// MaybeUpdateSnapshot eh a entrypoint da interface para o caminho de tempo
+// real (handler pos-conversa): gera/atualiza o snapshot de HOJE. Delega pra
+// updateSnapshotForDay com o relogio atual.
 func (w *snapshotWriterImpl) MaybeUpdateSnapshot(ctx context.Context, userID int64) error {
+	if w == nil {
+		return errors.New("snapshot writer not configured")
+	}
+	return w.updateSnapshotForDay(ctx, userID, w.nowFunc())
+}
+
+// UpdateSnapshotForDay roda a pipeline para um dia-alvo explicito. `when` eh
+// qualquer instante dentro do dia desejado; resolvemos o fuso do user e
+// normalizamos pra meia-noite local. Usado pelo catchup pra backfillar dias
+// passados que ficaram sem snapshot (bot reiniciando, crash, erro/timeout da
+// goroutine de tempo real). Ver doc da interface SnapshotWriter.
+func (w *snapshotWriterImpl) UpdateSnapshotForDay(ctx context.Context, userID int64, when time.Time) error {
+	if w == nil {
+		return errors.New("snapshot writer not configured")
+	}
+	return w.updateSnapshotForDay(ctx, userID, when)
+}
+
+// updateSnapshotForDay eh a pipeline completa, parametrizada pelo dia-alvo
+// `when`. Toda a logica (resolucao de fuso, carga de mensagens/medicacao/memos,
+// chamada do Haiku, UPSERT, safety net) opera sobre o dia LOCAL de `when`.
+func (w *snapshotWriterImpl) updateSnapshotForDay(ctx context.Context, userID int64, when time.Time) error {
 	if w == nil || w.db == nil {
 		return errors.New("snapshot writer not configured")
 	}
@@ -90,16 +114,15 @@ func (w *snapshotWriterImpl) MaybeUpdateSnapshot(ctx context.Context, userID int
 		return nil
 	}
 
-	// Resolve fuso do user. Fase 5 nao tem coluna timezone em users; usamos
-	// GetEventTimezone que considera viagem ativa (default BRT).
-	tz := w.db.GetEventTimezone(user.ID, w.nowFunc())
+	// Resolve fuso do user no dia-alvo. Fase 5 nao tem coluna timezone em
+	// users; usamos GetEventTimezone que considera viagem ativa (default BRT).
+	tz := w.db.GetEventTimezone(user.ID, when)
 	if tz == nil {
 		tz = BRT()
 	}
 
-	now := w.nowFunc()
-	localNow := now.In(tz)
-	dayDate := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, tz)
+	local := when.In(tz)
+	dayDate := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, tz)
 
 	// Skip se consent revoked em todos os family_links — sem responsavel
 	// pra ler, nao adianta gerar snapshot. Mas se ha pelo menos 1 com

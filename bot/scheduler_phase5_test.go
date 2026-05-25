@@ -14,11 +14,19 @@ import (
 type stubSnapshotWriter struct {
 	calls   int
 	lastUID int64
+	lastDay time.Time
 }
 
 func (s *stubSnapshotWriter) MaybeUpdateSnapshot(_ context.Context, userID int64) error {
 	s.calls++
 	s.lastUID = userID
+	return nil
+}
+
+func (s *stubSnapshotWriter) UpdateSnapshotForDay(_ context.Context, userID int64, day time.Time) error {
+	s.calls++
+	s.lastUID = userID
+	s.lastDay = day
 	return nil
 }
 
@@ -198,6 +206,42 @@ func TestRunDailyPsychSnapshotCatchup_FillsMissingDays(t *testing.T) {
 	}
 	if stub.lastUID != elder.ID {
 		t.Errorf("expected uid=%d, got %d", elder.ID, stub.lastUID)
+	}
+}
+
+func TestRunDailyPsychSnapshotCatchup_BackfillsOlderGap(t *testing.T) {
+	resetPhase5State()
+	db := setupTestDB(t)
+	elder := makeElder(t, db, "Antonia", "111")
+	// Mensagem ha 3 dias, sem snapshot — buraco que o caminho de tempo real
+	// nao cobre e que o catchup antigo (so "hoje") nunca recuperava.
+	threeDaysAgo := time.Now().UTC().Add(-3 * 24 * time.Hour)
+	db.conn.Exec(
+		`INSERT INTO conversation_history (user_id, role, content, created_at)
+		 VALUES (?, 'user', 'oi', ?)`, elder.ID, threeDaysAgo)
+
+	stub := &stubSnapshotWriter{}
+	SetSnapshotWriterForCatchup(stub)
+	defer SetSnapshotWriterForCatchup(nil)
+
+	s := makeSchedulerForTest(db, nil)
+	s.runDailyPsychSnapshotCatchup()
+
+	if stub.calls != 1 {
+		t.Fatalf("expected 1 call (backfill 3-day gap), got %d", stub.calls)
+	}
+	if stub.lastUID != elder.ID {
+		t.Errorf("expected uid=%d, got %d", elder.ID, stub.lastUID)
+	}
+	// Confirma que backfillamos o DIA CERTO (3 dias atras em local tz), nao hoje.
+	tz := db.GetEventTimezone(elder.ID, threeDaysAgo)
+	if tz == nil {
+		tz = BRT()
+	}
+	local := threeDaysAgo.In(tz)
+	want := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, tz)
+	if !stub.lastDay.Equal(want) {
+		t.Errorf("expected backfill day=%s, got %s", want.Format("2006-01-02"), stub.lastDay.Format("2006-01-02"))
 	}
 }
 

@@ -74,6 +74,11 @@ type Store interface {
 	// Status & timeline ---------------------------------------------------
 	BuildDependentStatus(ctx context.Context, guardianID, dependentID int64, days int) (*StatusResponse, error)
 	GetTimeline(ctx context.Context, dependentID int64, days int) ([]SnapshotPoint, error)
+	// ReviewDependentAlert marca um alerta como revisado pelo responsavel
+	// (status->acknowledged, grava reviewer/nota). Valida IsGuardianOf e que o
+	// alerta pertence ao dependente. Retorna (false) se nada casou (alerta
+	// inexistente, de outro dependente, ou ja revisado).
+	ReviewDependentAlert(ctx context.Context, guardianID, dependentID, alertID int64, note string) (bool, error)
 
 	// Medicacao do dependente ---------------------------------------------
 	// Todas validam IsGuardianOf(guardianID, dependentID) internamente e
