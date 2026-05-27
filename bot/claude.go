@@ -32,8 +32,8 @@ type IntentData struct {
 // MedicationIntent carrega o payload de pendings de medicacao.
 //
 // Dois fluxos:
-//   1. Cadastro pendente:  Reminder=false. Campos Name/Dose/.../ScheduleRRULE/StartDate.
-//   2. Lembrete da hora:   Reminder=true. Campos MedicationID/ScheduledAt.
+//  1. Cadastro pendente:  Reminder=false. Campos Name/Dose/.../ScheduleRRULE/StartDate.
+//  2. Lembrete da hora:   Reminder=true. Campos MedicationID/ScheduledAt.
 type MedicationIntent struct {
 	// Para "criar cadastro de medicacao" pendente de confirmacao:
 	Name             string `json:"name,omitempty"`

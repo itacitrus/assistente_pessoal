@@ -482,4 +482,3 @@ func allGuardiansConsentRevoked(db *DB, guardians []FamilyLink) bool {
 	}
 	return true
 }
-

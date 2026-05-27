@@ -20,14 +20,14 @@ func TestCreateAndGetUser(t *testing.T) {
 	db := setupTestDB(t)
 
 	user := &User{
-		PhoneNumber:     "5511999999999",
-		Name:            "Waldyr",
-		GoogleCalendarID: "waldyr@gmail.com",
-		GoogleCredentials: "encrypted-token",
-		DailySummaryTime: "07:00",
-		WeeklySummaryDay: "sunday",
-		WeeklySummaryTime: "20:00",
-		ReminderBefore:   "1h",
+		PhoneNumber:        "5511999999999",
+		Name:               "Waldyr",
+		GoogleCalendarID:   "waldyr@gmail.com",
+		GoogleCredentials:  "encrypted-token",
+		DailySummaryTime:   "07:00",
+		WeeklySummaryDay:   "sunday",
+		WeeklySummaryTime:  "20:00",
+		ReminderBefore:     "1h",
 		AutoConfirmTimeout: "2h",
 	}
 

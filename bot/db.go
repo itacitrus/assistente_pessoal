@@ -47,11 +47,11 @@ type User struct {
 }
 
 type PendingConfirmation struct {
-	ID        int64
-	UserID    int64
-	EventData string
-	Status    string
-	CreatedAt time.Time
+	ID          int64
+	UserID      int64
+	EventData   string
+	Status      string
+	CreatedAt   time.Time
 	PhoneNumber string
 	UserName    string
 
@@ -199,6 +199,28 @@ func (db *DB) migrate() error {
 		content    TEXT NOT NULL,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
+
+	-- Leads: numeros desconhecidos em conversa de aquisicao (agente de vendas).
+	-- Vive fora de users/conversation_history porque um lead ainda nao tem conta
+	-- (conversation_history.user_id eh NOT NULL). Ao converter, criamos o user e
+	-- marcamos status='converted' (mantemos a row pra historico/analytics).
+	-- name_guess guarda o PushName do WhatsApp pra confirmar o nome na conversao.
+	CREATE TABLE IF NOT EXISTS leads (
+		phone      TEXT PRIMARY KEY,
+		name_guess TEXT NOT NULL DEFAULT '',
+		status     TEXT NOT NULL DEFAULT 'chatting',
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE TABLE IF NOT EXISTS lead_messages (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		phone      TEXT NOT NULL REFERENCES leads(phone),
+		role       TEXT NOT NULL,
+		content    TEXT NOT NULL,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_lead_messages_phone
+		ON lead_messages(phone, created_at);
 
 	CREATE TABLE IF NOT EXISTS user_travel_periods (
 		id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1249,16 +1271,16 @@ func onlyDigitsBR(s string) string {
 
 // PermissionRequest represents a pending cross-user calendar access request.
 type PermissionRequest struct {
-	ID            int64
-	RequesterID   int64
-	TargetID      int64
-	EventData     string
-	Status        string
-	CreatedAt     time.Time
+	ID             int64
+	RequesterID    int64
+	TargetID       int64
+	EventData      string
+	Status         string
+	CreatedAt      time.Time
 	RequesterName  string
 	RequesterPhone string
-	TargetName    string
-	TargetPhone   string
+	TargetName     string
+	TargetPhone    string
 }
 
 func (db *DB) CreatePermissionRequest(req *PermissionRequest) error {

@@ -35,8 +35,8 @@ type Agent struct {
 
 	// Provider abstraction (Fase 4). Operacional = Anthropic Sonnet;
 	// companion = DeepSeek (default) ou Anthropic se nao configurado.
-	chat          llm.ChatProvider // operacional (default Anthropic Sonnet)
-	companionChat llm.ChatProvider // idoso (default DeepSeek; fallback chat)
+	chat          llm.ChatProvider     // operacional (default Anthropic Sonnet)
+	companionChat llm.ChatProvider     // idoso (default DeepSeek; fallback chat)
 	analysis      llm.AnalysisProvider // snapshot writer (Haiku)
 	report        llm.ReportProvider   // sintese pro responsavel (Sonnet)
 	vision        llm.VisionProvider   // descricao de imagem (Haiku)
@@ -122,43 +122,6 @@ func (a *Agent) pickChat(user *User) llm.ChatProvider {
 	return a.chat
 }
 
-// RunForUnknown handles messages from non-registered users.
-// No tools, no history — just a polite, brief response like a human messenger would give.
-func (a *Agent) RunForUnknown(ctx context.Context, senderPhone, message string) (string, error) {
-	prompt := `Você é Zello, assistente pessoal. Alguém te mandou uma mensagem.
-
-Você age como um mensageiro educado:
-- Se a pessoa agradeceu ou confirmou presença: responda brevemente ("Obrigado! Qualquer dúvida, fale com quem te convidou.")
-- Se a pessoa tem dúvida sobre uma reunião/convite que você entregou: responda com base no que sabe.
-- Se a pessoa pedir algo (marcar reunião, consultar agenda, etc): diga educadamente que só usuários cadastrados podem solicitar isso.
-- Se já se apresentou antes na conversa, NÃO se apresente de novo.
-- NUNCA inicie conversas longas. Seja breve e educado — 1 frase no máximo.
-- Português informal.`
-
-	userMsg := message
-	messages := []anthropic.Message{
-		{Role: anthropic.RoleUser, Content: []anthropic.MessageContent{{Type: "text", Text: &userMsg}}},
-	}
-
-	temp := float32(0.3)
-	resp, err := a.client.CreateMessages(ctx, anthropic.MessagesRequest{
-		Model:       anthropic.ModelClaudeHaiku4Dot5,
-		MaxTokens:   256,
-		Temperature: &temp,
-		System:      prompt,
-		Messages:    messages,
-	})
-	if err != nil {
-		return "", fmt.Errorf("claude API: %w", err)
-	}
-
-	if len(resp.Content) == 0 {
-		return "", nil
-	}
-
-	return resp.Content[0].GetText(), nil
-}
-
 // Run processes a user message using Sonnet with tool use.
 func (a *Agent) Run(ctx context.Context, user *User, message string, images []ImageAttachment) (string, error) {
 	history, _ := a.db.GetConversationHistory(user.ID, 30)
@@ -204,6 +167,7 @@ func (a *Agent) Run(ctx context.Context, user *User, message string, images []Im
 	}
 	systemParts = a.appendMedicationPolicyPart(systemParts, user)
 	systemParts = a.appendCompanionPharmaPart(systemParts, user, message)
+	systemParts = a.appendCompanionDayContextPart(systemParts, user, time.Now())
 
 	// Idoso roteia para o companion provider (DeepSeek em prod). O loop usa a
 	// abstracao llm.ChatProvider, reaproveitando os mesmos toolHandlers. Imagens
@@ -559,10 +523,15 @@ Regras gerais:
 - Antes de criar evento, confira se já foi criado. Não duplique.
 - Entenda áudios e contatos compartilhados (transcritos automaticamente).
 
+PAPO, DESABAFO E FOFOCA (engajamento social):
+- Você não é só um executor de tarefas — é um assistente com quem dá gosto de conversar. Quando a pessoa SAI da tarefa (manda uma fofoca, comemora algo, desabafa, brinca, comenta a vida), LARGUE a concisão de tarefa e ENTRE no papo: reaja ao conteúdo, demonstre curiosidade genuína, jogue junto. Fofoca boa pede "não acredito, conta tudo!", "e aí, no que deu?", "essa eu não esperava, hein". Comemoração pede vibrar junto. Desabafo pede acolhimento antes de solução.
+- NUNCA "carimbe" uma fala social com resposta de protocolo ("anotado", "ok", "registrado", "vou anotar pra lembrar") — isso mata o papo e soa robótico. Palavra de registro ("anotei", "anotado", "registrado") é SÓ pra quando você de fato chamou uma ferramenta e ela confirmou.
+- Saiba a hora: pedido de tarefa (marcar, consultar, convidar, cuidar de dependente) → eficiente e direto. Papo/desabafo/fofoca/comemoração → caloroso, presente, sem pressa de encerrar. Leia o tom da pessoa e espelhe.
+
 Estilo:
-- Português, informal, profissional. MUITO conciso — 1-2 frases. Direto ao ponto.
+- Português, informal, profissional, com calor humano. Em TAREFA: conciso e direto (1-2 frases). Em PAPO/desabafo/fofoca: relaxe a concisão e engaje de verdade — aí frases curtas demais soam frias.
 - Formatação WhatsApp: *negrito*, _itálico_. NÃO use markdown (**, ##).
-- Sem emojis excessivos.`, userName)
+- Emojis com moderação, quando combinarem com o tom.`, userName)
 }
 
 // buildSystemPromptDynamic returns the per-call portion: current date/time

@@ -9,11 +9,11 @@ import (
 // snapshots psicologicos diarios (Haiku 4.5). A Fase 4 deixa a interface
 // no pacote main com uma implementacao no-op default, pra que:
 //
-//   1. Agent.snapshotWriter NUNCA seja nil (evita panic em handler).
-//   2. handler.flushBuffer possa chamar MaybeUpdateSnapshot incondicionalmente
-//      em goroutine, sem se preocupar se Fase 5 ja foi mergeada.
-//   3. Testes da Fase 4 possam validar o GANCHO sem depender de Haiku
-//      ou da tabela psych_state_daily (que pertence a Fase 5).
+//  1. Agent.snapshotWriter NUNCA seja nil (evita panic em handler).
+//  2. handler.flushBuffer possa chamar MaybeUpdateSnapshot incondicionalmente
+//     em goroutine, sem se preocupar se Fase 5 ja foi mergeada.
+//  3. Testes da Fase 4 possam validar o GANCHO sem depender de Haiku
+//     ou da tabela psych_state_daily (que pertence a Fase 5).
 //
 // Heuristica de "conversa significativa" vive em handler.go. SnapshotWriter
 // recebe userID — implementacao concreta resolve user e contexto. Erros

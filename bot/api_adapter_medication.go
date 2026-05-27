@@ -63,11 +63,11 @@ func (a *apiAdapter) buildMedicationItem(m *Medication) api.MedicationItem {
 	text, endsAt := summarizeSchedules(scheds)
 	times, freq, days := scheduleFormFields(scheds)
 	return api.MedicationItem{
-		ID:               m.ID,
-		Name:             m.Name,
-		Dose:             m.Dose,
-		Instructions:     m.Instructions,
-		Schedule:         text,
+		ID:                  m.ID,
+		Name:                m.Name,
+		Dose:                m.Dose,
+		Instructions:        m.Instructions,
+		Schedule:            text,
 		Active:              m.Active,
 		EndsAt:              endsAt,
 		ToleranceMinutes:    m.ToleranceMinutes,

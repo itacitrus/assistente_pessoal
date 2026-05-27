@@ -111,14 +111,14 @@ type magicLink struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		users:        map[int64]*User{},
-		usersByPh:    map[string]int64{},
-		sessions:     map[int64]*fakeSession{},
-		sessByHash:   map[string]int64{},
-		links:        map[int64]*FamilyLink{},
-		linksByGD:    map[string]int64{},
-		consents:     map[string]string{},
-		snapshots:    map[int64][]SnapshotPoint{},
+		users:         map[int64]*User{},
+		usersByPh:     map[string]int64{},
+		sessions:      map[int64]*fakeSession{},
+		sessByHash:    map[string]int64{},
+		links:         map[int64]*FamilyLink{},
+		linksByGD:     map[string]int64{},
+		consents:      map[string]string{},
+		snapshots:     map[int64][]SnapshotPoint{},
 		upcoming:      map[int64][]AgendaEvent{},
 		activity:      map[int64][]ActivityItem{},
 		insightsData:  map[int64]synthesis.AgendaInsightsInput{},

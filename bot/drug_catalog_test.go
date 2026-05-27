@@ -109,14 +109,14 @@ func TestResolveDrugTypos(t *testing.T) {
 
 	// Cada caso: query errada -> esperamos esse nome comercial como TOP match.
 	cases := map[string]string{
-		"losartna":    "Losartana Potássica",  // letra faltando
-		"lozartana":   "Losartana Potássica",  // s->z fonetico
-		"buscopam":    "Buscopan",             // nasal final
-		"rivotrio":    "Rivotril",             // l->o no fim
-		"neusaldina":  "Neosaldina",           // e->u
-		"dipirona":    "Dipirona Monoidratada",
-		"sinvastina":  "Sinvastatina",         // silaba faltando
-		"omeprasol":   "Omeprazol",            // s/z
+		"losartna":   "Losartana Potássica", // letra faltando
+		"lozartana":  "Losartana Potássica", // s->z fonetico
+		"buscopam":   "Buscopan",            // nasal final
+		"rivotrio":   "Rivotril",            // l->o no fim
+		"neusaldina": "Neosaldina",          // e->u
+		"dipirona":   "Dipirona Monoidratada",
+		"sinvastina": "Sinvastatina", // silaba faltando
+		"omeprasol":  "Omeprazol",    // s/z
 	}
 	for query, wantTop := range cases {
 		matches, err := db.ResolveDrug(query, 5)

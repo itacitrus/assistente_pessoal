@@ -60,8 +60,17 @@ func (s *Server) handleRequestLink(w http.ResponseWriter, r *http.Request) {
 	user, err := s.store.GetUserByPhone(ctx, phone)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			// Audit pra observabilidade, mas resposta opaca.
-			s.store.Audit(ctx, 0, "web_login_requested", phone, "reason=phone_not_found")
+			// Sem conta ainda. Em vez de silêncio, convidamos a iniciar o
+			// cadastro pelo WhatsApp — canal canônico de signup, onde o agente
+			// coleta o nome (via PushName) e provisiona a conta. Best-effort:
+			// a resposta ao site segue 200 opaca (sem enumeração) e já é
+			// rate-limited (3/phone/h). A pessoa digitou o próprio número no
+			// formulário, então o contato é consentido.
+			s.store.Audit(ctx, 0, "web_login_requested", phone, "reason=phone_not_found|signup_nudge")
+			nudge := "Oi! 👋 Vi que você quer criar sua conta no Zello. É só me mandar um \"oi\" aqui mesmo que eu te ajudo a começar — leva menos de um minuto. 😊"
+			if sendErr := s.store.SendWhatsApp(ctx, phone, nudge); sendErr != nil {
+				log.Printf("api: signup nudge to %s failed: %v", phone, sendErr)
+			}
 			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 			return
 		}

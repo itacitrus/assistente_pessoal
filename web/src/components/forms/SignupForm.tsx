@@ -14,14 +14,13 @@ import { isValidPhoneBR } from "@/lib/masks";
 type Status = "idle" | "submitting" | "success" | "error";
 
 /**
- * NOTA: nao existe self-signup pelo painel. Usuarios sao criados pelo bot
- * (whatsmeow) na primeira mensagem ao WhatsApp. Esta tela so dispara o magic
- * link para quem ja existe — backend espera somente { phone } e responde
- * 200 opaco mesmo quando o numero nao esta cadastrado, para evitar
- * enumeracao.
- *
- * O texto da pagina deixa isso explicito; mantemos o componente para
- * preservar a rota /signup que ja foi divulgada externamente.
+ * NOTA: o cadastro acontece pelo WhatsApp, nao por este formulario. O bot
+ * (whatsmeow) roda um agente de aquisicao na primeira mensagem de um numero
+ * novo: apresenta o Zello e provisiona a conta quando a pessoa confirma.
+ * Esta tela so envia { phone } e responde 200 opaco (sem enumeracao): se o
+ * numero ja existe, dispara o magic link; se nao, o backend manda um convite
+ * de cadastro pelo WhatsApp ("manda um oi"). Em ambos os casos a resposta ao
+ * site eh identica.
  */
 export function SignupForm() {
   const [phone, setPhone] = React.useState("");

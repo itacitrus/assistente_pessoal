@@ -20,20 +20,20 @@ type ErrorBody struct {
 
 // Codigos canonicos. Match com plano §4.6. Manter em sync com frontend.
 const (
-	CodeUnauthorized     = "unauthorized"
-	CodeForbidden        = "forbidden"
-	CodeNotFound         = "not_found"
-	CodeValidation       = "validation_error"
-	CodeRateLimited      = "rate_limited"
-	CodeInternal         = "internal"
-	CodeInvalidPhone     = "invalid_phone"
-	CodeInvalidToken     = "invalid_token"
-	CodeTokenExpired     = "token_expired"
-	CodeAlreadyUsed      = "already_used"
-	CodeConsentRevoked   = "consent_revoked"
-	CodePhoneInUse       = "phone_already_in_use"
-	CodeOriginForbidden  = "origin_forbidden"
-	CodeMedicationDup    = "medication_duplicate"
+	CodeUnauthorized    = "unauthorized"
+	CodeForbidden       = "forbidden"
+	CodeNotFound        = "not_found"
+	CodeValidation      = "validation_error"
+	CodeRateLimited     = "rate_limited"
+	CodeInternal        = "internal"
+	CodeInvalidPhone    = "invalid_phone"
+	CodeInvalidToken    = "invalid_token"
+	CodeTokenExpired    = "token_expired"
+	CodeAlreadyUsed     = "already_used"
+	CodeConsentRevoked  = "consent_revoked"
+	CodePhoneInUse      = "phone_already_in_use"
+	CodeOriginForbidden = "origin_forbidden"
+	CodeMedicationDup   = "medication_duplicate"
 )
 
 // writeError serializa um envelope JSON com o status http apropriado.

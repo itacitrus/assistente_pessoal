@@ -23,6 +23,7 @@ type pendingBuffer struct {
 	images    []ImageAttachment
 	timer     *time.Timer
 	senderJID types.JID
+	pushName  string // WhatsApp profile name — palpite de nome p/ signup de lead
 	gen       uint64 // incremented on each reset; flush checks this to ignore stale timers
 }
 
@@ -157,7 +158,7 @@ func (h *Handler) handleMessage(msg *events.Message) {
 			return // Ignore non-text from unknown users (audio, etc)
 		}
 		log.Printf("Unknown number %s: %s (buffering)", sender, text)
-		h.bufferAndSchedule(sender, senderJID, text, nil)
+		h.bufferAndSchedule(sender, senderJID, msg.Info.PushName, text, nil)
 		return
 	}
 	if err != nil {
@@ -216,13 +217,13 @@ func (h *Handler) handleMessage(msg *events.Message) {
 
 	log.Printf("[%s] %s: %s", user.Name, sender, text)
 
-	h.bufferAndSchedule(sender, senderJID, text, images)
+	h.bufferAndSchedule(sender, senderJID, msg.Info.PushName, text, images)
 }
 
 // bufferAndSchedule appends a message to the per-user pending buffer and
 // (re)arms a 5s timer. When the timer fires without new messages, the batch
 // is flushed to the orchestrator as a single request.
-func (h *Handler) bufferAndSchedule(phone string, senderJID types.JID, text string, images []ImageAttachment) {
+func (h *Handler) bufferAndSchedule(phone string, senderJID types.JID, pushName, text string, images []ImageAttachment) {
 	h.bufMu.Lock()
 	defer h.bufMu.Unlock()
 
@@ -230,6 +231,9 @@ func (h *Handler) bufferAndSchedule(phone string, senderJID types.JID, text stri
 	if !ok {
 		pb = &pendingBuffer{senderJID: senderJID}
 		h.buffers[phone] = pb
+	}
+	if pushName != "" {
+		pb.pushName = pushName
 	}
 	if text != "" {
 		pb.texts = append(pb.texts, text)
@@ -272,7 +276,7 @@ func (h *Handler) flushBuffer(phone string, gen uint64) {
 
 	if user == nil {
 		log.Printf("Flushing unknown buffer %s (%d msgs)", phone, len(pb.texts))
-		response, err := h.orchestrator.ProcessUnknown(ctx, phone, text)
+		response, err := h.orchestrator.ProcessUnknown(ctx, phone, pb.pushName, text)
 		if err != nil {
 			log.Printf("Error processing unknown user %s: %v", phone, err)
 			return
@@ -303,6 +307,14 @@ func (h *Handler) flushBuffer(phone string, gen uint64) {
 	}
 	if response != "" {
 		h.sendText(pb.senderJID, response)
+	} else {
+		// Resposta vazia a uma mensagem DIRETA é suspeita (drop/empty LLM).
+		// Pra idoso, silêncio soa como abandono — manda um fallback curto em
+		// vez de ghostear. Pra outros, só loga (não fabrica resposta).
+		log.Printf("[%s] resposta vazia a mensagem direta — possível drop/empty", user.Name)
+		if user.Type == UserTypeIdoso {
+			h.sendText(pb.senderJID, "Tô aqui, viu, "+firstName(user.Name)+". Me conta de novo o que você precisa?")
+		}
 	}
 
 	// Fase 4: trigger snapshot pos-conversa para idosos. Heuristica de
@@ -357,14 +369,32 @@ func isSignificantConversation(userTurns int, firstAt, lastAt time.Time, alertsT
 }
 
 func (h *Handler) sendText(to types.JID, text string) {
-	_, err := h.client.SendMessage(context.Background(), to, &waE2E.Message{
-		Conversation: &text,
-	})
-	if err != nil {
-		log.Printf("Error sending message to %s: %v", to.User, err)
+	if err := h.sendWithRetry(to, text); err != nil {
+		log.Printf("Error sending message to %s after retries: %v", to.User, err)
 		return
 	}
 	h.persistOutbound(to.User, text)
+}
+
+// sendWithRetry tenta enviar ate 3x com backoff curto (0.5s, 1s). Falha
+// transitoria de rede/whatsmeow nao pode descartar silenciosamente a resposta
+// — sem retry, um erro pontual deixava o usuario sem resposta (e, como
+// persistOutbound so roda apos sucesso, a fala sumia sem rastro no historico).
+func (h *Handler) sendWithRetry(to types.JID, text string) error {
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+		}
+		_, err = h.client.SendMessage(context.Background(), to, &waE2E.Message{
+			Conversation: &text,
+		})
+		if err == nil {
+			return nil
+		}
+		log.Printf("send attempt %d to %s failed: %v", attempt+1, to.User, err)
+	}
+	return err
 }
 
 func (h *Handler) SendTextToPhone(phone, text string) error {
@@ -375,13 +405,11 @@ func (h *Handler) SendTextToPhone(phone, text string) error {
 	} else if len(results) > 0 && results[0].IsIn {
 		// Use the JID returned by WhatsApp (correct format)
 		log.Printf("SendTextToPhone: %s is on WhatsApp as %s", phone, results[0].JID.String())
-		_, err := h.client.SendMessage(context.Background(), results[0].JID, &waE2E.Message{
-			Conversation: &text,
-		})
-		if err == nil {
-			h.persistOutbound(phone, text)
+		if err := h.sendWithRetry(results[0].JID, text); err != nil {
+			return err
 		}
-		return err
+		h.persistOutbound(phone, text)
+		return nil
 	} else if len(results) > 0 && !results[0].IsIn {
 		log.Printf("SendTextToPhone: %s is NOT on WhatsApp", phone)
 		return fmt.Errorf("numero %s nao esta no WhatsApp", phone)
@@ -390,13 +418,11 @@ func (h *Handler) SendTextToPhone(phone, text string) error {
 	// Fallback: send directly
 	jid := types.NewJID(phone, types.DefaultUserServer)
 	log.Printf("SendTextToPhone: sending to %s (fallback)", jid.String())
-	_, err = h.client.SendMessage(context.Background(), jid, &waE2E.Message{
-		Conversation: &text,
-	})
-	if err == nil {
-		h.persistOutbound(phone, text)
+	if err := h.sendWithRetry(jid, text); err != nil {
+		return err
 	}
-	return err
+	h.persistOutbound(phone, text)
+	return nil
 }
 
 // persistOutbound grava em conversation_history toda mensagem efetivamente

@@ -236,7 +236,7 @@ func TestCountSessions(t *testing.T) {
 	msgs := []synthesis.ConversationMessage{
 		{Timestamp: now},
 		{Timestamp: now.Add(5 * time.Minute)},
-		{Timestamp: now.Add(45 * time.Minute)},  // gap > 30min: nova sessao
+		{Timestamp: now.Add(45 * time.Minute)}, // gap > 30min: nova sessao
 		{Timestamp: now.Add(55 * time.Minute)},
 		{Timestamp: now.Add(5 * time.Hour)}, // outra sessao
 	}
@@ -317,4 +317,3 @@ func TestSplitMedicationIntake(t *testing.T) {
 		t.Errorf("expected 2 missed (incluindo escalated), got %d", len(missed))
 	}
 }
-

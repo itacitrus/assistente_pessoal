@@ -13,8 +13,10 @@ export interface RequestLinkArgs {
  * mesmo se o phone nao existe (resposta opaca para evitar enumeracao). Em
  * caso de invalido (regex) ou rate limit retorna 400/429 — ApiError borbulha.
  *
- * NOTA: nao existe self-signup via API. Usuarios sao criados pelo bot
- * (whatsmeow) na primeira mensagem; o painel so faz login de quem ja existe.
+ * NOTA: o cadastro acontece pelo WhatsApp (agente de aquisicao do bot), nao
+ * por esta API. Para numero ja cadastrado, o backend manda o magic link; para
+ * numero novo, manda um convite de cadastro pelo WhatsApp. A resposta ao site
+ * eh sempre a mesma (200 opaco).
  */
 export async function requestLoginLink(
   args: RequestLinkArgs,

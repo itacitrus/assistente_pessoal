@@ -177,9 +177,9 @@ func (cm *ConfirmationManager) executeConfirmation(user *User, pc *PendingConfir
 
 // executeMedicationConfirmation lida com confirmacao de pendings kind=medication.
 // Dois sub-casos:
-//   1. Reminder=true → user esta confirmando que tomou o remedio.
-//      Equivalente a marcar_remedio_tomado, mas via fluxo confirma/auto-confirm.
-//   2. Reminder=false (cadastro pendente) → cria a medication+schedule.
+//  1. Reminder=true → user esta confirmando que tomou o remedio.
+//     Equivalente a marcar_remedio_tomado, mas via fluxo confirma/auto-confirm.
+//  2. Reminder=false (cadastro pendente) → cria a medication+schedule.
 //
 // Auto-confirm de medicamento via timeout esta DESABILITADO (so eventos auto-confirmam).
 // O motor de escalacao trata pendings de medicacao com sua propria politica.

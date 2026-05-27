@@ -21,13 +21,15 @@ func NewOrchestrator(agent *Agent, transcription *TranscriptionClient, db *DB) *
 	return &Orchestrator{agent: agent, transcription: transcription, db: db}
 }
 
-// ProcessUnknown handles messages from non-registered users.
-// Acts like a polite messenger — answers briefly, clarifies doubts about
-// a delivered message, but doesn't engage in long conversations or take requests.
-func (o *Orchestrator) ProcessUnknown(ctx context.Context, senderPhone, message string) (string, error) {
-	response, err := o.agent.RunForUnknown(ctx, senderPhone, message)
+// ProcessUnknown handles messages from non-registered numbers. Runs the
+// acquisition ("sales") agent: it introduces Zello, answers questions, guides
+// toward signup, and provisions the account when the person confirms interest.
+// pushName eh o nome do perfil WhatsApp — palpite inicial de nome confirmado
+// no momento do cadastro.
+func (o *Orchestrator) ProcessUnknown(ctx context.Context, senderPhone, pushName, message string) (string, error) {
+	response, err := o.agent.RunSalesAgent(ctx, senderPhone, pushName, message)
 	if err != nil {
-		return "", fmt.Errorf("agent unknown: %w", err)
+		return "", fmt.Errorf("agent sales: %w", err)
 	}
 	return response, nil
 }
@@ -53,4 +55,3 @@ func (o *Orchestrator) Process(ctx context.Context, user *User, message string, 
 
 	return response, nil
 }
-

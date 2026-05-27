@@ -161,8 +161,8 @@ func TestMeAgendaEvents_Validation(t *testing.T) {
 	_, store, mux := newTestServer(t)
 	_, cookie := loggedInUser(store, "Maria", "5511999999999")
 	cases := []string{
-		"/api/v1/me/agenda/events?from=xx&to=2026-05-31", // from inválido
-		"/api/v1/me/agenda/events?from=2026-05-01",       // to ausente
+		"/api/v1/me/agenda/events?from=xx&to=2026-05-31",         // from inválido
+		"/api/v1/me/agenda/events?from=2026-05-01",               // to ausente
 		"/api/v1/me/agenda/events?from=2026-05-31&to=2026-05-01", // to antes de from
 		"/api/v1/me/agenda/events?from=2026-01-01&to=2026-12-31", // > 62 dias
 	}

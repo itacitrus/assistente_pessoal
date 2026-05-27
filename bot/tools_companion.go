@@ -32,10 +32,10 @@ import (
 // proprio pra preservar coesao por feature (mesma estrategia da Fase 3
 // com medicationToolHandlers).
 var companionToolHandlers = map[string]ToolHandler{
-	"alertar_familia":      handleAlertarFamilia,
-	"pausar_proatividade":  handlePausarProatividade,
-	"comentar_imagem":      handleComentarImagem,
-	"comentar_link":        handleComentarLink,
+	"alertar_familia":     handleAlertarFamilia,
+	"pausar_proatividade": handlePausarProatividade,
+	"comentar_imagem":     handleComentarImagem,
+	"comentar_link":       handleComentarLink,
 }
 
 // -------------------------------------------------------------------------
@@ -77,28 +77,28 @@ var disclosurePolicy = map[string]struct {
 }{
 	"medico_fisico": {
 		Disclose: true,
-		Tone: "calmo e tranquilizador, mencione que avisou alguém da família (ele já sabe que está passando mal — saber que a ajuda está a caminho conforta), reforce 192 (SAMU) se for sintoma agudo",
-		Note: "Pode dizer: 'avisei sua filha pra ela ficar atenta, tá?'",
+		Tone:     "calmo e tranquilizador, mencione que avisou alguém da família (ele já sabe que está passando mal — saber que a ajuda está a caminho conforta), reforce 192 (SAMU) se for sintoma agudo",
+		Note:     "Pode dizer: 'avisei sua filha pra ela ficar atenta, tá?'",
 	},
 	"psicologico": {
 		Disclose: false,
-		Tone: "acolhedor, presente, sem sair do papel de amigo. NÃO mencione que avisou a família. Mencione 188 (CVV) como se fosse só uma sugestão de canal de apoio que você conhece, não como contramedida ao alerta. Continue a escuta — ele te confiou algo íntimo, não o desampare agora.",
-		Note: "REGRA DURA: nunca dizer 'avisei sua filha' nem equivalente. A confiança dele em você é fundamento da intervenção continuar funcionando.",
+		Tone:     "acolhedor, presente, sem sair do papel de amigo. NÃO mencione que avisou a família. Mencione 188 (CVV) como se fosse só uma sugestão de canal de apoio que você conhece, não como contramedida ao alerta. Continue a escuta — ele te confiou algo íntimo, não o desampare agora.",
+		Note:     "REGRA DURA: nunca dizer 'avisei sua filha' nem equivalente. A confiança dele em você é fundamento da intervenção continuar funcionando.",
 	},
 	"violencia": {
 		Disclose: false,
-		Tone: "absolutamente normal, como se a conversa não tivesse mudado de tom. Idoso pode estar sendo monitorado pelo agressor neste momento — qualquer sinal de mudança de comportamento na conversa pode escalar o risco físico dele.",
-		Note: "REGRA DURA: não mencione, não mude o tom da conversa, não ofereça 188/192 explicitamente. Se ele perguntar diretamente 'você vai contar pra alguém', responda evasivo em registro clássico (ex: 'fique tranquilo, estou aqui te escutando, é isso por enquanto'). A família já foi alertada com urgência.",
+		Tone:     "absolutamente normal, como se a conversa não tivesse mudado de tom. Idoso pode estar sendo monitorado pelo agressor neste momento — qualquer sinal de mudança de comportamento na conversa pode escalar o risco físico dele.",
+		Note:     "REGRA DURA: não mencione, não mude o tom da conversa, não ofereça 188/192 explicitamente. Se ele perguntar diretamente 'você vai contar pra alguém', responda evasivo em registro clássico (ex: 'fique tranquilo, estou aqui te escutando, é isso por enquanto'). A família já foi alertada com urgência.",
 	},
 	"negligencia": {
 		Disclose: false,
-		Tone: "normal, sem alarme. Mesma lógica da vigilância da violência — pode haver vigilância.",
-		Note: "REGRA DURA: não mencione. A intervenção tem que vir de fora.",
+		Tone:     "normal, sem alarme. Mesma lógica da vigilância da violência — pode haver vigilância.",
+		Note:     "REGRA DURA: não mencione. A intervenção tem que vir de fora.",
 	},
 	"outros": {
 		Disclose: false,
-		Tone: "discreto. Em dúvida, prefira não mencionar — confiança uma vez quebrada não volta. Use discrição por padrão.",
-		Note: "Categoria ambígua — escolhi discrição por padrão. Se você achar que faz sentido contar, pondere antes de dizer.",
+		Tone:     "discreto. Em dúvida, prefira não mencionar — confiança uma vez quebrada não volta. Use discrição por padrão.",
+		Note:     "Categoria ambígua — escolhi discrição por padrão. Se você achar que faz sentido contar, pondere antes de dizer.",
 	},
 }
 

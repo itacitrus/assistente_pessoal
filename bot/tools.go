@@ -733,13 +733,13 @@ func handleGerarLinkMeet(ctx context.Context, agent *Agent, user *User, params j
 }
 
 type convidarExternoParams struct {
-	Phone       string `json:"phone"`
-	Name        string `json:"name"`
-	EventTitle  string `json:"event_title"`
-	EventDate   string `json:"event_date"`
-	EventTime   string `json:"event_time"`
-	MeetLink    string `json:"meet_link"`
-	Location    string `json:"location"`
+	Phone      string `json:"phone"`
+	Name       string `json:"name"`
+	EventTitle string `json:"event_title"`
+	EventDate  string `json:"event_date"`
+	EventTime  string `json:"event_time"`
+	MeetLink   string `json:"meet_link"`
+	Location   string `json:"location"`
 }
 
 func handleConvidarExterno(ctx context.Context, agent *Agent, user *User, params json.RawMessage) (string, error) {

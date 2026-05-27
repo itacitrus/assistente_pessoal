@@ -244,9 +244,9 @@ var validTendencia = map[string]bool{
 }
 
 var validNivel = map[string]bool{
-	"tranquilo":    true,
-	"atencao":      true,
-	"atencao_alta": true,
+	"tranquilo":     true,
+	"atencao":       true,
+	"atencao_alta":  true,
 	"indeterminado": true,
 }
 

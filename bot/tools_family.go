@@ -90,17 +90,17 @@ type DependentStatusReport struct {
 	// ainda zero doses logadas. Sem isso, o relatorio dizia "sem medicacoes"
 	// para quem TEM remedios — mentira para o responsavel.
 	ActiveMedicationCount int
-	ProactiveAttempts ProactiveAttemptsStats
-	AlertsOpen        []FamilyAlert
-	Snapshots         []synthesis.DailySnapshot
-	Synthesis         synthesis.ReportOutput
+	ProactiveAttempts     ProactiveAttemptsStats
+	AlertsOpen            []FamilyAlert
+	Snapshots             []synthesis.DailySnapshot
+	Synthesis             synthesis.ReportOutput
 	// SynthesisAvailable=false quando ainda nao ha sintese persistida (idoso
 	// novo, sem geracao). O caller mostra "sendo preparada" e dispara regen.
 	SynthesisAvailable bool
 	// SynthesisStale=true quando a sintese persistida foi gerada antes do
 	// snapshot mais recente (dado novo desde a ultima geracao). O caller serve
 	// a persistida e dispara regen assincrono — nunca bloqueia.
-	SynthesisStale     bool
+	SynthesisStale       bool
 	SynthesisGeneratedAt time.Time
 }
 

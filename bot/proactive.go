@@ -155,6 +155,42 @@ func (db *DB) GetLastProactiveAttempt(userID int64) (*ProactiveAttempt, error) {
 	return pa, nil
 }
 
+// GetRecentProactiveAttempts retorna as tentativas proativas nas ultimas
+// `within` horas, mais recentes primeiro, ate `limit`. Usado por (1)
+// RunProactive pra NAO repetir o gancho das ultimas puxadas e (2) o back-off
+// do scheduler, que para de cutucar quando ha puxada sem resposta.
+func (db *DB) GetRecentProactiveAttempts(userID int64, within time.Duration, limit int) ([]ProactiveAttempt, error) {
+	if within <= 0 || limit <= 0 {
+		return nil, nil
+	}
+	cutoff := time.Now().UTC().Add(-within)
+	rows, err := db.conn.Query(
+		`SELECT id, user_id, attempted_at, message_sent, status, replied_at
+		 FROM proactive_attempts
+		 WHERE user_id = ? AND attempted_at >= ?
+		 ORDER BY attempted_at DESC LIMIT ?`,
+		userID, cutoff, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get recent proactive attempts: %w", err)
+	}
+	defer rows.Close()
+	var out []ProactiveAttempt
+	for rows.Next() {
+		var pa ProactiveAttempt
+		var replied sql.NullTime
+		if err := rows.Scan(&pa.ID, &pa.UserID, &pa.AttemptedAt, &pa.MessageSent, &pa.Status, &replied); err != nil {
+			return nil, err
+		}
+		if replied.Valid {
+			t := replied.Time
+			pa.RepliedAt = &t
+		}
+		out = append(out, pa)
+	}
+	return out, rows.Err()
+}
+
 // PauseProactive seta proactive_paused_until = now + days dias. Usado pela
 // tool pausar_proatividade. Range util: 1..30. Caller eh responsavel por
 // validar.

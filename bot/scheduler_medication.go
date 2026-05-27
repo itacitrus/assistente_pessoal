@@ -29,9 +29,9 @@ import (
 // medicamento ativo, expande o RRULE no fuso vigente daquele dia para
 // detectar ocorrencias dentro da janela [now-60s, now+1s]. Para cada
 // ocorrencia:
-//   1. Tenta INSERT em medication_intake_log (UNIQUE garante idempotencia).
-//   2. Cria pending_confirmation kind=medication com escalation_policy.
-//   3. Envia mensagem natural via Notifier.
+//  1. Tenta INSERT em medication_intake_log (UNIQUE garante idempotencia).
+//  2. Cria pending_confirmation kind=medication com escalation_policy.
+//  3. Envia mensagem natural via Notifier.
 //
 // Se o INSERT falhar por UNIQUE, o disparo ja aconteceu (em outra invocacao
 // concorrente ou em restart pos-tick). Skip silencioso.

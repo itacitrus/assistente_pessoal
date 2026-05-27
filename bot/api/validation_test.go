@@ -92,9 +92,9 @@ func TestValidateCreateDependent(t *testing.T) {
 
 func TestClientIP(t *testing.T) {
 	cases := []struct {
-		name    string
-		setup   func(r *http.Request)
-		want    string
+		name  string
+		setup func(r *http.Request)
+		want  string
 	}{
 		{
 			"X-Forwarded-For single",

@@ -97,7 +97,7 @@ func TestRequestLink_PhoneExists_ReturnsOpaque200AndSendsLink(t *testing.T) {
 	}
 }
 
-func TestRequestLink_PhoneNotExists_ReturnsOpaque200_NoMessage(t *testing.T) {
+func TestRequestLink_PhoneNotExists_ReturnsOpaque200_SendsSignupNudge(t *testing.T) {
 	_, store, mux := newTestServer(t)
 
 	rec := doRequest(t, mux, http.MethodPost, "/api/v1/auth/request-link",
@@ -106,8 +106,16 @@ func TestRequestLink_PhoneNotExists_ReturnsOpaque200_NoMessage(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
+	// Sem magic link: nao revela existencia (opacidade preservada).
 	if len(store.magicLinks) != 0 {
 		t.Fatalf("expected 0 magic link, got %d (would leak existence)", len(store.magicLinks))
+	}
+	// Mas dispara um convite de cadastro pelo WhatsApp (canal canonico de signup).
+	if len(store.whatsappSent) != 1 {
+		t.Fatalf("expected 1 signup nudge via whatsapp, got %d", len(store.whatsappSent))
+	}
+	if store.whatsappSent[0].Phone != "5511999999999" {
+		t.Fatalf("nudge sent to %q, want 5511999999999", store.whatsappSent[0].Phone)
 	}
 }
 

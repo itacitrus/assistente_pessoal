@@ -147,9 +147,9 @@ func TestGetTravelPeriodForDate(t *testing.T) {
 		inside bool
 	}{
 		{"2026-05-14", false},
-		{"2026-05-15", true},  // start boundary
+		{"2026-05-15", true}, // start boundary
 		{"2026-05-16", true},
-		{"2026-05-17", true},  // end boundary
+		{"2026-05-17", true}, // end boundary
 		{"2026-05-18", false},
 	}
 	for _, c := range cases {

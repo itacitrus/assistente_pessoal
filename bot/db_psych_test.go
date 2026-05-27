@@ -171,12 +171,12 @@ func TestReviewAlert_AcknowledgesScopedAndIdempotent(t *testing.T) {
 func TestParseSnapshotDate_TolerantFormats(t *testing.T) {
 	want := time.Date(2026, 5, 25, 0, 0, 0, 0, time.UTC)
 	cases := map[string]bool{ // input -> deve casar com want
-		"2026-05-25":                 true, // formato atual (writer)
-		"2026-05-25T00:00:00Z":       true, // timestamp RFC3339 (linha antiga)
-		"2026-05-25 00:00:00+00:00":  true, // timestamp com espaco (driver sqlite)
-		"2026-05-25T13:45:00-03:00":  true, // com hora/fuso — so a data importa
-		"":                           false,
-		"lixo":                       false,
+		"2026-05-25":                true, // formato atual (writer)
+		"2026-05-25T00:00:00Z":      true, // timestamp RFC3339 (linha antiga)
+		"2026-05-25 00:00:00+00:00": true, // timestamp com espaco (driver sqlite)
+		"2026-05-25T13:45:00-03:00": true, // com hora/fuso — so a data importa
+		"":                          false,
+		"lixo":                      false,
 	}
 	for in, shouldMatch := range cases {
 		got := parseSnapshotDate(in)

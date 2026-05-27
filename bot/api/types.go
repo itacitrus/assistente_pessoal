@@ -296,7 +296,7 @@ type StatusResponse struct {
 	Synthesis         SynthesisSummary `json:"synthesis"`
 	// SynthesisAvailable=false quando ainda nao ha sintese persistida (idoso
 	// novo). O frontend mostra "sendo preparada" em vez do texto placeholder.
-	SynthesisAvailable bool       `json:"synthesis_available"`
+	SynthesisAvailable bool `json:"synthesis_available"`
 	// SynthesisGeneratedAt eh quando a sintese servida foi gerada (nil se nao
 	// ha sintese ainda). Frontend pode exibir "atualizada há X".
 	SynthesisGeneratedAt *time.Time `json:"synthesis_generated_at,omitempty"`

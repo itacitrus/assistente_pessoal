@@ -43,12 +43,13 @@ type SevereSignalEscalation struct {
 // medicacao. attempt_number=0 idem.
 //
 // Param:
-//   userID         — idoso (sujeito do alerta).
-//   policyName     — "severe_signal" | "severe_signal_safety_net" | "severe_signal_supressed".
-//   severity       — "info" | "warn" | "critical".
-//   details        — campo livre pipe-separated (ver convencao em audit.go).
-//   recipientID    — guardian que recebeu. 0 quando nao houve guardian (orfao).
-//   channel        — "whatsapp" | "voice" | "" (vazio se nao houve envio).
+//
+//	userID         — idoso (sujeito do alerta).
+//	policyName     — "severe_signal" | "severe_signal_safety_net" | "severe_signal_supressed".
+//	severity       — "info" | "warn" | "critical".
+//	details        — campo livre pipe-separated (ver convencao em audit.go).
+//	recipientID    — guardian que recebeu. 0 quando nao houve guardian (orfao).
+//	channel        — "whatsapp" | "voice" | "" (vazio se nao houve envio).
 func (db *DB) RecordSevereSignalEscalation(userID int64, policyName, severity, details string, recipientID int64, channel string, now time.Time) (*SevereSignalEscalation, error) {
 	if channel == "" {
 		channel = "whatsapp"

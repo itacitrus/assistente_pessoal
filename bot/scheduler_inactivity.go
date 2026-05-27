@@ -35,11 +35,29 @@ const (
 	// vem zero/invalido — defesa em profundidade.
 	proactiveDefaultThreshold = 24
 
+	// proactiveBackoffWindow: se ja existe uma puxada SEM resposta dentro desta
+	// janela, nao cutuca de novo. Evita o caso "mandei 3 mensagens iguais num
+	// dia e o idoso nao respondeu nenhuma". Quando ele responde, o status flipa
+	// de 'sent' -> 'replied' (MarkUserMessageReceivedAndProactive) e o portao
+	// reabre na hora. Resultado: no maximo ~1 puxada nao-respondida por ~dia.
+	proactiveBackoffWindow = 20 * time.Hour
+
 	// proactiveRunCtxTimeout eh o teto pra RunProactive. Se o agente
 	// (DeepSeek/Anthropic) demorar mais, abortamos — proxima rodada
 	// tenta de novo em 15min. Nao bloqueia o cron.
 	proactiveRunCtxTimeout = 60 * time.Second
 )
+
+// hasUnansweredProactive informa se alguma das tentativas esta 'sent' (enviada
+// mas ainda sem resposta). 'replied'/'failed'/'ignored' nao contam.
+func hasUnansweredProactive(attempts []ProactiveAttempt) bool {
+	for _, a := range attempts {
+		if a.Status == "sent" {
+			return true
+		}
+	}
+	return false
+}
 
 // checkInactivity eh o entry point do cron. Itera sobre idosos ativos.
 func (s *Scheduler) checkInactivity() {
@@ -111,6 +129,19 @@ func (s *Scheduler) checkUserInactivity(user *User, now time.Time) {
 		return
 	}
 	if recent {
+		return
+	}
+
+	// 3b. Back-off: se ja cutucamos e o idoso nao respondeu (status 'sent'
+	// dentro da janela de back-off), nao insiste. Quando ele responder, o
+	// status flipa pra 'replied' e o portao reabre. Evita repetir puxada
+	// sem retorno (caso Elizabete: 3 mensagens iguais num dia, zero resposta).
+	recentAttempts, err := s.db.GetRecentProactiveAttempts(user.ID, proactiveBackoffWindow, 5)
+	if err != nil {
+		log.Printf("Scheduler[inactivity] %s: GetRecentProactiveAttempts: %v", user.Name, err)
+		return
+	}
+	if hasUnansweredProactive(recentAttempts) {
 		return
 	}
 

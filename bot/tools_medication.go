@@ -303,15 +303,15 @@ func handleListarMedicamentos(ctx context.Context, agent *Agent, user *User, par
 // =========================================================================
 
 type editarMedicamentoParams struct {
-	MedicationID     int64   `json:"medication_id"`
-	NameQuery        string  `json:"name_query"`
-	NewName          string  `json:"new_name"`
-	NewDose          string  `json:"new_dose"`
-	NewInstructions  string  `json:"new_instructions"`
-	NewScheduleRRULE string  `json:"new_schedule_rrule"`
-	NewEndDate       string  `json:"new_end_date"`
-	NewCritical      *bool   `json:"new_critical"`
-	NewToleranceMin  *int    `json:"new_tolerance_minutes"`
+	MedicationID      int64  `json:"medication_id"`
+	NameQuery         string `json:"name_query"`
+	NewName           string `json:"new_name"`
+	NewDose           string `json:"new_dose"`
+	NewInstructions   string `json:"new_instructions"`
+	NewScheduleRRULE  string `json:"new_schedule_rrule"`
+	NewEndDate        string `json:"new_end_date"`
+	NewCritical       *bool  `json:"new_critical"`
+	NewToleranceMin   *int   `json:"new_tolerance_minutes"`
 	NewLateDosePolicy string `json:"new_late_dose_policy"`
 }
 
@@ -893,6 +893,7 @@ func resolveMedication(agent *Agent, user *User, id int64, nameQuery string) (*M
 //  1. medication_id explicito.
 //  2. name_query (substring no nome dos remedios ativos do proprio usuario).
 //  3. se o usuario tem exatamente UM remedio ativo, eh esse.
+//
 // Em qualquer outro caso (nenhum/ambiguo), retorna med=nil + uma pergunta
 // natural — preferimos perguntar a registrar a dose errada.
 func resolveMedicationForIntake(agent *Agent, user *User, id int64, nameQuery string) (*Medication, string) {

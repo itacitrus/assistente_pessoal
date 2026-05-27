@@ -286,8 +286,8 @@ func TestDeepSeekChat_BasicRoundTrip(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&capturedReq)
 		resp := openai.ChatCompletionResponse{
-			ID:      "x",
-			Object:  "chat.completion",
+			ID:     "x",
+			Object: "chat.completion",
 			Choices: []openai.ChatCompletionChoice{
 				{
 					Index: 0,

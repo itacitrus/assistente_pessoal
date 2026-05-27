@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/giovannirambo/assistente_pessoal/bot/llm"
 	"github.com/liushuangls/go-anthropic/v2"
@@ -186,6 +188,110 @@ func systemPartsToLLM(parts []anthropic.MessageSystemPart) []llm.SystemPart {
 		out = append(out, llm.SystemPart{Text: p.Text, Cacheable: p.CacheControl != nil})
 	}
 	return out
+}
+
+// upcomingReminder eh um lembrete de remedio que ainda vai disparar hoje.
+type upcomingReminder struct {
+	at    time.Time // no fuso local do idoso
+	names []string
+}
+
+// upcomingMedRemindersToday lista os lembretes de remedio que ainda vao
+// disparar de `now` ate o fim do dia (fuso local do idoso). Usado pra o
+// companheiro saber se a conversa atual eh o ULTIMO contato programado do dia
+// — sem isso ele desejava "boa noite/descanse bem" cedo demais, antes de um
+// lembrete posterior (caso Fabio: "descanse bem" 18h02, lembrete 19h00).
+func (a *Agent) upcomingMedRemindersToday(user *User, now time.Time) []upcomingReminder {
+	loc := a.db.GetEventTimezone(user.ID, now)
+	if loc == nil {
+		loc = BRT()
+	}
+	nowLocal := now.In(loc)
+	endOfDay := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 23, 59, 59, 0, loc)
+	if !now.Before(endOfDay) {
+		return nil
+	}
+	meds, err := a.db.ListActiveMedications(user.ID)
+	if err != nil || len(meds) == 0 {
+		return nil
+	}
+	byInstant := map[int64][]string{}
+	var order []int64
+	for i := range meds {
+		m := &meds[i]
+		scheds, err := a.db.ListSchedulesForMedication(m.ID)
+		if err != nil {
+			continue
+		}
+		for j := range scheds {
+			occs, err := ExpandOccurrences(&scheds[j], now, endOfDay, loc)
+			if err != nil {
+				continue
+			}
+			for _, occ := range occs {
+				key := occ.UnixNano()
+				if _, ok := byInstant[key]; !ok {
+					order = append(order, key)
+				}
+				present := false
+				for _, n := range byInstant[key] {
+					if n == m.Name {
+						present = true
+						break
+					}
+				}
+				if !present {
+					byInstant[key] = append(byInstant[key], m.Name)
+				}
+			}
+		}
+	}
+	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
+	out := make([]upcomingReminder, 0, len(order))
+	for _, key := range order {
+		out = append(out, upcomingReminder{at: time.Unix(0, key).In(loc), names: byInstant[key]})
+	}
+	return out
+}
+
+// appendCompanionDayContextPart injeta o [CONTEXTO DO DIA] no prompt do idoso:
+// quais lembretes de remedio ainda faltam hoje. Permite ao companheiro decidir
+// se eh o ultimo contato do dia antes de se despedir com "boa noite". No-op
+// para nao-idosos. So injeta de tarde/noite (>=14h local) — de manha "ultimo
+// contato do dia" nao faz sentido e so polui o prompt.
+func (a *Agent) appendCompanionDayContextPart(parts []anthropic.MessageSystemPart, user *User, now time.Time) []anthropic.MessageSystemPart {
+	if user == nil || user.Type != UserTypeIdoso {
+		return parts
+	}
+	loc := a.db.GetEventTimezone(user.ID, now)
+	if loc == nil {
+		loc = BRT()
+	}
+	if now.In(loc).Hour() < 14 {
+		return parts
+	}
+	rem := a.upcomingMedRemindersToday(user, now)
+	var text string
+	if len(rem) == 0 {
+		text = "[CONTEXTO DO DIA] Não há mais lembretes de remédio programados para hoje. " +
+			"Se for noite e fizer sentido, pode se despedir desejando boa noite/bom descanso."
+	} else {
+		var b strings.Builder
+		b.WriteString("[CONTEXTO DO DIA] Ainda há lembrete(s) de remédio HOJE: ")
+		for i, r := range rem {
+			if i > 0 {
+				b.WriteString("; ")
+			}
+			b.WriteString(r.at.Format("15:04"))
+			b.WriteString(" (")
+			b.WriteString(strings.Join(r.names, ", "))
+			b.WriteString(")")
+		}
+		b.WriteString(". Portanto ESTE não é o último contato do dia — NÃO se despeça com " +
+			"\"boa noite\"/\"descanse bem\"/\"até amanhã\". Encerre de forma aberta (\"estou por aqui\").")
+		text = b.String()
+	}
+	return append(parts, anthropic.MessageSystemPart{Type: "text", Text: text})
 }
 
 // toolDefsToLLM converte as ToolDefinition do Anthropic pro ToolDef canonico.

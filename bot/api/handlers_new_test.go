@@ -366,11 +366,11 @@ func TestDependentMedications_Validation(t *testing.T) {
 	base := "/api/v1/family/dependents/" + itoa(dep.ID) + "/medications"
 
 	cases := []map[string]any{
-		{"name": "", "times": []string{"08:00"}, "frequency": "daily"},             // nome vazio
-		{"name": "X", "times": []string{}, "frequency": "daily"},                   // sem horarios
-		{"name": "X", "times": []string{"25:00"}, "frequency": "daily"},            // hora invalida
-		{"name": "X", "times": []string{"08:00"}, "frequency": "monthly"},          // freq invalida
-		{"name": "X", "times": []string{"08:00"}, "frequency": "weekly"},           // weekly sem days
+		{"name": "", "times": []string{"08:00"}, "frequency": "daily"},                               // nome vazio
+		{"name": "X", "times": []string{}, "frequency": "daily"},                                     // sem horarios
+		{"name": "X", "times": []string{"25:00"}, "frequency": "daily"},                              // hora invalida
+		{"name": "X", "times": []string{"08:00"}, "frequency": "monthly"},                            // freq invalida
+		{"name": "X", "times": []string{"08:00"}, "frequency": "weekly"},                             // weekly sem days
 		{"name": "X", "times": []string{"08:00"}, "frequency": "weekly", "days": []string{"funday"}}, // dia invalido
 	}
 	for i, c := range cases {

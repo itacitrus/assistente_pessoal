@@ -155,4 +155,3 @@ func clientIP(r *http.Request) string {
 func joinDetails(parts []string) string {
 	return strings.Join(parts, "|")
 }
-

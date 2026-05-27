@@ -101,9 +101,9 @@ type fakeChat struct {
 	name string
 }
 
-func (f *fakeChat) Name() string                                                      { return f.name }
-func (f *fakeChat) SupportsTools() bool                                                { return true }
-func (f *fakeChat) SupportsVision() bool                                               { return false }
+func (f *fakeChat) Name() string         { return f.name }
+func (f *fakeChat) SupportsTools() bool  { return true }
+func (f *fakeChat) SupportsVision() bool { return false }
 func (f *fakeChat) Chat(_ context.Context, _ llm.ChatRequest) (llm.ChatResponse, error) {
 	return llm.ChatResponse{}, nil
 }
@@ -343,8 +343,8 @@ func TestAlertarFamilia_RejectedForNonElderly(t *testing.T) {
 func TestAlertarFamilia_OnlyNotifiesOptedInGuardians(t *testing.T) {
 	db := setupTestDB(t)
 	elder := mkIdoso(t, db, "Joaquim", 24)
-	g1 := mkGuardian(t, db, elder, "Marta", true)  // opt-in
-	_ = mkGuardian(t, db, elder, "Paulo", false) // opt-out
+	g1 := mkGuardian(t, db, elder, "Marta", true) // opt-in
+	_ = mkGuardian(t, db, elder, "Paulo", false)  // opt-out
 
 	var sent []struct{ phone, msg string }
 	agent := &Agent{

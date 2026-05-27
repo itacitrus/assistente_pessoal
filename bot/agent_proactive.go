@@ -24,9 +24,9 @@ import (
 // quando o scheduler a envia ao usuario.
 //
 // Caminho:
-//   1. Carrega historico (30 mensagens).
-//   2. Append synthetic prompt como role=user no fim.
-//   3. Roda runLoop com persona companion (rotada por user.Type=idoso).
+//  1. Carrega historico (30 mensagens).
+//  2. Append synthetic prompt como role=user no fim.
+//  3. Roda runLoop com persona companion (rotada por user.Type=idoso).
 //
 // Retorna a string da mensagem proativa, ou "" se o agente decidir nao
 // puxar (resposta vazia respeitada — caller nao envia).
@@ -48,6 +48,7 @@ func (a *Agent) RunProactive(ctx context.Context, user *User, hoursIdle int) (st
 			"responda com a string vazia.",
 		user.Name, hoursIdle,
 	)
+	syntheticPrompt += proactiveAvoidRepeatHint(a.db, user.ID)
 	messages := buildMessages(history, syntheticPrompt)
 
 	// Persona companion via roteador. user.Type==idoso garante.
@@ -82,6 +83,37 @@ func (a *Agent) RunProactive(ctx context.Context, user *User, hoursIdle int) (st
 	// transporte (Handler.persistOutbound) quando o scheduler a envia. O
 	// synthetic prompt [SISTEMA] nunca eh enviado, entao nunca eh persistido.
 	return response, nil
+}
+
+// proactiveAvoidRepeatHint monta uma instrucao listando as ultimas puxadas
+// proativas (24h) para o modelo NAO repetir o mesmo gancho/assunto. Sem o
+// hint, com memoria social escassa, o modelo cai sempre no gancho universal
+// (o tempo) — foi o caso "friozinho gostoso" repetido 3x num dia. Retorna ""
+// quando nao ha puxadas recentes.
+func proactiveAvoidRepeatHint(db *DB, userID int64) string {
+	attempts, err := db.GetRecentProactiveAttempts(userID, 24*time.Hour, 4)
+	if err != nil || len(attempts) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\nVocê JÁ puxou conversa nas últimas horas com as mensagens abaixo. " +
+		"NÃO repita o mesmo gancho, tema ou abertura (ex: se já falou do tempo/frio, " +
+		"NÃO fale do tempo de novo). Traga algo genuinamente novo — outra memória, outra " +
+		"pessoa, outro interesse dele. Se não tiver nada novo e relevante pra dizer, " +
+		"responda com a string vazia em vez de insistir:")
+	for _, at := range attempts {
+		msg := strings.TrimSpace(at.MessageSent)
+		if msg == "" {
+			continue
+		}
+		if len(msg) > 160 {
+			msg = msg[:160] + "…"
+		}
+		b.WriteString("\n- \"")
+		b.WriteString(msg)
+		b.WriteString("\"")
+	}
+	return b.String()
 }
 
 // proactiveWindowAllowed retorna true se now (em loc) esta entre 8h e 21h

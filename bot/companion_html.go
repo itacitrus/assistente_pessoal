@@ -44,7 +44,8 @@ func extractMatch(s, pattern string) string {
 // Aceita aspas simples ou duplas. Retorna "" se nao encontrar.
 //
 // Ex: extractAttr(`<meta property="og:title" content="Hello">`, "content")
-//   -> "Hello"
+//
+//	-> "Hello"
 func extractAttr(tag, name string) string {
 	// content="..." ou content='...'
 	pattern := `(?i)\b` + regexp.QuoteMeta(name) + `\s*=\s*"([^"]*)"`

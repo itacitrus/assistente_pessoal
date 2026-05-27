@@ -458,8 +458,8 @@ func (c *CalendarClient) FindEvent(ctx context.Context, refreshToken, calendarID
 
 	now := time.Now()
 	events, err := svc.Events.List(calendarID).
-		TimeMin(now.Add(-24*time.Hour).Format(time.RFC3339)).
-		TimeMax(now.Add(30*24*time.Hour).Format(time.RFC3339)).
+		TimeMin(now.Add(-24 * time.Hour).Format(time.RFC3339)).
+		TimeMax(now.Add(30 * 24 * time.Hour).Format(time.RFC3339)).
 		Q(query).
 		SingleEvents(true).
 		OrderBy("startTime").

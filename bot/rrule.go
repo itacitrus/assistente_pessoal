@@ -141,7 +141,7 @@ func shiftRRULEHours(rruleStr string, delta time.Duration) (string, error) {
 	newHours := make([]int, 0, len(opts.Byhour))
 	newMinute := minute
 	for i, h := range opts.Byhour {
-		total := (((h*60+minute+deltaMin)%dayMin)+dayMin)%dayMin
+		total := (((h*60 + minute + deltaMin) % dayMin) + dayMin) % dayMin
 		newHours = append(newHours, total/60)
 		if i == 0 {
 			newMinute = total % 60

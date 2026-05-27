@@ -64,9 +64,9 @@ func TestAutoConfirmExpiry(t *testing.T) {
 	db := setupTestDB(t)
 
 	db.CreateUser(&User{
-		PhoneNumber:      "111",
-		Name:             "Test",
-		GoogleCalendarID: "t@g.com",
+		PhoneNumber:       "111",
+		Name:              "Test",
+		GoogleCalendarID:  "t@g.com",
 		GoogleCredentials: "x",
 	})
 	user, _ := db.GetUserByPhone("111")
