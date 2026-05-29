@@ -484,6 +484,19 @@ func handleMarcarRemedioTomado(ctx context.Context, agent *Agent, user *User, pa
 		return "", fmt.Errorf("get pending: %w", err)
 	}
 	if pc == nil {
+		// "Tomei" GENERICO sem pending ativo: o lembrete provavelmente ja foi
+		// escalado/encerrado pela tolerancia (a escalacao marca missed/escalated
+		// e resolve o pending, entao as buscas por pending nao acham mais nada).
+		// Acreditamos no idoso MESMO depois do prazo: reabilitamos como tomado o
+		// ultimo batch de doses nao-confirmadas. Sem isso, um "tomei" 2min apos a
+		// tolerancia (ou horas depois) ficaria sem registro e a dose continuaria
+		// "nao tomada" pro responsavel — exatamente o oposto do que o idoso disse.
+		if p.MedicationID == 0 && strings.TrimSpace(p.NameQuery) == "" {
+			if msg, handled := marcarBatchTardio(agent, user); handled {
+				return msg, nil
+			}
+		}
+
 		// Sem pending ativo — o usuario tomou FORA de um lembrete (pre-empcao,
 		// lembrete ja escalado/desistido, ou nunca houve). Mesmo assim a
 		// tomada PRECISA ser registrada no intake_log, senao some da aderencia
@@ -583,6 +596,61 @@ func marcarTodasPendentes(agent *Agent, user *User) (string, bool) {
 	}
 	if len(names) == 0 {
 		return "", false
+	}
+	return fmt.Sprintf("Anotado, %s. Marquei %s como tomados.", firstName(user.Name), joinNames(names)), true
+}
+
+// lateBelieveLookback eh ate quando, para tras, um "tomei" generico TARDIO pode
+// reabilitar um batch de doses ja escaladas/perdidas. Casado com a janela de
+// nearestScheduledDose (now-18h) para que o caminho generico-tardio e o
+// nomeado-tardio (RecordTakenIntake) se comportem igual. Bound de seguranca: nao
+// reescreve doses muito antigas com base num "tomei" vago de agora.
+const lateBelieveLookback = 18 * time.Hour
+
+// marcarBatchTardio honra um "tomei" GENERICO que chega DEPOIS de a tolerancia
+// expirar (sem nenhum pending ativo). Reabilita como 'taken' o ultimo batch de
+// doses ainda nao-tomadas (mesmo scheduled_at — o lembrete agrupado dispara
+// varios remedios no mesmo instante), dos remedios ativos do usuario, dentro da
+// janela lateBelieveLookback. O flip eh in-place no slot exato (UpdateIntakeStatus,
+// sem status guard), entao corrige a aderencia que a escalacao marcou como
+// missed/escalated. Retorna (mensagem, true) quando agiu; (zero, false) quando
+// nao ha batch recente — ai o caller segue pro caminho ad-hoc normal.
+//
+// NAO reaplica politica de dose atrasada (take_recalculate/keep_next): isso so
+// roda no caminho com pending vivo, que carrega o scheduled_at do payload. Aqui
+// nao ha pending; manter sem reagendamento deixa o generico-tardio consistente
+// com o nomeado-tardio (RecordTakenIntake tambem nao reagenda). Tambem nao
+// retrata a familia: o aviso discreto ja foi enviado quando escalou; uma
+// retratacao eh decisao de produto separada.
+func marcarBatchTardio(agent *Agent, user *User) (string, bool) {
+	since := time.Now().UTC().Add(-lateBelieveLookback)
+	batch, err := agent.db.ListRecentNonTakenBatch(user.ID, since)
+	if err != nil {
+		log.Printf("marcar_remedio_tomado(tardio): list batch: %v", err)
+		return "", false
+	}
+	if len(batch) == 0 {
+		return "", false
+	}
+
+	var names []string
+	for i := range batch {
+		row := &batch[i]
+		if err := agent.db.UpdateIntakeStatus(
+			row.MedicationID, row.ScheduledAt, IntakeTaken, "tomei (tardio, fora de lembrete)"); err != nil {
+			log.Printf("marcar_remedio_tomado(tardio): update intake med %d: %v", row.MedicationID, err)
+			continue
+		}
+		names = append(names, row.MedicationName)
+		agent.audit.Log(user.ID, "medication_taken", row.MedicationName,
+			fmt.Sprintf("med_id=%d|note=tardio_pos_escalada|scheduled=%s",
+				row.MedicationID, row.ScheduledAt.Format(time.RFC3339)))
+	}
+	if len(names) == 0 {
+		return "", false
+	}
+	if len(names) == 1 {
+		return fmt.Sprintf("Anotado, %s.", firstName(user.Name)), true
 	}
 	return fmt.Sprintf("Anotado, %s. Marquei %s como tomados.", firstName(user.Name), joinNames(names)), true
 }

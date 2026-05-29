@@ -621,6 +621,154 @@ func TestMarkRemedioTomado_LateDose_NeutralResponse(t *testing.T) {
 }
 
 // =========================================================================
+// "Tomei" GENERICO TARDIO — acreditar no usuario apos a tolerancia/escalada
+//
+// Depois que a tolerancia expira, a escalacao marca a dose missed/escalated e
+// RESOLVE o pending. Um "tomei" generico que chega depois disso nao acha nenhum
+// pending ativo. Mesmo assim a tomada precisa ser registrada: acreditamos no
+// idoso. marcarBatchTardio reabilita o ultimo batch nao-confirmado como 'taken'.
+// =========================================================================
+
+// assertNeutralTaken confere que a resposta confirma a anotacao sem reforco
+// positivo (mesma lei de TestMarkRemedioTomado_LateDose_NeutralResponse).
+func assertNeutralTaken(t *testing.T, resp string) {
+	t.Helper()
+	low := strings.ToLower(resp)
+	if !strings.Contains(low, "anotado") {
+		t.Fatalf("expected neutral 'anotado' ack, got %q", resp)
+	}
+	for _, tok := range []string{"otimo", "ótimo", "fez bem", "parabens", "parabéns", "ainda bem"} {
+		if strings.Contains(low, tok) {
+			t.Fatalf("response contains positive-reinforcement token %q: %q", tok, resp)
+		}
+	}
+}
+
+// Caso central: o idoso confirma TARDE (sem pending ativo) uma dose ja escalada;
+// o "tomei" generico deve virar 'taken' (era o bug: ficava escalated/missed).
+func TestMarkRemedioTomado_LateGenericAfterEscalation_FlipsToTaken(t *testing.T) {
+	db := setupTestDB(t)
+	user := mkUsers(t, db, "Fabio")[0]
+	m, _ := mkMedForUser(t, db, user, "Aradois", "FREQ=DAILY;BYHOUR=18;BYMINUTE=0", false)
+
+	// Estado pos-escalacao: intake escalado, NENHUM pending ativo (ja resolvido).
+	sched := time.Now().UTC().Add(-45 * time.Minute) // dentro da janela de 18h
+	if err := db.CreateIntakeLogIfAbsent(m.ID, sched, IntakeEscalated); err != nil {
+		t.Fatal(err)
+	}
+
+	agent := mkTestAgent(t, db)
+	resp, err := handleMarcarRemedioTomado(context.Background(), agent, user, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNeutralTaken(t, resp)
+
+	logs, _ := db.ListIntakeLogsForMedication(m.ID, 5)
+	if len(logs) != 1 {
+		t.Fatalf("expected exactly 1 log row (flip in-place, no duplicate), got %d", len(logs))
+	}
+	if logs[0].Status != IntakeTaken {
+		t.Fatalf("late 'tomei' should flip escalated->taken, got %s", logs[0].Status)
+	}
+	if logs[0].ConfirmedAt == nil {
+		t.Fatal("confirmed_at should be set after late confirmation")
+	}
+}
+
+// Variante sem guardiao: a dose vira 'missed'; o "tomei" tardio tambem reabilita.
+func TestMarkRemedioTomado_LateGenericAfterMissed_FlipsToTaken(t *testing.T) {
+	db := setupTestDB(t)
+	user := mkUsers(t, db, "Fabio")[0]
+	m, _ := mkMedForUser(t, db, user, "Losartana", "FREQ=DAILY;BYHOUR=6;BYMINUTE=0", false)
+
+	sched := time.Now().UTC().Add(-90 * time.Minute)
+	if err := db.CreateIntakeLogIfAbsent(m.ID, sched, IntakeMissed); err != nil {
+		t.Fatal(err)
+	}
+
+	agent := mkTestAgent(t, db)
+	resp, err := handleMarcarRemedioTomado(context.Background(), agent, user, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNeutralTaken(t, resp)
+
+	logs, _ := db.ListIntakeLogsForMedication(m.ID, 5)
+	if len(logs) != 1 || logs[0].Status != IntakeTaken {
+		t.Fatalf("late 'tomei' should flip missed->taken in place, got %+v", logs)
+	}
+}
+
+// Caso do print do usuario: lembrete AGRUPADO (2 remedios no mesmo horario),
+// ambos escalados; um "tomei" generico tardio marca OS DOIS como tomados.
+func TestMarkRemedioTomado_LateGenericGroupedBatch_FlipsAll(t *testing.T) {
+	db := setupTestDB(t)
+	user := mkUsers(t, db, "Fabio")[0]
+	m1, _ := mkMedForUser(t, db, user, "Amoxicilina", "FREQ=DAILY;BYHOUR=19;BYMINUTE=0", false)
+	m2, _ := mkMedForUser(t, db, user, "Bactroban", "FREQ=DAILY;BYHOUR=19;BYMINUTE=0", false)
+
+	// Mesmo instante exato (lembrete agrupado), ambos escalados, sem pending.
+	sched := time.Now().UTC().Add(-35 * time.Minute)
+	if err := db.CreateIntakeLogIfAbsent(m1.ID, sched, IntakeEscalated); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateIntakeLogIfAbsent(m2.ID, sched, IntakeEscalated); err != nil {
+		t.Fatal(err)
+	}
+
+	agent := mkTestAgent(t, db)
+	resp, err := handleMarcarRemedioTomado(context.Background(), agent, user, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNeutralTaken(t, resp)
+	if !strings.Contains(strings.ToLower(resp), "marquei") {
+		t.Fatalf("grouped late confirmation should name the meds it marked, got %q", resp)
+	}
+
+	for _, m := range []*Medication{m1, m2} {
+		logs, _ := db.ListIntakeLogsForMedication(m.ID, 5)
+		if len(logs) != 1 || logs[0].Status != IntakeTaken {
+			t.Fatalf("%s: expected single taken row after batch confirm, got %+v", m.Name, logs)
+		}
+	}
+}
+
+// Precisao: so o BATCH mais recente nao-tomado vira taken. Uma dose 'skipped'
+// (pulo deliberado) e doses antigas NAO podem ser tocadas por um "tomei" vago.
+func TestMarkRemedioTomado_LateGeneric_OnlyMostRecentBatch_SkippedUntouched(t *testing.T) {
+	db := setupTestDB(t)
+	user := mkUsers(t, db, "Fabio")[0]
+	m, _ := mkMedForUser(t, db, user, "Losartana", "FREQ=DAILY;BYHOUR=8;BYMINUTE=0", false)
+
+	recentMissed := time.Now().UTC().Add(-40 * time.Minute) // batch mais recente nao-tomado
+	olderSkipped := time.Now().UTC().Add(-3 * time.Hour)     // pulo deliberado, anterior
+	if err := db.CreateIntakeLogIfAbsent(m.ID, recentMissed, IntakeMissed); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateIntakeLogIfAbsent(m.ID, olderSkipped, IntakeSkipped); err != nil {
+		t.Fatal(err)
+	}
+
+	agent := mkTestAgent(t, db)
+	if _, err := handleMarcarRemedioTomado(context.Background(), agent, user, json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	logs, _ := db.ListIntakeLogsForMedication(m.ID, 10) // DESC por scheduled_at
+	if len(logs) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(logs))
+	}
+	if logs[0].Status != IntakeTaken {
+		t.Fatalf("most-recent missed dose should flip to taken, got %s", logs[0].Status)
+	}
+	if logs[1].Status != IntakeSkipped {
+		t.Fatalf("deliberate earlier skip must stay skipped, got %s", logs[1].Status)
+	}
+}
+
+// =========================================================================
 // Skip
 // =========================================================================
 

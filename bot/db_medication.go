@@ -507,6 +507,62 @@ func (db *DB) RecordTakenIntake(medID int64, scheduledAt time.Time, note string)
 	return nil
 }
 
+// ListRecentNonTakenBatch devolve o BATCH mais recente de doses ainda NAO
+// tomadas dos medicamentos ATIVOS do usuario, dentro da janela [since, agora].
+// "Batch" = todas as doses que compartilham o mesmo scheduled_at mais recente
+// (o lembrete agrupado dispara varios remedios no mesmo instante exato —
+// scheduler_medication.go agrupa por UnixNano). Considera os status pending,
+// escalated e missed; NUNCA inclui 'taken' (ja confirmada), 'skipped' (o idoso
+// pulou de proposito) nem 'unknown' (dose de remedio que nao exige confirmacao,
+// resolvida pelo sweeper).
+//
+// Uso: honrar um "tomei" GENERICO TARDIO. Depois que a tolerancia expira, a
+// escalacao marca a dose como missed/escalated e RESOLVE o pending — entao as
+// buscas por pending (status='pending') nao acham mais nada. Mesmo assim o idoso
+// pode confirmar depois, e a gente acredita nele: reabilita o ultimo batch como
+// tomado. A selecao do MAX(scheduled_at) fica DENTRO do SQLite (subquery) para
+// nao depender de round-trip de time.Time pelo driver, e casa exatamente com o
+// slot ja existente (UNIQUE medication_id+scheduled_at) — flip in-place, sem
+// linha fantasma.
+func (db *DB) ListRecentNonTakenBatch(userID int64, since time.Time) ([]IntakeHistoryEntry, error) {
+	rows, err := db.conn.Query(
+		`SELECT m.id, m.name, m.dose, l.scheduled_at, l.status, l.confirmed_at
+		   FROM medication_intake_log l
+		   JOIN medications m ON m.id = l.medication_id
+		  WHERE m.user_id = ? AND m.active = 1
+		    AND l.status IN ('pending','escalated','missed')
+		    AND l.scheduled_at = (
+		        SELECT MAX(l2.scheduled_at)
+		          FROM medication_intake_log l2
+		          JOIN medications m2 ON m2.id = l2.medication_id
+		         WHERE m2.user_id = ? AND m2.active = 1
+		           AND l2.scheduled_at >= ?
+		           AND l2.status IN ('pending','escalated','missed'))
+		  ORDER BY m.name`,
+		userID, userID, since.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("list recent non-taken batch: %w", err)
+	}
+	defer rows.Close()
+
+	var out []IntakeHistoryEntry
+	for rows.Next() {
+		var e IntakeHistoryEntry
+		var status string
+		var confirmed sql.NullTime
+		if err := rows.Scan(&e.MedicationID, &e.MedicationName, &e.Dose, &e.ScheduledAt, &status, &confirmed); err != nil {
+			return nil, err
+		}
+		e.Status = IntakeStatus(status)
+		if confirmed.Valid {
+			t := confirmed.Time
+			e.ConfirmedAt = &t
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // GetLatestPendingIntake busca a ocorrencia pending mais recente para o
 // medicamento. Util para "marcar tomado" sem ID explicito (idoso responde
 // "tomei" sem citar qual). Retorna ErrIntakeLogDuplicate se nao houver

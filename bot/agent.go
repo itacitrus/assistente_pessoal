@@ -886,7 +886,7 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 		},
 		{
 			Name:        "marcar_remedio_tomado",
-			Description: "Registra que o usuario JA tomou um remedio. Use SEMPRE que o usuario disser 'tomei', 'ja bebi', 'pronto, foi'. Funciona tanto em resposta a um lembrete quanto quando o usuario avisa por conta propria (sem lembrete ativo) — nos dois casos a tomada eh gravada de verdade. Para 'vou tomar mais tarde'/'daqui a pouco'/'la pelas 18h40', use adiar_remedio (NAO esta). Quando o usuario citar o nome do remedio ('tomei o 4mag'), passe name_query pra anotar no remedio certo. Se nada for passado, pega o lembrete pendente atual; sem pending e com mais de um remedio, o sistema pede pra esclarecer.",
+			Description: "Registra que o usuario JA tomou um remedio. Use SEMPRE que o usuario disser 'tomei', 'ja bebi', 'pronto, foi' — INCLUSIVE quando o lembrete ja foi escalado ou encerrado pelo horario (tomada tardia): ainda assim registre, a gente acredita no usuario. Funciona em resposta a um lembrete ou quando o usuario avisa por conta propria (sem lembrete ativo) — nos dois casos a tomada eh gravada de verdade. Para 'vou tomar mais tarde'/'daqui a pouco'/'la pelas 18h40', use adiar_remedio (NAO esta). Quando o usuario citar o nome do remedio ('tomei o 4mag'), passe name_query pra anotar no remedio certo. Sem nada passado: pega o lembrete pendente atual; se nao houver pending, reabilita como tomado o ultimo grupo de doses nao confirmadas (tomada tardia); so pede pra esclarecer quando nao ha nenhuma dose recente e o usuario tem varios remedios.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
