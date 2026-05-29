@@ -14,9 +14,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ApiError } from "@/lib/api";
 import { getMyAgendaEvents } from "@/lib/api/me";
 import { cn } from "@/lib/utils";
+import { APP_TIME_ZONE as TZ } from "@/lib/format";
 import type { AgendaEvent } from "@/types/api";
-
-const TZ = "America/Sao_Paulo";
 const WEEKDAY_LABELS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 const MONTH_LABELS = [
   "janeiro",

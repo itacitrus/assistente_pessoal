@@ -1,7 +1,6 @@
 import type { IntakeEntry, IntakeStatus } from "@/types/api";
 import { cn } from "@/lib/utils";
-
-const TZ = "America/Sao_Paulo";
+import { APP_TIME_ZONE as TZ } from "@/lib/format";
 
 /** Rótulo + cores por status. Para o responsável, "missed" e "escalated" são
  * ambos simplesmente "Não tomada" — a escalação à família é detalhe interno. */

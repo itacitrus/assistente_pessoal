@@ -8,6 +8,7 @@ import {
 
 import type { DependentStatus, Tendencia } from "@/types/api";
 import { cn } from "@/lib/utils";
+import { APP_TIME_ZONE } from "@/lib/format";
 
 export interface StatusHeaderProps {
   status: DependentStatus;
@@ -102,7 +103,9 @@ function formatRelative(iso: string): string {
   if (diffH < 24) return `há ${diffH}h`;
   const diffD = Math.round(diffH / 24);
   if (diffD < 7) return `há ${diffD} dia${diffD > 1 ? "s" : ""}`;
-  return then.toLocaleDateString("pt-BR");
+  // Server component render em UTC: sem timeZone, a data >7 dias poderia exibir
+  // o dia errado para o usuario brasileiro.
+  return then.toLocaleDateString("pt-BR", { timeZone: APP_TIME_ZONE });
 }
 
 function daysSince(days: number): string {
