@@ -1,6 +1,8 @@
 package api
 
 import (
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -65,6 +67,21 @@ func (c *statusCache) Set(key string, value *StatusResponse) {
 // afeta o status (futuro: cancelamento de medicacao, etc).
 func (c *statusCache) Invalidate(key string) {
 	c.m.Delete(key)
+}
+
+// InvalidateDependent remove TODAS as entradas de um dependente (todas as
+// variantes de `days`, cuja chave eh "depID-days"). Usado quando uma mutacao no
+// painel muda o status — ex: revisar um alerta. Sem isto, o GET seguinte servia o
+// status cacheado com o alerta ainda "aberto", a UI nao removia o item, e um novo
+// clique batia em "Alerta nao encontrado ou ja revisado".
+func (c *statusCache) InvalidateDependent(depID int64) {
+	prefix := strconv.FormatInt(depID, 10) + "-"
+	c.m.Range(func(k, _ any) bool {
+		if ks, ok := k.(string); ok && strings.HasPrefix(ks, prefix) {
+			c.m.Delete(ks)
+		}
+		return true
+	})
 }
 
 // insightsCache eh um cache em memoria com TTL pra GET /api/v1/me/insights.

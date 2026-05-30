@@ -177,6 +177,23 @@ func TestStatusCache_Invalidate(t *testing.T) {
 	}
 }
 
+func TestStatusCache_InvalidateDependent(t *testing.T) {
+	c := newStatusCache(time.Hour)
+	c.Set("16-14", &StatusResponse{Days: 14})
+	c.Set("16-30", &StatusResponse{Days: 30})
+	c.Set("1-14", &StatusResponse{Days: 14}) // outro dependente, prefixo "1-" nao colide
+	c.InvalidateDependent(16)
+	if _, ok := c.Get("16-14"); ok {
+		t.Error("16-14 deveria ter sido invalidado")
+	}
+	if _, ok := c.Get("16-30"); ok {
+		t.Error("16-30 deveria ter sido invalidado")
+	}
+	if _, ok := c.Get("1-14"); !ok {
+		t.Error("1-14 (outro dependente) NAO deveria ser invalidado")
+	}
+}
+
 func TestServer_RoutesUnknown(t *testing.T) {
 	_, _, mux := newTestServer(t)
 	rec := doRequest(t, mux, http.MethodGet, "/api/v1/family/dependents/abc/status", nil)

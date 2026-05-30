@@ -480,7 +480,7 @@ func (s *Server) handleRefreshDependent(w http.ResponseWriter, r *http.Request, 
 	if mErr := s.store.MarkManualRefresh(r.Context(), depID, "report"); mErr != nil {
 		log.Printf("manual dependent refresh: mark dep=%d: %v", depID, mErr)
 	}
-	s.statusCache.Invalidate(fmt.Sprintf("%d-%d", depID, days))
+	s.statusCache.InvalidateDependent(depID)
 	s.store.Audit(r.Context(), user.ID, "dependent_manual_refresh", "",
 		fmt.Sprintf("dependent_id=%d|days=%d", depID, days))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -535,6 +535,10 @@ func (s *Server) handleReviewDependentAlert(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, CodeNotFound, "Alerta não encontrado ou já revisado.")
 		return
 	}
+	// Invalida o status cacheado do dependente: o alerta acabou de sair de "aberto",
+	// e sem isto o GET seguinte (router.refresh) serviria o cache antigo com o alerta
+	// ainda na lista — o usuario clicava de novo e batia em "ja revisado".
+	s.statusCache.InvalidateDependent(depID)
 	s.store.Audit(r.Context(), user.ID, "alert_reviewed", "",
 		fmt.Sprintf("dependent_id=%d|alert_id=%d|has_note=%t", depID, alertID, note != ""))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
