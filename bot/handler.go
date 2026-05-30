@@ -18,6 +18,14 @@ import (
 // before processing the accumulated batch. Resets on every new message.
 const bufferDelay = 5 * time.Second
 
+// elderBufferDelay eh a janela de coalescencia para idosos. Maior de proposito:
+// idoso costuma mandar a mensagem em pedacos com pausa ("Bom dia" ... "Pronto"),
+// e com 5s esses pedacos viravam DOIS turnos -> duas respostas (duas saudacoes),
+// dando a impressao de "dois agentes". Com a janela maior eles coalescem num
+// unico turno -> uma resposta. Companheiro nao eh canal de baixa latencia; trocar
+// alguns segundos por coerencia social vale a pena.
+const elderBufferDelay = 9 * time.Second
+
 type pendingBuffer struct {
 	texts     []string
 	images    []ImageAttachment
@@ -37,6 +45,12 @@ type Handler struct {
 	processedMu    sync.Mutex
 	buffers        map[string]*pendingBuffer
 	bufMu          sync.Mutex
+	// procLocks serializa o processamento por usuario: um turno por vez. Sem
+	// isso, dois flushes do mesmo usuario podiam rodar em paralelo e o segundo
+	// nem via a resposta do primeiro no historico (race -> respostas incoerentes,
+	// dupla saudacao). Lazy via getProcLock.
+	procLocks map[string]*sync.Mutex
+	procMu    sync.Mutex
 }
 
 func NewHandler(client *whatsmeow.Client, db *DB, orchestrator *Orchestrator) *Handler {
@@ -47,7 +61,21 @@ func NewHandler(client *whatsmeow.Client, db *DB, orchestrator *Orchestrator) *H
 		unknownReplied: make(map[string]time.Time),
 		processedMsgs:  make(map[string]bool),
 		buffers:        make(map[string]*pendingBuffer),
+		procLocks:      make(map[string]*sync.Mutex),
 	}
+}
+
+// getProcLock devolve (criando se preciso) o mutex de serializacao de turno para
+// `phone`. Garante "um turno por vez por usuario".
+func (h *Handler) getProcLock(phone string) *sync.Mutex {
+	h.procMu.Lock()
+	defer h.procMu.Unlock()
+	m, ok := h.procLocks[phone]
+	if !ok {
+		m = &sync.Mutex{}
+		h.procLocks[phone] = m
+	}
+	return m
 }
 
 func (h *Handler) HandleEvent(evt interface{}) {
@@ -158,7 +186,7 @@ func (h *Handler) handleMessage(msg *events.Message) {
 			return // Ignore non-text from unknown users (audio, etc)
 		}
 		log.Printf("Unknown number %s: %s (buffering)", sender, text)
-		h.bufferAndSchedule(sender, senderJID, msg.Info.PushName, text, nil)
+		h.bufferAndSchedule(sender, senderJID, msg.Info.PushName, text, nil, false)
 		return
 	}
 	if err != nil {
@@ -217,13 +245,14 @@ func (h *Handler) handleMessage(msg *events.Message) {
 
 	log.Printf("[%s] %s: %s", user.Name, sender, text)
 
-	h.bufferAndSchedule(sender, senderJID, msg.Info.PushName, text, images)
+	h.bufferAndSchedule(sender, senderJID, msg.Info.PushName, text, images, user.Type == UserTypeIdoso)
 }
 
-// bufferAndSchedule appends a message to the per-user pending buffer and
-// (re)arms a 5s timer. When the timer fires without new messages, the batch
-// is flushed to the orchestrator as a single request.
-func (h *Handler) bufferAndSchedule(phone string, senderJID types.JID, pushName, text string, images []ImageAttachment) {
+// bufferAndSchedule appends a message to the per-user pending buffer and (re)arms
+// the coalescing timer. When the timer fires without new messages, the batch is
+// flushed to the orchestrator as a single request. isElder usa uma janela maior
+// (elderBufferDelay) para coalescer mensagens em pedacos do idoso num so turno.
+func (h *Handler) bufferAndSchedule(phone string, senderJID types.JID, pushName, text string, images []ImageAttachment, isElder bool) {
 	h.bufMu.Lock()
 	defer h.bufMu.Unlock()
 
@@ -245,7 +274,11 @@ func (h *Handler) bufferAndSchedule(phone string, senderJID types.JID, pushName,
 	if pb.timer != nil {
 		pb.timer.Stop()
 	}
-	pb.timer = time.AfterFunc(bufferDelay, func() { h.flushBuffer(phone, gen) })
+	delay := bufferDelay
+	if isElder {
+		delay = elderBufferDelay
+	}
+	pb.timer = time.AfterFunc(delay, func() { h.flushBuffer(phone, gen) })
 }
 
 // flushBuffer drains the pending buffer for phone and dispatches the batch.
@@ -289,6 +322,15 @@ func (h *Handler) flushBuffer(phone string, gen uint64) {
 	if !user.IsActive {
 		return
 	}
+
+	// Serializa o processamento por usuario: um turno por vez. Se outra mensagem
+	// chegou e disparou outro flush, ele espera aqui — garantindo que ESTE turno
+	// persista sua resposta no historico ANTES do proximo rodar (sem corrida, sem
+	// dupla saudacao de turnos concorrentes). A goroutine de snapshot la embaixo
+	// nao segura o lock (o `go` retorna na hora; defer libera no fim da funcao).
+	lock := h.getProcLock(phone)
+	lock.Lock()
+	defer lock.Unlock()
 
 	log.Printf("[%s] Flushing buffer (%d msgs, %d imgs)", user.Name, len(pb.texts), len(pb.images))
 

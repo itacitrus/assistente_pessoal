@@ -128,11 +128,29 @@ type pendingItem struct {
 	scheduledAt time.Time
 }
 
+// nudgeEngagementGrace eh a janela apos a ultima fala do idoso em que NAO mandamos
+// o cutucao gentil — ele acabou de interagir, cutucar soa como "ignorei sua
+// resposta". Derivada da tolerancia: min(20min, tolerance/2). O teto em tolerance/2
+// eh deliberado: garante que a supressao nunca empurre o cutucao para depois do
+// deadline (scheduledAt+tolerance), onde a familia ja seria avisada — engajamento
+// adia o cutucao, NUNCA silencia a rede de seguranca real.
+func nudgeEngagementGrace(toleranceMinutes int) time.Duration {
+	if toleranceMinutes <= 0 {
+		toleranceMinutes = DefaultToleranceMinutes
+	}
+	half := time.Duration(toleranceMinutes) * time.Minute / 2
+	if cap := 20 * time.Minute; half > cap {
+		return cap
+	}
+	return half
+}
+
 // classify decide o que fazer com um pending AGORA, sem efeito colateral: nudge
 // gentil, escalar (deadline), ou nada. Retorna o item resolvido (med +
 // scheduledAt) pra quem for executar/agrupar. ok=false quando o pending nao
-// tem politica valida (sem escalacao).
-func (e *EscalationEngine) classify(now time.Time, pc *PendingConfirmation) (action int, item pendingItem, ok bool) {
+// tem politica valida (sem escalacao). user (pode ser nil) traz LastUserMessageAt
+// para a supressao de cutucao por engajamento — so afeta o ramo do nudge.
+func (e *EscalationEngine) classify(now time.Time, user *User, pc *PendingConfirmation) (action int, item pendingItem, ok bool) {
 	if pc == nil || pc.EscalationPolicy == nil || *pc.EscalationPolicy == "" {
 		return actNone, pendingItem{}, false
 	}
@@ -176,6 +194,16 @@ func (e *EscalationEngine) classify(now time.Time, pc *PendingConfirmation) (act
 	if now.Before(nudgeAt) {
 		return actNone, item, true
 	}
+	// Supressao por engajamento: se o idoso interagiu DEPOIS do lembrete (apos
+	// scheduledAt) e ha pouco (dentro da grace), nao cutuca — ele esta presente,
+	// acabou de responder. Apenas ADIA (re-dispara em ticks seguintes se ainda
+	// <deadline). NUNCA toca a escalacao a familia, ja avaliada no deadline acima.
+	if user != nil && user.LastUserMessageAt != nil {
+		lum := user.LastUserMessageAt.UTC()
+		if lum.After(scheduledAt) && now.Sub(lum) < nudgeEngagementGrace(tolerance) {
+			return actNone, item, true
+		}
+	}
 	return actNudge, item, true
 }
 
@@ -183,13 +211,13 @@ func (e *EscalationEngine) classify(now time.Time, pc *PendingConfirmation) (act
 // scheduler chama ProcessPendings (agrupa mensagens por usuario). Aqui o grupo
 // eh de tamanho 1, entao as mensagens saem na forma simples (single-med).
 func (e *EscalationEngine) HandlePending(now time.Time, pc *PendingConfirmation) {
-	action, item, ok := e.classify(now, pc)
-	if !ok || action == actNone {
-		return
-	}
 	user, err := e.db.GetUserByID(pc.UserID)
 	if err != nil {
 		log.Printf("escalation pc %d: user lookup: %v", pc.ID, err)
+		return
+	}
+	action, item, ok := e.classify(now, user, pc)
+	if !ok || action == actNone {
 		return
 	}
 	switch action {
@@ -226,7 +254,7 @@ func (e *EscalationEngine) ProcessPendings(now time.Time, pendings []PendingConf
 		}
 		var nudges, family, missed []pendingItem
 		for _, pc := range byUser[uid] {
-			action, item, ok := e.classify(now, pc)
+			action, item, ok := e.classify(now, user, pc)
 			if !ok {
 				continue
 			}
@@ -260,6 +288,26 @@ func (e *EscalationEngine) sendNudges(now time.Time, user *User, items []pending
 	if len(items) == 0 {
 		return
 	}
+	// Re-checa cada pending: nao cutuca dose que foi resolvida (ex: "tomei") entre
+	// a leitura do batch (GetActiveMedicationPendings) e agora. Sem isso, o cutucao
+	// podia chegar logo depois de o idoso confirmar — exatamente a sensacao de
+	// "ignorou minha resposta".
+	open := items[:0:0]
+	for _, it := range items {
+		stillOpen, err := e.db.MedicationPendingStillOpen(it.pc.ID)
+		if err != nil {
+			log.Printf("escalation pc %d: still-open check: %v", it.pc.ID, err)
+			continue
+		}
+		if stillOpen {
+			open = append(open, it)
+		}
+	}
+	if len(open) == 0 {
+		return
+	}
+	items = open
+
 	var msg string
 	if len(items) == 1 {
 		msg = gentleNudgeMsg(EscalationContext{
@@ -302,23 +350,42 @@ func (e *EscalationEngine) escalateToFamily(now time.Time, user *User, items []p
 		return
 	}
 
+	// CAS-resolve cada pending para 'escalated' ANTES de avisar a familia. So
+	// seguimos com os que ESTE tick resolveu (status era 'pending'): se um "tomei"
+	// concorrente ja resolveu o pending entre a leitura do batch e agora, NAO
+	// avisamos a familia indevidamente nem regredimos a dose 'taken'.
+	live := items[:0:0]
+	for _, it := range items {
+		won, rerr := e.db.ResolvePendingConfirmationIfPending(it.pc.ID, "escalated")
+		if rerr != nil {
+			log.Printf("escalation pc %d: resolve: %v", it.pc.ID, rerr)
+			continue
+		}
+		if won {
+			live = append(live, it)
+		}
+	}
+	if len(live) == 0 {
+		return
+	}
+
 	const familyAttempt = 2 // 1 = lembrete gentil ao idoso; 2 = aviso a familia
 	for i := range guardians {
 		g := guardians[i]
 		var msg string
-		if len(items) == 1 {
+		if len(live) == 1 {
 			msg = familyMissMsg(EscalationContext{
-				User: user, Medication: items[0].med, ScheduledAt: items[0].scheduledAt,
-				Recipient: &g, DeferredUntil: items[0].pc.DeferredUntil,
+				User: user, Medication: live[0].med, ScheduledAt: live[0].scheduledAt,
+				Recipient: &g, DeferredUntil: live[0].pc.DeferredUntil,
 			})
 		} else {
-			msg = groupedFamilyMissMsg(user, items)
+			msg = groupedFamilyMissMsg(user, live)
 		}
 		if err := e.notifier.Send(context.Background(), &g, msg); err != nil {
 			log.Printf("escalation user %d: notify guardian %d: %v", user.ID, g.ID, err)
 			continue
 		}
-		for _, it := range items {
+		for _, it := range live {
 			if err := e.db.RecordEscalationAttempt(it.pc.ID, policyNameOf(it.pc), familyAttempt, g.ID, e.notifier.Channel(), now); err != nil {
 				if !errors.Is(err, ErrIntakeLogDuplicate) {
 					log.Printf("escalation pc %d: record family attempt: %v", it.pc.ID, err)
@@ -327,14 +394,11 @@ func (e *EscalationEngine) escalateToFamily(now time.Time, user *User, items []p
 		}
 	}
 
-	for _, it := range items {
+	for _, it := range live {
 		if it.med != nil {
-			if err := e.db.UpdateIntakeStatus(it.med.ID, it.scheduledAt, IntakeEscalated, ""); err != nil {
+			if err := e.db.UpdateIntakeStatusIfPending(it.med.ID, it.scheduledAt, IntakeEscalated, ""); err != nil {
 				log.Printf("escalation pc %d: update intake escalated: %v", it.pc.ID, err)
 			}
-		}
-		if err := e.db.ResolvePendingConfirmation(it.pc.ID, "escalated"); err != nil {
-			log.Printf("escalation pc %d: resolve: %v", it.pc.ID, err)
 		}
 		NewAuditLog(e.db).Log(user.ID, "medication_escalated", "",
 			fmt.Sprintf("pc=%d guardians=%d", it.pc.ID, len(guardians)))
@@ -345,13 +409,20 @@ func (e *EscalationEngine) escalateToFamily(now time.Time, user *User, items []p
 // alerta — usado quando nao ha guardian ou a politica nao escala pra familia.
 func (e *EscalationEngine) markMissed(items []pendingItem) {
 	for _, it := range items {
+		// CAS: so marca missed se ESTE tick resolveu o pending. Se um "tomei"
+		// concorrente ja resolveu, nao regride a dose nem audita 'missed'.
+		won, err := e.db.ResolvePendingConfirmationIfPending(it.pc.ID, "missed")
+		if err != nil {
+			log.Printf("escalation pc %d: resolve missed: %v", it.pc.ID, err)
+			continue
+		}
+		if !won {
+			continue
+		}
 		if it.med != nil {
-			if err := e.db.UpdateIntakeStatus(it.med.ID, it.scheduledAt, IntakeMissed, ""); err != nil {
+			if err := e.db.UpdateIntakeStatusIfPending(it.med.ID, it.scheduledAt, IntakeMissed, ""); err != nil {
 				log.Printf("escalation pc %d: update intake missed: %v", it.pc.ID, err)
 			}
-		}
-		if err := e.db.ResolvePendingConfirmation(it.pc.ID, "missed"); err != nil {
-			log.Printf("escalation pc %d: resolve missed: %v", it.pc.ID, err)
 		}
 		NewAuditLog(e.db).Log(it.pc.UserID, "medication_missed", "", fmt.Sprintf("pc=%d", it.pc.ID))
 	}

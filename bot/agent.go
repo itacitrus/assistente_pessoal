@@ -168,6 +168,7 @@ func (a *Agent) Run(ctx context.Context, user *User, message string, images []Im
 	systemParts = a.appendMedicationPolicyPart(systemParts, user)
 	systemParts = a.appendCompanionPharmaPart(systemParts, user, message)
 	systemParts = a.appendCompanionDayContextPart(systemParts, user, time.Now())
+	systemParts = a.appendCompanionContinuationPart(systemParts, user)
 
 	// Idoso roteia para o companion provider (DeepSeek em prod). O loop usa a
 	// abstracao llm.ChatProvider, reaproveitando os mesmos toolHandlers. Imagens

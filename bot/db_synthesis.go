@@ -72,6 +72,35 @@ func (db *DB) GetLatestSnapshotInferredAt(userID int64) (t time.Time, ok bool, e
 	return inferred.Time.UTC(), true, nil
 }
 
+// DependentSynthesisTarget identifica um dependente que JA tem sintese persistida
+// — alvo do refresh diario. Espelha AgendaInsightsTarget.
+type DependentSynthesisTarget struct {
+	DependentID int64
+	Days        int
+}
+
+// ListDependentSynthesisTargets retorna todos os dependentes com sintese ja
+// persistida (uma linha por dependente). O refresh diario itera ESTES, em vez de
+// "todos os idosos ativos" — fonte unificada com o refresh de insights, robusta a
+// is_active/type e mais barata. Dependente novo (sem sintese ainda) gera no
+// primeiro acesso pelo caminho read-stale.
+func (db *DB) ListDependentSynthesisTargets() ([]DependentSynthesisTarget, error) {
+	rows, err := db.conn.Query(`SELECT dependent_id, days FROM dependent_synthesis`)
+	if err != nil {
+		return nil, fmt.Errorf("list dependent synthesis targets: %w", err)
+	}
+	defer rows.Close()
+	var out []DependentSynthesisTarget
+	for rows.Next() {
+		var t DependentSynthesisTarget
+		if err := rows.Scan(&t.DependentID, &t.Days); err != nil {
+			return nil, fmt.Errorf("scan synthesis target: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // UpsertDependentSynthesis grava (ou substitui) a sintese do dependente.
 func (db *DB) UpsertDependentSynthesis(dependentID int64, days int, report synthesis.ReportOutput, generatedAt time.Time) error {
 	payload, err := json.Marshal(report)

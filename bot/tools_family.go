@@ -279,17 +279,42 @@ func BuildDependentStatus(ctx context.Context, db *DB, _ llm.ReportProvider, dep
 	if latest, ok, lErr := db.GetLatestSnapshotInferredAt(dep.ID); lErr == nil && ok {
 		rep.SynthesisStale = stored.GeneratedAt.Before(latest)
 	}
+	// Tambem stale se a sintese eh de um dia anterior (frescor de CALENDARIO), mesmo
+	// sem snapshot novo. Sem isto, quando os snapshots paravam de avancar (small-talk
+	// nao gera snapshot), stale virava false PARA SEMPRE e o read-stale nunca
+	// regenerava — o painel congelava. Usa o fuso do dependente. Custo: no maximo 1
+	// regen/dia por este gatilho (apos regenerar hoje, generated_at >= inicio do dia).
+	tz := db.GetEventTimezone(dep.ID, now)
+	if tz == nil {
+		tz = BRT()
+	}
+	nowLocal := now.In(tz)
+	startOfToday := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, tz)
+	if stored.GeneratedAt.Before(startOfToday) {
+		rep.SynthesisStale = true
+	}
 	return rep, nil
 }
 
 // RegenerateDependentSynthesis roda a sintese (Sonnet) e persiste o resultado.
 // Roda FORA do caminho de request — pelo regen assincrono (read stale) e pelo
-// refresh diario do scheduler. Best-effort: em falha de Sonnet, audita
-// synthesis_failed e NAO sobrescreve a sintese anterior (mantem a ultima boa).
-func RegenerateDependentSynthesis(ctx context.Context, db *DB, report llm.ReportProvider, dep *User, days int) error {
+// refresh diario do scheduler. Best-effort: em falha NAO sobrescreve a sintese
+// anterior (mantem a ultima boa).
+//
+// OBSERVABILIDADE (critico): QUALQUER falha — report nil, erro de getter (med
+// stats/alerts/snapshots), Synthesize ou upsert — eh auditada como synthesis_failed
+// com o motivo. Antes, so a falha de Synthesize auditava; erros de getter/nil
+// retornavam mudos e o painel congelava SEM nenhum rastro (foi o que mascarou a
+// quebra em producao). O defer garante o registro em todos os caminhos de erro.
+func RegenerateDependentSynthesis(ctx context.Context, db *DB, report llm.ReportProvider, dep *User, days int) (err error) {
 	if db == nil || dep == nil {
 		return errors.New("RegenerateDependentSynthesis: db/dep nil")
 	}
+	defer func() {
+		if err != nil {
+			NewAuditLog(db).Log(dep.ID, "synthesis_failed", "", sanitizeAuditReason(err.Error()))
+		}
+	}()
 	if report == nil {
 		return errors.New("RegenerateDependentSynthesis: report nil")
 	}
@@ -327,11 +352,10 @@ func RegenerateDependentSynthesis(ctx context.Context, db *DB, report llm.Report
 	}
 	out, sErr := synthesis.Synthesize(ctx, report, synthIn)
 	if sErr != nil {
-		NewAuditLog(db).Log(dep.ID, "synthesis_failed", "", sanitizeAuditReason(sErr.Error()))
 		return fmt.Errorf("synthesize: %w", sErr)
 	}
-	if err := db.UpsertDependentSynthesis(dep.ID, days, out, time.Now().UTC()); err != nil {
-		return fmt.Errorf("persist synthesis: %w", err)
+	if uErr := db.UpsertDependentSynthesis(dep.ID, days, out, time.Now().UTC()); uErr != nil {
+		return fmt.Errorf("persist synthesis: %w", uErr)
 	}
 	NewAuditLog(db).Log(dep.ID, "synthesis_executed", "",
 		fmt.Sprintf("tendencia=%s|nivel=%s|n_snapshots=%d|persisted=true",

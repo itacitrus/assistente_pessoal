@@ -623,29 +623,7 @@ const lateBelieveLookback = 18 * time.Hour
 // retrata a familia: o aviso discreto ja foi enviado quando escalou; uma
 // retratacao eh decisao de produto separada.
 func marcarBatchTardio(agent *Agent, user *User) (string, bool) {
-	since := time.Now().UTC().Add(-lateBelieveLookback)
-	batch, err := agent.db.ListRecentNonTakenBatch(user.ID, since)
-	if err != nil {
-		log.Printf("marcar_remedio_tomado(tardio): list batch: %v", err)
-		return "", false
-	}
-	if len(batch) == 0 {
-		return "", false
-	}
-
-	var names []string
-	for i := range batch {
-		row := &batch[i]
-		if err := agent.db.UpdateIntakeStatus(
-			row.MedicationID, row.ScheduledAt, IntakeTaken, "tomei (tardio, fora de lembrete)"); err != nil {
-			log.Printf("marcar_remedio_tomado(tardio): update intake med %d: %v", row.MedicationID, err)
-			continue
-		}
-		names = append(names, row.MedicationName)
-		agent.audit.Log(user.ID, "medication_taken", row.MedicationName,
-			fmt.Sprintf("med_id=%d|note=tardio_pos_escalada|scheduled=%s",
-				row.MedicationID, row.ScheduledAt.Format(time.RFC3339)))
-	}
+	names := markRecentNonTakenBatchTaken(agent, user, "tomei (tardio, fora de lembrete)")
 	if len(names) == 0 {
 		return "", false
 	}
@@ -653,6 +631,83 @@ func marcarBatchTardio(agent *Agent, user *User) (string, bool) {
 		return fmt.Sprintf("Anotado, %s.", firstName(user.Name)), true
 	}
 	return fmt.Sprintf("Anotado, %s. Marquei %s como tomados.", firstName(user.Name), joinNames(names)), true
+}
+
+// markRecentNonTakenBatchTaken flipa para 'taken' o ultimo batch de doses ainda
+// nao-tomadas (pending/escalated/missed) dentro de lateBelieveLookback e devolve os
+// nomes marcados. Fonte unica do "tomei tardio" — usada pela tool (marcarBatchTardio)
+// e pela salvaguarda deterministica (reconcileTakenDeterministic). Audita cada flip.
+func markRecentNonTakenBatchTaken(agent *Agent, user *User, note string) []string {
+	since := time.Now().UTC().Add(-lateBelieveLookback)
+	batch, err := agent.db.ListRecentNonTakenBatch(user.ID, since)
+	if err != nil {
+		log.Printf("marcar_remedio_tomado(tardio): list batch: %v", err)
+		return nil
+	}
+	var names []string
+	for i := range batch {
+		row := &batch[i]
+		if err := agent.db.UpdateIntakeStatus(row.MedicationID, row.ScheduledAt, IntakeTaken, note); err != nil {
+			log.Printf("marcar_remedio_tomado(tardio): update intake med %d: %v", row.MedicationID, err)
+			continue
+		}
+		names = append(names, row.MedicationName)
+		if agent.audit != nil {
+			agent.audit.Log(user.ID, "medication_taken", row.MedicationName,
+				fmt.Sprintf("med_id=%d|note=tardio_pos_escalada|scheduled=%s",
+					row.MedicationID, row.ScheduledAt.Format(time.RFC3339)))
+		}
+	}
+	return names
+}
+
+// reconcileTakenDeterministic eh a salvaguarda chamada pos-turno do companion quando
+// o idoso confirmou tomada inequivoca (classifyTakenIntent==IntentTaken) mas o LLM
+// NAO chamou nenhuma med-action tool. Persiste a tomada pelos MESMOS caminhos
+// idempotentes de marcar_remedio_tomado, em ordem de confianca:
+//  1. pendings ativos -> marca taken + resolve (lembrete em aberto).
+//  2. sem pending -> batch recente ja escalado/perdido (tomei tardio).
+//
+// Devolve os nomes marcados ([] = nada a reconciliar). NAO faz o fallback ad-hoc
+// "nearest dose" de proposito: uma salvaguarda silenciosa nao inventa registro a
+// partir de confirmacao sem nenhuma dose em aberto/recente. Idempotente: se o LLM
+// ja tinha resolvido, nao ha pending nem batch e o retorno eh vazio.
+func reconcileTakenDeterministic(agent *Agent, user *User) []string {
+	pendings, err := agent.db.ListActiveMedicationPendingsForUser(user.ID)
+	if err != nil {
+		log.Printf("reconcile taken: list pendings: %v", err)
+		return nil
+	}
+	if len(pendings) > 0 {
+		var names []string
+		for i := range pendings {
+			pc := &pendings[i]
+			mi := parseMedicationIntent(pc)
+			if mi == nil || mi.MedicationID == 0 {
+				continue
+			}
+			if err := agent.db.UpdateIntakeStatus(mi.MedicationID, mi.ScheduledAt, IntakeTaken, "tomei (salvaguarda)"); err != nil {
+				log.Printf("reconcile taken: update intake: %v", err)
+			}
+			if err := agent.db.ResolvePendingConfirmation(pc.ID, "confirmed"); err != nil {
+				log.Printf("reconcile taken: resolve pending: %v", err)
+			}
+			med, _ := agent.db.GetMedicationByID(mi.MedicationID)
+			medName := "remedio"
+			if med != nil {
+				medName = med.Name
+			}
+			names = append(names, medName)
+			if agent.audit != nil {
+				agent.audit.Log(user.ID, "medication_taken", medName,
+					fmt.Sprintf("med_id=%d|pc=%d|via=safeguard", mi.MedicationID, pc.ID))
+			}
+		}
+		if len(names) > 0 {
+			return names
+		}
+	}
+	return markRecentNonTakenBatchTaken(agent, user, "tomei (salvaguarda tardia)")
 }
 
 // =========================================================================

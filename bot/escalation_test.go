@@ -125,6 +125,160 @@ func TestEscalationMessages_Safe(t *testing.T) {
 // Lembrete gentil unico dentro da tolerancia
 // =========================================================================
 
+// setLastUserMessageAt seta last_user_message_at direto no banco (sem o flip de
+// proactive), pra simular engajamento recente do idoso nos testes de supressao.
+func setLastUserMessageAt(t *testing.T, db *DB, userID int64, ts time.Time) {
+	t.Helper()
+	if _, err := db.conn.Exec(`UPDATE users SET last_user_message_at = ? WHERE id = ?`, ts.UTC(), userID); err != nil {
+		t.Fatalf("set last_user_message_at: %v", err)
+	}
+}
+
+// Engajamento recente do idoso (respondeu logo apos o lembrete) SUPRIME o cutucao
+// gentil — cutucar quem acabou de responder soa como "ignorei sua resposta".
+func TestEscalation_EngagementSuppressesNudge(t *testing.T) {
+	db := setupTestDB(t)
+	users := mkUsers(t, db, "Fabio", "Filha")
+	user, guard := users[0], users[1]
+	m, _ := mkMedForUser(t, db, user, "Aradois", "FREQ=DAILY;BYHOUR=14;BYMINUTE=0", false)
+	pc := mkMedicationPending(t, db, user, m, testSched, "medication_default")
+
+	notif := &recordingNotifier{}
+	eng := NewEscalationEngine(db, notif)
+
+	// Respondeu 2min apos o lembrete (17:02). No tick do cutucao (17:16), o
+	// engajamento tem ~14min < grace (15min = tolerance/2) -> NAO cutuca.
+	setLastUserMessageAt(t, db, user.ID, testSched.Add(2*time.Minute))
+	pcLoaded, _ := loadPCByID(t, db, pc.ID)
+	eng.HandlePending(testNudgeAt.Add(time.Minute), pcLoaded)
+	if len(notif.Sent()) != 0 {
+		t.Fatalf("engajamento recente deveria suprimir o cutucao, got %d", len(notif.Sent()))
+	}
+
+	// Mas a familia AINDA eh avisada no deadline — engajar != confirmar a tomada.
+	if _, err := db.LinkFamily(guard.ID, user.ID, "filha"); err != nil {
+		t.Fatal(err)
+	}
+	pcLoaded, _ = loadPCByID(t, db, pc.ID)
+	eng.HandlePending(testDeadline.Add(time.Minute), pcLoaded)
+	gotGuardian := false
+	for _, s := range notif.Sent() {
+		if s.Recipient != nil && s.Recipient.ID == guard.ID {
+			gotGuardian = true
+		}
+	}
+	if !gotGuardian {
+		t.Fatalf("familia deve ser avisada no deadline mesmo com engajamento")
+	}
+}
+
+// Sem engajamento APOS o lembrete (ultima fala foi antes do horario da dose), o
+// cutucao gentil sai normalmente.
+func TestEscalation_StaleEngagementStillNudges(t *testing.T) {
+	db := setupTestDB(t)
+	user := mkUsers(t, db, "Fabio")[0]
+	m, _ := mkMedForUser(t, db, user, "Aradois", "FREQ=DAILY;BYHOUR=14;BYMINUTE=0", false)
+	pc := mkMedicationPending(t, db, user, m, testSched, "medication_default")
+
+	notif := &recordingNotifier{}
+	eng := NewEscalationEngine(db, notif)
+
+	// Falou 10min ANTES do lembrete -> nao conta como engajamento desta dose.
+	setLastUserMessageAt(t, db, user.ID, testSched.Add(-10*time.Minute))
+	pcLoaded, _ := loadPCByID(t, db, pc.ID)
+	eng.HandlePending(testNudgeAt.Add(time.Minute), pcLoaded)
+	if len(notif.Sent()) != 1 {
+		t.Fatalf("sem engajamento apos o lembrete, o cutucao deve sair, got %d", len(notif.Sent()))
+	}
+}
+
+// Corrida: um "tomei" resolveu o pending (confirmed) e marcou a dose (taken) ANTES
+// do tick de escalacao processar o snapshot que tinha lido como 'pending'. A
+// escalacao NAO pode avisar a familia nem regredir a dose taken->escalated.
+func TestEscalation_TakenWinsRaceNoFalseAlert(t *testing.T) {
+	db := setupTestDB(t)
+	users := mkUsers(t, db, "Idosa", "Filha")
+	idosa, guard := users[0], users[1]
+	if _, err := db.LinkFamily(guard.ID, idosa.ID, "filha"); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := mkMedForUser(t, db, idosa, "Losartana", "FREQ=DAILY;BYHOUR=14;BYMINUTE=0", false)
+	pc := mkMedicationPending(t, db, idosa, m, testSched, "medication_default")
+
+	// O tick de escalacao leu o pending enquanto ainda estava 'pending' (snapshot).
+	stale, _ := loadPCByID(t, db, pc.ID)
+
+	// "Tomei" concorrente resolve: dose taken (incondicional) + pending confirmed.
+	if err := db.UpdateIntakeStatus(m.ID, testSched, IntakeTaken, "tomei"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ResolvePendingConfirmation(pc.ID, "confirmed"); err != nil {
+		t.Fatal(err)
+	}
+
+	notif := &recordingNotifier{}
+	eng := NewEscalationEngine(db, notif)
+
+	// Escalacao processa o snapshot stale no deadline.
+	eng.HandlePending(testDeadline.Add(time.Minute), stale)
+
+	for _, s := range notif.Sent() {
+		if s.Recipient != nil && s.Recipient.ID == guard.ID {
+			t.Fatalf("familia nao deveria ser avisada apos 'tomei' concorrente: %q", s.Body)
+		}
+	}
+	logs, _ := db.ListIntakeLogsForMedication(m.ID, 5)
+	if len(logs) == 0 || logs[0].Status != IntakeTaken {
+		t.Fatalf("dose deveria continuar taken, got %v", logs)
+	}
+	var status string
+	db.conn.QueryRow(`SELECT status FROM pending_confirmations WHERE id = ?`, pc.ID).Scan(&status)
+	if status != "confirmed" {
+		t.Fatalf("pending deveria continuar confirmed, got %s", status)
+	}
+}
+
+// O cutucao gentil eh pulado se o pending foi resolvido entre a leitura do batch e
+// o envio (re-check em sendNudges).
+func TestEscalation_NudgeSkippedIfResolved(t *testing.T) {
+	db := setupTestDB(t)
+	user := mkUsers(t, db, "Fabio")[0]
+	m, _ := mkMedForUser(t, db, user, "Aradois", "FREQ=DAILY;BYHOUR=14;BYMINUTE=0", false)
+	pc := mkMedicationPending(t, db, user, m, testSched, "medication_default")
+	stale, _ := loadPCByID(t, db, pc.ID)
+
+	if err := db.UpdateIntakeStatus(m.ID, testSched, IntakeTaken, "tomei"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ResolvePendingConfirmation(pc.ID, "confirmed"); err != nil {
+		t.Fatal(err)
+	}
+
+	notif := &recordingNotifier{}
+	eng := NewEscalationEngine(db, notif)
+	eng.HandlePending(testNudgeAt.Add(time.Minute), stale)
+	if len(notif.Sent()) != 0 {
+		t.Fatalf("nao deveria cutucar dose ja resolvida, got %d", len(notif.Sent()))
+	}
+}
+
+func TestNudgeEngagementGrace(t *testing.T) {
+	cases := []struct {
+		tol  int
+		want time.Duration
+	}{
+		{30, 15 * time.Minute}, // default: tol/2
+		{10, 5 * time.Minute},  // critico curto: tol/2 (nunca passa o deadline)
+		{60, 20 * time.Minute}, // longo: teto de 20min
+		{0, 15 * time.Minute},  // invalido -> usa default 30 -> 15
+	}
+	for _, c := range cases {
+		if got := nudgeEngagementGrace(c.tol); got != c.want {
+			t.Errorf("nudgeEngagementGrace(%d) = %v, want %v", c.tol, got, c.want)
+		}
+	}
+}
+
 func TestEscalation_SingleGentleNudgeWithinTolerance(t *testing.T) {
 	db := setupTestDB(t)
 	user := mkUsers(t, db, "Antonia")[0]

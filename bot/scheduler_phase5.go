@@ -352,32 +352,62 @@ func (s *Scheduler) runDailySynthesisRefresh() {
 		log.Printf("Scheduler[synthesis_refresh]: generator nao injetado — skip")
 		return
 	}
-	elders, err := s.db.ListUsersByType(UserTypeIdoso)
+	// Fonte UNIFICADA com o refresh de insights: itera quem TEM sintese persistida
+	// (dependent_synthesis), nao "todos os idosos ativos" — robusto a is_active/type
+	// e mais barato. Per-run logging de proposito: o congelamento da sintese em prod
+	// passou despercebido por falta de QUALQUER rastro deste job.
+	targets, err := s.db.ListDependentSynthesisTargets()
 	if err != nil {
-		log.Printf("Scheduler[synthesis_refresh]: list elders: %v", err)
+		log.Printf("Scheduler[synthesis_refresh]: list targets: %v", err)
 		return
 	}
-	for i := range elders {
-		s.refreshSynthesisForElder(gen, &elders[i])
+	log.Printf("Scheduler[synthesis_refresh]: iniciando para %d dependente(s)", len(targets))
+	ok, failSkip := 0, 0
+	for _, t := range targets {
+		if s.refreshSynthesisForTarget(gen, t) {
+			ok++
+		} else {
+			failSkip++
+		}
 	}
+	log.Printf("Scheduler[synthesis_refresh]: concluido — ok=%d fail/skip=%d", ok, failSkip)
 }
 
-// refreshSynthesisForElder regenera a sintese de 1 idoso. Skipa quem ainda nao
-// tem snapshot (nada a sintetizar) e quem teve consentimento revogado por todos
-// os responsaveis (privacidade).
-func (s *Scheduler) refreshSynthesisForElder(gen SynthesisGenerator, elder *User) {
-	if _, ok, err := s.db.GetLatestSnapshotInferredAt(elder.ID); err != nil || !ok {
-		return
+// refreshSynthesisForTarget regenera a sintese de 1 dependente persistido. Retorna
+// true se gerou. Skipa (false) quem nao tem snapshot (nada a sintetizar) ou teve
+// consentimento revogado por todos os responsaveis (privacidade). recover() isola
+// um caso patologico pra nao abortar o refresh dos demais.
+func (s *Scheduler) refreshSynthesisForTarget(gen SynthesisGenerator, t DependentSynthesisTarget) (ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Scheduler[synthesis_refresh] dep=%d: panic recuperado: %v", t.DependentID, r)
+			ok = false
+		}
+	}()
+	dep, err := s.db.GetUserByID(t.DependentID)
+	if err != nil || dep == nil {
+		log.Printf("Scheduler[synthesis_refresh] dep=%d: carregar usuario: %v", t.DependentID, err)
+		return false
 	}
-	guardians, _ := s.db.GetGuardians(elder.ID)
+	if _, hasSnap, _ := s.db.GetLatestSnapshotInferredAt(dep.ID); !hasSnap {
+		return false // sem snapshot — nada a sintetizar
+	}
+	guardians, _ := s.db.GetGuardians(dep.ID)
 	if len(guardians) > 0 && allGuardiansConsentRevoked(s.db, guardians) {
-		return
+		return false // consentimento revogado por todos — privacidade
+	}
+	days := t.Days
+	if days <= 0 {
+		days = synthesisRefreshWindowDays
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	if err := gen(ctx, elder, synthesisRefreshWindowDays); err != nil {
-		log.Printf("Scheduler[synthesis_refresh] %s: %v", elder.Name, err)
+	if err := gen(ctx, dep, days); err != nil {
+		// gen (RegenerateDependentSynthesis) ja auditou synthesis_failed com o motivo.
+		log.Printf("Scheduler[synthesis_refresh] %s: %v", dep.Name, err)
+		return false
 	}
+	return true
 }
 
 // =========================================================================

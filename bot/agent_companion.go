@@ -49,12 +49,52 @@ func (a *Agent) runCompanion(ctx context.Context, user *User, message string, im
 	system := systemPartsToLLM(systemParts)
 	tools := toolDefsToLLM(buildToolDefinitions())
 
-	resp, err := a.runLoopLLM(ctx, user, a.companionChat, system, messages, tools)
+	resp, toolsCalled, err := a.runLoopLLM(ctx, user, a.companionChat, system, messages, tools)
 	if err != nil {
 		return "", fmt.Errorf("agent companion: %w", err)
 	}
+	// Salvaguarda deterministica: o companion (DeepSeek) as vezes NARRA "anotado"
+	// sem chamar marcar_remedio_tomado. Sem isso a dose fica 'pending' e a escalacao
+	// cutuca de novo ("o agente ignorou meu tomei"). Aqui, se a fala do idoso for
+	// confirmacao inequivoca E o LLM nao tocou nenhuma tool de remedio, persistimos
+	// pelos mesmos helpers idempotentes. Roda ANTES do envio: o proximo tick de
+	// escalacao (1min) ja ve a dose resolvida.
+	a.reconcileTakenAfterTurn(user, message, toolsCalled)
 	log.Printf("[%s] Companion final response (%d chars): %.100s", user.Name, len(resp), resp)
 	return resp, nil
+}
+
+// medActionTools sao as tools que, quando chamadas pelo LLM, significam que ele JA
+// tratou a decisao de tomada/adiamento/pulo — entao a salvaguarda nao deve agir.
+// cadastrar_medicamento de proposito NAO esta aqui: cadastrar sem marcar deixa a
+// tomada por registrar.
+var medActionTools = map[string]bool{
+	"marcar_remedio_tomado": true,
+	"adiar_remedio":         true,
+	"pular_dose":            true,
+}
+
+// reconcileTakenAfterTurn aplica a salvaguarda deterministica de "tomei". No-op
+// quando: a fala nao eh tomada inequivoca (classifyTakenIntent), o LLM ja chamou
+// uma med-action tool, ou nao ha nada pendente/recente a reconciliar.
+func (a *Agent) reconcileTakenAfterTurn(user *User, message string, toolsCalled []string) {
+	if classifyTakenIntent(message) != IntentTaken {
+		return
+	}
+	for _, t := range toolsCalled {
+		if medActionTools[t] {
+			return // LLM ja tratou; idempotencia dispensa agir de novo
+		}
+	}
+	names := reconcileTakenDeterministic(a, user)
+	if len(names) == 0 {
+		return // nada pendente/recente — confirmacao vaga, nao inventamos registro
+	}
+	log.Printf("[%s] reconcile: LLM narrou tomada sem persistir; salvaguarda marcou %v", user.Name, names)
+	if a.audit != nil {
+		a.audit.Log(user.ID, "medication_taken_safeguard", strings.Join(names, ","),
+			fmt.Sprintf("count=%d|llm_tools=%v", len(names), toolsCalled))
+	}
 }
 
 // describeImageForCompanion gera uma descricao curta da imagem via
@@ -88,8 +128,12 @@ func (a *Agent) describeImageForCompanion(ctx context.Context, user *User, img I
 // runLoopLLM e o loop de tool-use sobre llm.ChatProvider — espelha runLoop
 // (Anthropic) mas em tipos canonicos. Reaproveita o registry toolHandlers (a
 // assinatura do handler ja e agnostica de provider: ctx, agent, user, json).
-func (a *Agent) runLoopLLM(ctx context.Context, user *User, provider llm.ChatProvider, system []llm.SystemPart, messages []llm.Message, tools []llm.ToolDef) (string, error) {
+// runLoopLLM retorna (resposta, toolsCalled, err). toolsCalled lista os nomes das
+// tools EFETIVAMENTE executadas (sem erro) ao longo do loop — usado pela
+// salvaguarda pos-turno pra saber se o LLM ja tratou a tomada.
+func (a *Agent) runLoopLLM(ctx context.Context, user *User, provider llm.ChatProvider, system []llm.SystemPart, messages []llm.Message, tools []llm.ToolDef) (string, []string, error) {
 	const maxIterations = 8
+	var toolsCalled []string
 	for i := 0; i < maxIterations; i++ {
 		log.Printf("[%s] Companion loop iteration %d (provider=%s, msgs=%d)", user.Name, i+1, provider.Name(), len(messages))
 
@@ -101,13 +145,13 @@ func (a *Agent) runLoopLLM(ctx context.Context, user *User, provider llm.ChatPro
 			Temperature: 0.4,
 		})
 		if err != nil {
-			return "", fmt.Errorf("companion chat: %w", err)
+			return "", toolsCalled, fmt.Errorf("companion chat: %w", err)
 		}
 		log.Printf("[%s] Companion response: stop=%s blocks=%d tokens=in:%d/out:%d model=%s",
 			user.Name, resp.StopReason, len(resp.Content), resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.ModelUsed)
 
 		if resp.StopReason != llm.StopToolUse {
-			return collectLLMText(resp.Content), nil
+			return collectLLMText(resp.Content), toolsCalled, nil
 		}
 
 		// Anexa o turno do assistant (texto + tool_use) como veio.
@@ -130,6 +174,7 @@ func (a *Agent) runLoopLLM(ctx context.Context, user *User, provider llm.ChatPro
 				results = append(results, errToolResultLLM(c.ToolUseID, fmt.Sprintf("Erro: %v", err)))
 				continue
 			}
+			toolsCalled = append(toolsCalled, c.ToolName)
 			preview := result
 			if len(preview) > 500 {
 				preview = preview[:500] + "...[truncated]"
@@ -139,7 +184,7 @@ func (a *Agent) runLoopLLM(ctx context.Context, user *User, provider llm.ChatPro
 		}
 		messages = append(messages, llm.Message{Role: llm.RoleUser, Content: results})
 	}
-	return "Desculpe, nao consegui completar a operacao (muitas etapas).", nil
+	return "Desculpe, nao consegui completar a operacao (muitas etapas).", toolsCalled, nil
 }
 
 // errToolResultLLM monta um tool_result de erro no formato canonico.
@@ -291,6 +336,36 @@ func (a *Agent) appendCompanionDayContextPart(parts []anthropic.MessageSystemPar
 			"\"boa noite\"/\"descanse bem\"/\"até amanhã\". Encerre de forma aberta (\"estou por aqui\").")
 		text = b.String()
 	}
+	return append(parts, anthropic.MessageSystemPart{Type: "text", Text: text})
+}
+
+// continuationWindow eh por quanto tempo, apos a ultima fala do bot, ainda
+// tratamos o turno como "mesma conversa em andamento" — dentro disso o companheiro
+// nao deve recomecar com saudacao. Cobre com folga o caso do idoso mandar a
+// mensagem em pedacos (elderBufferDelay + tempo de geracao) e a troca normal.
+const continuationWindow = 6 * time.Minute
+
+// appendCompanionContinuationPart injeta um aviso determinISTICO de "CONTINUAÇÃO"
+// quando o bot acabou de falar com o idoso (ultima fala assistant < continuationWindow).
+// Evita o efeito "dois agentes": sem isso, dois turnos colados (idoso mandou "Bom
+// dia" e depois "Pronto") geravam duas saudacoes seguidas. No-op para nao-idosos e
+// quando faz tempo que o bot nao fala (ai uma saudacao leve eh natural).
+func (a *Agent) appendCompanionContinuationPart(parts []anthropic.MessageSystemPart, user *User) []anthropic.MessageSystemPart {
+	if user == nil || user.Type != UserTypeIdoso {
+		return parts
+	}
+	ageSec, ok, err := a.db.SecondsSinceLastAssistantMessage(user.ID)
+	if err != nil || !ok {
+		return parts
+	}
+	if ageSec > continuationWindow.Seconds() {
+		return parts
+	}
+	text := "[CONTINUAÇÃO IMEDIATA] Você acabou de falar com " + firstName(user.Name) +
+		" há instantes, NESTA mesma conversa. NÃO recomece com saudação (\"bom dia\", \"oi\", " +
+		"\"olá\", \"boa tarde\", \"boa noite\") nem repita uma pergunta que você já fez agora. " +
+		"Responda só o que ele mandou por último, curto e natural — como UMA pessoa que continua " +
+		"a conversa, não como alguém que está chegando agora."
 	return append(parts, anthropic.MessageSystemPart{Type: "text", Text: text})
 }
 

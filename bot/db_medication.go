@@ -485,6 +485,35 @@ func (db *DB) UpdateIntakeStatus(medID int64, scheduledAt time.Time, status Inta
 	return nil
 }
 
+// UpdateIntakeStatusIfPending eh a versao com guarda de status: so muda a dose se
+// ela ainda estiver 'pending'. Usada pelos caminhos da ESCALACAO (escalated/missed)
+// para NUNCA sobrescrever um 'taken' que um "tomei" concorrente acabou de gravar
+// (esse usa UpdateIntakeStatus incondicional — a tomada do usuario sempre vence).
+func (db *DB) UpdateIntakeStatusIfPending(medID int64, scheduledAt time.Time, status IntakeStatus, responseText string) error {
+	_, err := db.conn.Exec(
+		`UPDATE medication_intake_log
+		 SET status = ?, confirmed_at = ?, response_text = ?
+		 WHERE medication_id = ? AND scheduled_at = ? AND status = 'pending'`,
+		string(status), time.Now().UTC(), responseText, medID, scheduledAt.UTC())
+	if err != nil {
+		return fmt.Errorf("update intake status if pending: %w", err)
+	}
+	return nil
+}
+
+// MedicationPendingStillOpen informa se o pending_confirmation `pcID` continua em
+// status='pending'. Usado pela escalacao para re-checar, na hora de cutucar, se a
+// dose nao foi resolvida (ex: "tomei") entre a leitura do batch e o envio.
+func (db *DB) MedicationPendingStillOpen(pcID int64) (bool, error) {
+	var n int
+	err := db.conn.QueryRow(
+		`SELECT COUNT(1) FROM pending_confirmations WHERE id = ? AND status = 'pending'`, pcID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("medication pending still open: %w", err)
+	}
+	return n > 0, nil
+}
+
 // RecordTakenIntake registra (ou atualiza) uma dose como tomada para um slot
 // agendado, de forma idempotente via UPSERT em UNIQUE(medication_id,
 // scheduled_at). Usado quando o usuario declara "tomei" FORA de um lembrete

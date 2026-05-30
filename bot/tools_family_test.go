@@ -268,6 +268,91 @@ func TestRegenerateDependentSynthesis_DegradesWhenSynthesizeFails(t *testing.T) 
 	}
 }
 
+// Observabilidade: report nil (e por extensao qualquer falha pre-Synthesize) agora
+// audita synthesis_failed em vez de retornar mudo — foi o que mascarou a quebra em
+// prod (painel congelava sem rastro).
+func TestRegenerateDependentSynthesis_AuditsNilReport(t *testing.T) {
+	db := setupTestDB(t)
+	elder := makeElder(t, db, "Antonia", "222")
+	if err := RegenerateDependentSynthesis(context.Background(), db, nil, elder, 14); err == nil {
+		t.Fatal("expected error with nil report")
+	}
+	var n int
+	db.conn.QueryRow(`SELECT COUNT(*) FROM action_log WHERE user_id = ? AND action = 'synthesis_failed'`, elder.ID).Scan(&n)
+	if n == 0 {
+		t.Error("report nil deveria auditar synthesis_failed")
+	}
+}
+
+func TestListDependentSynthesisTargets(t *testing.T) {
+	db := setupTestDB(t)
+	a := makeElder(t, db, "A", "111")
+	b := makeElder(t, db, "B", "222")
+	out := synthesis.ReportOutput{Tendencia: "estavel", NivelPreocupacao: "tranquilo", Resumo: "x"}
+	if err := db.UpsertDependentSynthesis(a.ID, 14, out, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertDependentSynthesis(b.ID, 30, out, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := db.ListDependentSynthesisTargets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 2 {
+		t.Fatalf("esperava 2 alvos, got %d", len(targets))
+	}
+	byID := map[int64]int{}
+	for _, tg := range targets {
+		byID[tg.DependentID] = tg.Days
+	}
+	if byID[a.ID] != 14 || byID[b.ID] != 30 {
+		t.Errorf("days nao preservado: %v", byID)
+	}
+}
+
+// Frescor de calendario: sintese de um dia anterior fica stale mesmo SEM snapshot
+// novo (antes congelava para sempre quando os snapshots paravam de avancar).
+func TestBuildDependentStatus_CalendarStaleness(t *testing.T) {
+	db := setupTestDB(t)
+	elder := makeElder(t, db, "Antonia", "222")
+	// Snapshot de 3 dias atras: GetLatestSnapshotInferredAt retorna ok, mas a sintese
+	// (mais recente que o snapshot) NAO fica stale pelo caminho de snapshot — isola
+	// o caminho de calendario.
+	threeDaysAgo := time.Now().UTC().Add(-72 * time.Hour)
+	if _, err := db.conn.Exec(
+		`INSERT INTO psych_state_daily (user_id, snapshot_date, humor_score, confidence, inferred_at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		elder.ID, threeDaysAgo.Format("2006-01-02"), 4, 3, threeDaysAgo); err != nil {
+		t.Fatal(err)
+	}
+	out := synthesis.ReportOutput{Tendencia: "estavel", NivelPreocupacao: "tranquilo", Resumo: "x"}
+
+	// (a) sintese de ONTEM -> stale por calendario.
+	if err := db.UpsertDependentSynthesis(elder.ID, 14, out, time.Now().UTC().Add(-26*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	st, err := BuildDependentStatus(context.Background(), db, nil, elder, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.SynthesisStale {
+		t.Error("sintese de ontem deveria ser stale por calendario")
+	}
+
+	// (b) sintese de HOJE -> nao stale.
+	if err := db.UpsertDependentSynthesis(elder.ID, 14, out, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	st2, err := BuildDependentStatus(context.Background(), db, nil, elder, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st2.SynthesisStale {
+		t.Error("sintese de hoje nao deveria ser stale")
+	}
+}
+
 func TestRegenerateDependentSynthesis_PersistsAndAudits(t *testing.T) {
 	db := setupTestDB(t)
 	guardian := makeGuardian(t, db, "Caio", "111")

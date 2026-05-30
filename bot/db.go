@@ -715,6 +715,27 @@ func (db *DB) AddConversationMessage(userID int64, role, content string) error {
 	return nil
 }
 
+// SecondsSinceLastAssistantMessage devolve ha quantos segundos o BOT falou pela
+// ultima vez (role='assistant') com o usuario. ok=false se o bot nunca falou.
+// Calculado DENTRO do SQLite (julianday) de proposito: created_at vem de
+// CURRENT_TIMESTAMP (UTC, sem timezone), e parsear isso no Go dependeria de como o
+// driver interpreta o fuso. julianday('now') e julianday(created_at) usam a mesma
+// referencia UTC, entao a diferenca eh sempre correta. Usado pra detectar
+// "continuacao imediata" e evitar saudacao repetida a cada turno.
+func (db *DB) SecondsSinceLastAssistantMessage(userID int64) (float64, bool, error) {
+	var age sql.NullFloat64
+	err := db.conn.QueryRow(
+		`SELECT (julianday('now') - julianday(MAX(created_at))) * 86400.0
+		 FROM conversation_history WHERE user_id = ? AND role = 'assistant'`, userID).Scan(&age)
+	if err != nil {
+		return 0, false, fmt.Errorf("seconds since last assistant message: %w", err)
+	}
+	if !age.Valid {
+		return 0, false, nil
+	}
+	return age.Float64, true, nil
+}
+
 func (db *DB) GetConversationHistory(userID int64, limit int) ([]ConversationMessage, error) {
 	rows, err := db.conn.Query(
 		`SELECT role, content, created_at FROM conversation_history
@@ -1091,6 +1112,22 @@ func (db *DB) ResolvePendingConfirmation(id int64, status string) error {
 	_, err := db.conn.Exec(
 		`UPDATE pending_confirmations SET status = ? WHERE id = ?`, status, id)
 	return err
+}
+
+// ResolvePendingConfirmationIfPending eh o resolve com CAS (compare-and-swap):
+// so transiciona se o pending AINDA estiver 'pending', e devolve true quando ESTE
+// chamador foi quem resolveu. Usado pela escalacao para nao avisar a familia /
+// marcar 'escalated' se um "tomei" concorrente ja tiver resolvido o pending entre a
+// leitura do batch e o processamento. Os caminhos de "tomei" seguem usando o
+// ResolvePendingConfirmation incondicional (a tomada do usuario sempre vence).
+func (db *DB) ResolvePendingConfirmationIfPending(id int64, status string) (bool, error) {
+	res, err := db.conn.Exec(
+		`UPDATE pending_confirmations SET status = ? WHERE id = ? AND status = 'pending'`, status, id)
+	if err != nil {
+		return false, fmt.Errorf("resolve pending if pending: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 func (db *DB) GetExpiredPendingConfirmations(userID int64, timeout time.Duration) ([]PendingConfirmation, error) {
