@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/giovannirambo/assistente_pessoal/bot/api"
+	"github.com/giovannirambo/assistente_pessoal/bot/synthesis"
 )
 
 // mkAdapter cria um apiAdapter completo + sink pra magic links + audit log.
@@ -387,6 +388,46 @@ func TestAdapter_GetTimeline_Empty(t *testing.T) {
 	}
 	if len(pts) != 0 {
 		t.Fatalf("got %d snapshots, want 0", len(pts))
+	}
+}
+
+// TestAdapter_GetTimeline_ChronologicalOrder trava o contrato do grafico de
+// evolucao: a serie temporal precisa sair em ordem cronologica crescente
+// (passado -> presente), mesmo que a query subjacente devolva DESC. Sem isso o
+// eixo X do grafico fica invertido.
+func TestAdapter_GetTimeline_ChronologicalOrder(t *testing.T) {
+	a, db, _ := mkAdapter(t)
+	users := mkUsers(t, db, "Joao")
+	dep, _, _ := a.CreateDependent(context.Background(), users[0].ID, api.CreateDependentRequest{
+		Name: "Vovo", Phone: "5511777777777", Relationship: "mae",
+	})
+
+	now := time.Now().UTC()
+	// Inserimos do mais recente pro mais antigo de proposito — o resultado nao
+	// pode depender da ordem de insercao.
+	for _, daysAgo := range []int{0, 1, 5} {
+		s := synthesis.DailySnapshot{
+			UserID:       dep.ID,
+			SnapshotDate: now.Add(-time.Duration(daysAgo) * 24 * time.Hour),
+			HumorScore:   3, Confidence: 3, NMessages: 1,
+		}
+		if err := db.UpsertPsychSnapshot(&s); err != nil {
+			t.Fatalf("upsert -%dd: %v", daysAgo, err)
+		}
+	}
+
+	pts, err := a.GetTimeline(context.Background(), dep.ID, 90)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pts) != 3 {
+		t.Fatalf("got %d points, want 3", len(pts))
+	}
+	for i := 1; i < len(pts); i++ {
+		if pts[i-1].Date >= pts[i].Date {
+			t.Fatalf("timeline nao esta ASC: %q antes de %q (pts=%+v)",
+				pts[i-1].Date, pts[i].Date, pts)
+		}
 	}
 }
 

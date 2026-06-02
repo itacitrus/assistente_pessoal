@@ -699,8 +699,14 @@ func (a *apiAdapter) GetTimeline(ctx context.Context, dependentID int64, days in
 	if err != nil {
 		return nil, err
 	}
+	// GetSnapshotsForUserDateRange devolve DESC (mais recente primeiro) — contrato
+	// usado pela sintese e pelo status report. O grafico de evolucao, porem, eh uma
+	// serie temporal: o eixo X precisa correr do passado (esquerda) ao presente
+	// (direita). Invertemos aqui, na fronteira do endpoint, para nao alterar a
+	// ordem que os outros consumidores da query compartilhada esperam.
 	out := make([]api.SnapshotPoint, 0, len(snaps))
-	for _, s := range snaps {
+	for i := len(snaps) - 1; i >= 0; i-- {
+		s := snaps[i]
 		out = append(out, api.SnapshotPoint{
 			Date:          s.SnapshotDate.Format("2006-01-02"),
 			Humor:         s.HumorScore,
