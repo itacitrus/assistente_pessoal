@@ -224,3 +224,23 @@ func TestStripLeadingStamp(t *testing.T) {
 		}
 	}
 }
+
+// daysBetween precisa sobreviver a DST em fuso de viagem: no spring-forward
+// de Lisboa o dia tem 23h — divisão por 24h truncaria "ontem" para "[hoje]".
+func TestFormatHistoryTurn_DSTTransitionInTravelTZ(t *testing.T) {
+	lis, err := time.LoadLocation("Europe/Lisbon")
+	if err != nil {
+		t.Skip("tzdata Europe/Lisbon indisponível")
+	}
+	// Spring forward em Lisboa: 2026-03-29 01:00 → 02:00.
+	created := time.Date(2026, 3, 28, 22, 0, 0, 0, lis) // sábado à noite
+	now := time.Date(2026, 3, 29, 10, 0, 0, 0, lis)     // domingo de manhã (dia de 23h)
+	if got := formatHistoryTurn("oi", created.UTC(), now, lis); got != "[ontem 22:00] oi" {
+		t.Fatalf("ontem através do spring-forward = %q, queria \"[ontem 22:00] oi\"", got)
+	}
+	// Span de 2 dias contendo a transição → carimbo absoluto, não "ontem".
+	now2 := time.Date(2026, 3, 30, 10, 0, 0, 0, lis) // segunda
+	if got := formatHistoryTurn("oi", created.UTC(), now2, lis); got != "[sáb 28/03 22:00] oi" {
+		t.Fatalf("2 dias com DST no meio = %q, queria \"[sáb 28/03 22:00] oi\"", got)
+	}
+}

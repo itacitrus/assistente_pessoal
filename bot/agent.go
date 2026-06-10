@@ -247,17 +247,28 @@ func (a *Agent) anthropicRewriteFn(ctx context.Context, user *User, transcript [
 	}
 }
 
-// dropCurrentTurnFromHistory remove a ÚLTIMA row do histórico quando ela é o
-// próprio turno atual (role=user, conteúdo byte-idêntico ao que o Orchestrator
-// acabou de persistir). Só a última row matching é descartada — repetição
-// legítima do usuário em turno ANTERIOR é preservada (believe-the-user).
+// dropCurrentTurnFromHistory remove do histórico a row do PRÓPRIO turno atual
+// (role=user, conteúdo byte-idêntico ao que o Orchestrator acabou de
+// persistir). Anda de trás pra frente pulando rows assistant: um
+// persistOutbound concorrente do scheduler (lembrete/escalação) entre o
+// persist do Process e o read do Run pode aterrissar DEPOIS da mensagem do
+// usuário — só a row user mais nova é elegível. Para na primeira row user
+// (match ou não): repetição legítima em turno anterior é preservada
+// (believe-the-user).
 func dropCurrentTurnFromHistory(history []ConversationMessage, persistedContent string) []ConversationMessage {
-	if persistedContent == "" || len(history) == 0 {
+	if persistedContent == "" {
 		return history
 	}
-	last := history[len(history)-1]
-	if last.Role == "user" && last.Content == persistedContent {
-		return history[:len(history)-1]
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == "assistant" {
+			continue // fala do bot que correu por fora (scheduler) — pula
+		}
+		if history[i].Role == "user" && history[i].Content == persistedContent {
+			out := make([]ConversationMessage, 0, len(history)-1)
+			out = append(out, history[:i]...)
+			return append(out, history[i+1:]...)
+		}
+		break // primeira row user não bate → nada a remover
 	}
 	return history
 }
@@ -566,8 +577,8 @@ Horas bare (sem qualificador) menores que 07:00 → interprete como PM (some 12)
 REGRA DE DIA DA SEMANA QUE BATE COM HOJE:
 Se o usuário mencionar um dia da semana que é hoje (ex: "quinta às 9h" sendo hoje quinta), PERGUNTE antes de chamar a tool qual semana (essa ou a próxima). Nunca assuma.
 
-REGRA DE CITAÇÃO DO RESULTADO DE CRIAR_EVENTO:
-Quando criar_evento retornar "OK_CRIADO|display=<texto>", sua resposta ao usuário DEVE incluir <texto> verbatim. Você pode adicionar frase antes ou depois, mas NUNCA reformule a data relativa (HOJE/AMANHÃ) nem altere data/hora dentro de <texto>. Exemplo de resposta válida: "<texto do display>\n\nCriado. :)" (texto livre opcional APÓS o display).
+REGRA DE CITAÇÃO DO RESULTADO DE CRIAR_EVENTO E AGENDAR_LEMBRETE:
+Quando criar_evento retornar "OK_CRIADO|display=<texto>" ou agendar_lembrete retornar "LEMBRETE_SALVO|display=<texto>", sua resposta ao usuário DEVE incluir <texto> verbatim. Você pode adicionar frase antes ou depois, mas NUNCA reformule a data relativa (HOJE/AMANHÃ) nem altere data/hora dentro de <texto>. NUNCA mostre o prefixo "OK_CRIADO|display="/"LEMBRETE_SALVO|display=" ao usuário. Se o retorno tiver um segmento "|nota=<avisos>", transmita os avisos com as SUAS palavras (não verbatim) — mas sem omiti-los. Exemplo de resposta válida: "<texto do display>\n\nCriado. :)" (texto livre opcional APÓS o display).
 
 REGRA DE CITAÇÃO DO RESULTADO AUTH_EXPIRED:
 Quando criar_evento retornar "AUTH_EXPIRED|display=<texto>", inclua <texto> verbatim na sua resposta. NÃO tente explicar mais nada além do que o <texto> diz. O link de reautorização já foi enviado pelo sistema em mensagem separada.

@@ -355,3 +355,157 @@ func TestGuard_RegenerateNeverReexecutesTools(t *testing.T) {
 		t.Fatalf("reescrita sem display não poderia ser aceita (I4 ainda viola)")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Fixes do painel de revisão da implementação
+// ---------------------------------------------------------------------------
+
+// BLOCKER do painel: I4 sem regen disponível JAMAIS pode degradar para
+// template — o evento FOI criado; trocar a confirmação por saudação faria o
+// usuário re-pedir e duplicar. Terminal determinístico: anexa o display.
+func TestGuard_I4AppendsDisplayInsteadOfTemplate(t *testing.T) {
+	a := guardAgentEnforce()
+	display := "Evento criado: *Dentista*\nQuarta, 11/06 (AMANHÃ) às 10:00"
+	out, action := a.guardOutput(guardInput{User: guardUser, TC: tcAtFresh("tarde"), UserMsg: "marca dentista amanhã 10h",
+		ToolsCalled: []string{"criar_evento"}, ToolResults: []string{"OK_CRIADO|display=" + display},
+		Engine: "operational"},
+		"Pronto! Marquei o dentista pra amanhã às 10h.", nil)
+	if action != "appended" {
+		t.Fatalf("I4 sem regen deveria ANEXAR o display, got action=%s out=%q", action, out)
+	}
+	if !strings.Contains(out, display) {
+		t.Fatalf("display tem que estar na saída, got %q", out)
+	}
+	if !strings.Contains(out, "Pronto!") {
+		t.Errorf("a prosa original deveria sobreviver, got %q", out)
+	}
+	if strings.Contains(out, "Estou por aqui se precisar") {
+		t.Errorf("template de saudação não pode substituir confirmação de evento, got %q", out)
+	}
+}
+
+// O orçamento de regen é ancorado na ENTRADA do guard, não no início do turno:
+// um turno de tool pesado (TC.Now velho) ainda tem direito ao regenerate.
+func TestGuard_RegenBudgetAnchoredAtGuardEntry(t *testing.T) {
+	a := guardAgentEnforce()
+	tc := &TurnContext{Now: time.Now().Add(-25 * time.Second), Loc: BRT(), Period: "tarde"}
+	display := "Evento criado: *Dentista*\nQuarta, 11/06 (AMANHÃ) às 10:00"
+	regenCalls := 0
+	regen := func(string) (string, error) {
+		regenCalls++
+		return display + "\n\nProntinho!", nil
+	}
+	out, action := a.guardOutput(guardInput{User: guardUser, TC: tc, UserMsg: "marca",
+		ToolsCalled: []string{"criar_evento"}, ToolResults: []string{"OK_CRIADO|display=" + display},
+		Engine: "operational"},
+		"Marquei o dentista!", regen)
+	if regenCalls != 1 || action != "regenerated" {
+		t.Fatalf("turno lento ainda deveria regenerar (budget no guard, não no turno), got calls=%d action=%s out=%q", regenCalls, action, out)
+	}
+}
+
+// "te lembro às 19h" (forma falada dominante) lastreada no cron das 19:00.
+func TestGuard_BareHourPromiseGrounded(t *testing.T) {
+	a := guardAgentEnforce()
+	tcMed := tcAtFresh("tarde")
+	tcMed.UpcomingMedsToday = []upcomingReminder{{at: time.Date(2026, 6, 9, 19, 0, 0, 0, BRT()), names: []string{"Losartana"}}}
+	for _, text := range []string{
+		"Fica tranquila, te lembro às 19h do Losartana.",
+		"Fica tranquila, te lembro às 19 horas do Losartana.",
+	} {
+		if _, action := a.guardOutput(guardInput{User: guardUser, TC: tcMed, UserMsg: "me lembra do remédio?", Engine: "companion"},
+			text, nil); action != "none" {
+			t.Errorf("promessa hora-seca lastreada deveria passar: %q got action=%s", text, action)
+		}
+	}
+	// "daqui a 2h" é duração, não horário 02:00 — sem lastro às 02:00, viola.
+	tcMed.UpcomingMedsToday = nil
+	if _, action := a.guardOutput(guardInput{User: guardUser, TC: tcAtFresh("tarde"), UserMsg: "oi", Engine: "companion"},
+		"Pode deixar, te aviso daqui a 2h.", nil); action == "none" {
+		t.Error("promessa por duração sem lastro deveria violar I2a")
+	}
+}
+
+// adiar_remedio lastreia a promessa do próprio turno; deferred_until lastreia
+// a reafirmação em turno posterior.
+func TestGuard_AdiarRemedioGroundsPromise(t *testing.T) {
+	a := guardAgentEnforce()
+	if _, action := a.guardOutput(guardInput{User: guardUser, TC: tcAtFresh("tarde"), UserMsg: "vou tomar às 18:40",
+		ToolsCalled: []string{"adiar_remedio"}, Engine: "companion"},
+		"Combinado, te lembro às 18:40 então.", nil); action != "none" {
+		t.Fatalf("promessa no turno do adiar_remedio é verdadeira, got %s", action)
+	}
+}
+
+// Sintagma nominal não é saudação: "uma boa noite de sono" de manhã é empatia.
+func TestGuard_NounPhraseGreetingNotFlagged(t *testing.T) {
+	a := guardAgentEnforce()
+	text := "Vou torcer por uma boa noite de sono mais tarde, viu."
+	out, action := a.guardOutput(guardInput{User: guardUser, TC: tcAtFresh("manhã"), UserMsg: "dormi mal", Engine: "companion"},
+		text, nil)
+	if action != "none" || out != text {
+		t.Fatalf("sintagma 'boa noite de sono' não pode disparar I1, got action=%s out=%q", action, out)
+	}
+	// Mas "boa noite de novo" É saudação repetida — viola de manhã.
+	if _, action := a.guardOutput(guardInput{User: guardUser, TC: tcAtFresh("manhã"), UserMsg: "oi", Engine: "companion"},
+		"Boa noite de novo!", nil); action == "none" {
+		t.Error("'boa noite de novo' é saudação e deveria violar de manhã")
+	}
+}
+
+// Strip preserva estrutura: display multi-linha citado corretamente sobrevive
+// intacto quando OUTRA sentença é removida.
+func TestGuard_StripPreservesMultilineDisplay(t *testing.T) {
+	a := guardAgentEnforce()
+	display := "Evento criado: *Dentista*\nQuarta, 11/06 (AMANHÃ) às 10:00"
+	text := display + "\n\nBoa noite, descanse bem! 🌙"
+	out, action := a.guardOutput(guardInput{User: guardUser, TC: tcAtFresh("manhã"), UserMsg: "marca dentista",
+		ToolsCalled: []string{"criar_evento"}, ToolResults: []string{"OK_CRIADO|display=" + display},
+		Engine: "operational"}, text, nil)
+	if action != "stripped" {
+		t.Fatalf("esperava strip da despedida, got %s (%q)", action, out)
+	}
+	if !strings.Contains(out, display) {
+		t.Fatalf("display multi-linha tem que sobreviver INTACTO ao strip, got %q", out)
+	}
+	if strings.Contains(strings.ToLower(out), "boa noite") {
+		t.Errorf("despedida deveria ter sido removida, got %q", out)
+	}
+}
+
+// |nota= é advisory: I4 só ancora no núcleo do display.
+func TestGuard_I4IgnoresNotaSegment(t *testing.T) {
+	display := "Evento criado: *Reunião*\nQuinta, 12/06 às 09:00"
+	result := "OK_CRIADO|display=" + display + "\n|nota=Esse horário já passou hoje. Marquei pra amanhã nesse horário."
+	// Resposta cita só o núcleo (nota parafraseada) → passa.
+	if v := detectI4DisplayCitation(display+"\n\nObs: como já tinha passado, ficou pra amanhã.", []string{result}); len(v) != 0 {
+		t.Fatalf("nota parafraseada não pode violar I4, got %d violações", len(v))
+	}
+	// Resposta sem o núcleo → viola, e o Append é só o núcleo.
+	v := detectI4DisplayCitation("Marquei!", []string{result})
+	if len(v) != 1 || v[0].Append != display {
+		t.Fatalf("I4 deveria ancorar no núcleo sem a nota, got %+v", v)
+	}
+}
+
+// I2b audita exatamente UMA vez por turno (métrica de promoção não infla).
+func TestGuard_I2bAuditedOncePerTurn(t *testing.T) {
+	db := setupTestDB(t)
+	u := &User{PhoneNumber: "5511912121212", Name: "Aud Teste", Type: UserTypeIdoso}
+	if err := db.CreateUser(u); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	a := &Agent{db: db, audit: NewAuditLog(db), cfg: &Config{OutputGuardMode: "enforce"}}
+	// Texto com claim I2b E violação I1 (força a cascata a re-detectar 2-3×).
+	a.guardOutput(guardInput{User: u, TC: tcAtFresh("manhã"), UserMsg: "oi", Engine: "companion"},
+		"Anotei tudo aqui. Boa noite, descanse bem!", nil)
+	var n int
+	if err := db.conn.QueryRow(
+		`SELECT COUNT(*) FROM action_log WHERE user_id=? AND action='guard_violation' AND target_user='I2b'`,
+		u.ID).Scan(&n); err != nil {
+		t.Fatalf("count audit: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("I2b deveria auditar exatamente 1× por turno, got %d", n)
+	}
+}

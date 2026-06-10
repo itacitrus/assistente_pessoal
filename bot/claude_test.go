@@ -245,3 +245,16 @@ func TestBuildToolDefinitions(t *testing.T) {
 		}
 	}
 }
+
+// Um persistOutbound concorrente (lembrete do scheduler) pode aterrissar
+// DEPOIS da mensagem do usuário — a row do turno atual ainda é removida.
+func TestDropCurrentTurnFromHistory_SkipsTrailingAssistantRows(t *testing.T) {
+	hist := []ConversationMessage{
+		{Role: "user", Content: "cortar cabelo segunda 8h"},
+		{Role: "assistant", Content: "Lembrete: *Niver Clóvis* — Quarta, 10/06 às 00:00"},
+	}
+	out := dropCurrentTurnFromHistory(hist, "cortar cabelo segunda 8h")
+	if len(out) != 1 || out[0].Role != "assistant" {
+		t.Fatalf("deveria remover a row user e preservar o lembrete do scheduler, got %+v", out)
+	}
+}

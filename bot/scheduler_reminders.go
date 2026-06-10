@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -63,6 +64,26 @@ func (s *Scheduler) fireAdHocReminder(r Reminder, now time.Time) {
 		return
 	}
 
+	// Lookup/validação do usuário ANTES do claim: MarkReminderMissed só
+	// transiciona rows 'pending' — depois do claim ('sent') seria no-op e a
+	// promessa sumiria em silêncio com status mentiroso. Erro transitório de
+	// DB nem toca a row (próximo tick re-tenta; a graça de staleness limita).
+	user, err := s.db.GetUserByID(r.UserID)
+	if err != nil && !errors.Is(err, ErrUserNotFound) {
+		log.Printf("Scheduler[reminders]: lookup user %d p/ id=%d falhou (transitório): %v", r.UserID, r.ID, err)
+		return
+	}
+	if user == nil || !user.IsActive {
+		log.Printf("Scheduler[reminders]: user %d indisponível p/ id=%d — missed", r.UserID, r.ID)
+		if mErr := s.db.MarkReminderMissed(r.ID); mErr != nil {
+			log.Printf("Scheduler[reminders]: mark missed id=%d: %v", r.ID, mErr)
+			return
+		}
+		NewAuditLog(s.db).Log(r.UserID, "reminder_missed_user_unavailable", "",
+			fmt.Sprintf("id=%d|fire_at=%s", r.ID, r.FireAt.Format(time.RFC3339)))
+		return
+	}
+
 	claimed, err := s.db.ClaimReminderForSend(r.ID, now)
 	if err != nil {
 		log.Printf("Scheduler[reminders]: claim id=%d: %v", r.ID, err)
@@ -70,13 +91,6 @@ func (s *Scheduler) fireAdHocReminder(r Reminder, now time.Time) {
 	}
 	if !claimed {
 		return // outro tick ganhou a row
-	}
-
-	user, err := s.db.GetUserByID(r.UserID)
-	if err != nil || user == nil || !user.IsActive {
-		log.Printf("Scheduler[reminders]: user %d indisponível p/ id=%d (%v) — missed", r.UserID, r.ID, err)
-		s.db.MarkReminderMissed(r.ID)
-		return
 	}
 
 	// Texto SEMPRE ecoa o horário agendado (no fuso local do usuário): dentro

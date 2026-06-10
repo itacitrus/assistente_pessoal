@@ -405,20 +405,30 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 		res.Start.Format(time.RFC3339), res.Adjusted); auditErr != nil {
 		log.Printf("[%s] LogCriarEvento failed: %v", user.Name, auditErr)
 	}
+	// Contrato do payload: display= é o NÚCLEO citável verbatim (evento + Meet,
+	// que precisa chegar exato); |nota= é advisory (ajuste de data, contexto de
+	// viagem, falha do conflict-check) — o modelo transmite com as próprias
+	// palavras e o guard I4 só ancora no núcleo. Misturar nota no display
+	// tornava a citação verbatim impossível de satisfazer.
 	display := FormatEventCreated(*created, time.Now())
-	if res.AdjustNote != "" {
-		display = res.AdjustNote + "\n" + display
-	}
 	if created.MeetLink != "" {
 		display += fmt.Sprintf("\nLink do Meet: %s", created.MeetLink)
 	}
+	var notes []string
+	if res.AdjustNote != "" {
+		notes = append(notes, res.AdjustNote)
+	}
 	if len(allDayNotes) > 0 {
-		display += fmt.Sprintf("\nLembrete: nesse dia voce tem: %s", strings.Join(allDayNotes, ", "))
+		notes = append(notes, fmt.Sprintf("Lembrete: nesse dia voce tem: %s", strings.Join(allDayNotes, ", ")))
 	}
 	if conflictCheckWarn != "" {
-		display += conflictCheckWarn
+		notes = append(notes, strings.TrimSpace(conflictCheckWarn))
 	}
-	return "OK_CRIADO|display=" + display, nil
+	result := "OK_CRIADO|display=" + display
+	if len(notes) > 0 {
+		result += "\n|nota=" + strings.Join(notes, "\n")
+	}
+	return result, nil
 }
 
 type editarEventoParams struct {

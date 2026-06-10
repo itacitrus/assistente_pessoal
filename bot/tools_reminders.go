@@ -89,7 +89,8 @@ func handleAgendarLembrete(ctx context.Context, agent *Agent, user *User, params
 	}
 	out := fmt.Sprintf("LEMBRETE_SALVO|display=Lembrete salvo: vou te avisar %s — %s", when, p.Text)
 	if adjustNote != "" {
-		out += "\n(" + adjustNote + ")"
+		// |nota= é advisory (não exigido verbatim pelo guard I4).
+		out += "\n|nota=" + adjustNote
 	}
 	return out, nil
 }

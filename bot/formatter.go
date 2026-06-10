@@ -51,7 +51,7 @@ func formatHistoryTurn(content string, createdAt, now time.Time, loc *time.Locat
 	local := createdAt.In(loc)
 	nowLocal := now.In(loc)
 
-	dayDiff := dateOnly(nowLocal).Sub(dateOnly(local)) / (24 * time.Hour)
+	dayDiff := daysBetween(local, nowLocal)
 	clock := local.Format("15:04")
 	var stamp string
 	switch dayDiff {
@@ -67,9 +67,16 @@ func formatHistoryTurn(content string, createdAt, now time.Time, loc *time.Locat
 	return stamp + content
 }
 
-// dateOnly trunca para a meia-noite do dia calendário, no Location de t.
-func dateOnly(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+// daysBetween retorna a diferença em dias-calendário entre from e to (no
+// Location de cada um). Ancora ambas as datas ao meio-dia UTC antes de
+// dividir: UTC não tem transição de DST, então cada dia tem exatamente 24h —
+// em fusos com horário de verão (viagem p/ Europe/Lisbon etc.) o dia do
+// spring-forward tem 23h e meia-noite-a-meia-noite/24h truncaria errado
+// (ontem viraria "[hoje]").
+func daysBetween(from, to time.Time) int {
+	f := time.Date(from.Year(), from.Month(), from.Day(), 12, 0, 0, 0, time.UTC)
+	t := time.Date(to.Year(), to.Month(), to.Day(), 12, 0, 0, 0, time.UTC)
+	return int(t.Sub(f) / (24 * time.Hour))
 }
 
 // relativeDayLabel retorna "HOJE" se eventStart e now caem no mesmo dia

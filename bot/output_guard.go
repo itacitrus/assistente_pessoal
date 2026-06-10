@@ -58,14 +58,21 @@ type guardViolation struct {
 	Detail    string
 	Sentence  string // sentença ofensora (alvo do strip)
 	Feedback  string // instrução de correção pro regenerate
+	Append    string // terminal determinístico do I4: display a anexar verbatim
 }
 
 const guardRegenLatencyBudget = 20 * time.Second
 const guardMinTextLen = 8
 
 // guardOutput aplica as invariantes e devolve o texto final (nunca vazio) e a
-// ação tomada ("none", "log", "regenerated", "stripped", "template").
+// ação tomada ("none", "log", "regenerated", "stripped", "appended", "template").
 func (a *Agent) guardOutput(in guardInput, text string, regen regenerateFn) (string, string) {
+	// Orçamento de latência ancorado na ENTRADA do guard, não no início do
+	// turno: o budget limita o custo do próprio regenerate. Ancorar em TC.Now
+	// desabilitaria o regenerate exatamente nos turnos pesados de tool
+	// (criar_evento + Google API >20s) — onde o I4 mais dispara.
+	guardStart := time.Now()
+
 	// I5 — sempre ativo, em qualquer modo: carimbo ecoado nunca chega ao
 	// usuário (persistOutbound gravaria verbatim e realimentaria o padrão).
 	cleaned := stripLeadingStamp(text)
@@ -77,6 +84,14 @@ func (a *Agent) guardOutput(in guardInput, text string, regen regenerateFn) (str
 	mode := a.guardModeFor(in.User)
 	if mode == guardOff || strings.TrimSpace(text) == "" {
 		return text, "none"
+	}
+
+	// I2b — audit-only, exatamente UMA vez por turno, sobre o texto ORIGINAL
+	// (o que de fato seria enviado). Fora de detectViolations de propósito:
+	// re-checagens da cascata não podem inflar a métrica que gates a
+	// promoção do guard (FP<2%).
+	for _, v := range detectI2bUngroundedClaim(text, in.ToolsCalled) {
+		a.auditGuard(in, v.Invariant, v.Detail, "audit-only")
 	}
 
 	enforceable, strippable := a.detectViolations(in, text)
@@ -99,9 +114,8 @@ func (a *Agent) guardOutput(in guardInput, text string, regen regenerateFn) (str
 	}
 
 	if len(enforceable) > 0 {
-		// Cascata S1: regenerate 1× (tool-less) → strip → safe-template.
-		regenerated := false
-		if regen != nil && in.TC != nil && time.Since(in.TC.Now) < guardRegenLatencyBudget {
+		// Cascata S1: regenerate 1× (tool-less) → strip/append → safe-template.
+		if regen != nil && time.Since(guardStart) < guardRegenLatencyBudget {
 			var fb []string
 			for _, v := range enforceable {
 				fb = append(fb, v.Feedback)
@@ -112,18 +126,32 @@ func (a *Agent) guardOutput(in guardInput, text string, regen regenerateFn) (str
 					log.Printf("[%s] guard: violação corrigida via regenerate (%s)", in.User.Name, in.Engine)
 					return rewritten, "regenerated"
 				}
-				regenerated = true
 			} else {
 				log.Printf("[%s] guard: regenerate falhou: %v", in.User.Name, err)
 			}
 		}
-		_ = regenerated
 
-		// Strip determinístico das sentenças ofensoras.
+		// Strip determinístico das sentenças ofensoras (I1/I2a).
 		text = stripSentences(text, enforceable)
 		action = "stripped"
 
-		// Terminal: vazio, curto demais ou ainda violando → template seguro.
+		// Terminal determinístico do I4: o display que falta é conhecido —
+		// ANEXAR verbatim satisfaz a invariante por construção. Jamais cair
+		// em template aqui: trocaria a confirmação de um evento CRIADO por
+		// uma saudação non-sequitur (o usuário re-pediria e duplicaria).
+		for _, v := range enforceable {
+			if v.Append != "" && !strings.Contains(text, v.Append) {
+				text = strings.TrimSpace(text)
+				if text == "" {
+					text = v.Append
+				} else {
+					text += "\n\n" + v.Append
+				}
+				action = "appended"
+			}
+		}
+
+		// Terminal final: vazio, curto demais ou ainda violando → template.
 		if eRest, _ := a.detectViolations(in, text); strings.TrimSpace(text) == "" ||
 			len(strings.TrimSpace(text)) < guardMinTextLen || len(eRest) > 0 {
 			text = guardSafeTemplate(in.TC, firstName(in.User.Name))
@@ -167,8 +195,10 @@ func (a *Agent) auditGuard(in guardInput, invariant, detail, mode string) {
 // Detecção
 // ---------------------------------------------------------------------------
 
-// detectViolations devolve (enforce-class, strip-class). I2b é audit-only e é
-// auditada aqui dentro (não entra em nenhuma das listas de ação).
+// detectViolations devolve (enforce-class, strip-class). PURA — sem side
+// effects: é re-chamada pela cascata (pós-regenerate, pós-strip) e qualquer
+// audit aqui dentro inflaria as métricas. I2b (audit-only) é detectada e
+// auditada separadamente em guardOutput, uma vez por turno.
 func (a *Agent) detectViolations(in guardInput, text string) (enforceable, strippable []guardViolation) {
 	if in.TC != nil {
 		enforceable = append(enforceable, detectI1PeriodMismatch(text, in.TC.Period, in.UserMsg)...)
@@ -176,11 +206,6 @@ func (a *Agent) detectViolations(in guardInput, text string) (enforceable, strip
 	}
 	enforceable = append(enforceable, detectI4DisplayCitation(text, in.ToolResults)...)
 	strippable = append(strippable, detectI3TransportNarration(text, in.UserMsg)...)
-
-	// I2b — audit-only no launch (promoção a enforce só com FP<2% nos logs).
-	for _, v := range detectI2bUngroundedClaim(text, in.ToolsCalled) {
-		a.auditGuard(in, v.Invariant, v.Detail, "audit-only")
-	}
 	return enforceable, strippable
 }
 
@@ -240,29 +265,69 @@ func detectI1PeriodMismatch(text, period, userMsg string) []guardViolation {
 			continue
 		}
 		for _, s := range positions {
-			if strings.Contains(s, g) {
-				out = append(out, guardViolation{
-					Invariant: "I1",
-					Detail:    fmt.Sprintf("%q em período %s", g, period),
-					Sentence:  sentenceContaining(text, g),
-					Feedback:  fmt.Sprintf("Sua resposta dizia %q, mas agora é %s — a saudação certa é %q.", g, period, correct),
-				})
-				break
+			if !greetingUsedAsSalutation(s, g) {
+				continue
 			}
+			feedback := fmt.Sprintf("Sua resposta dizia %q, mas agora é %s — a saudação certa é %q.", g, period, correct)
+			if correct == "" { // madrugada: não há saudação de abertura
+				feedback = fmt.Sprintf("Sua resposta dizia %q, mas agora é madrugada — não use saudação de abertura; "+
+					"acolha sem cumprimento formal (despedida de fim de noite como \"boa noite\" é aceitável).", g)
+			}
+			out = append(out, guardViolation{
+				Invariant: "I1",
+				Detail:    fmt.Sprintf("%q em período %s", g, period),
+				Sentence:  sentenceContaining(text, g),
+				Feedback:  feedback,
+			})
+			break
 		}
 	}
 	return out
 }
 
+// greetingUsedAsSalutation distingue uso de menção: "boa noite de sono" /
+// "boa tarde de sol" é sintagma nominal (complemento com "de"), não saudação
+// — "vou te desejar uma boa noite de sono" de manhã é empatia correta.
+// Exceção: "de novo" é advérbio ("boa noite de novo!" É saudação repetida,
+// não sintagma). Varre todas as ocorrências: uma sentença com sintagma E
+// despedida real ainda flagra.
+func greetingUsedAsSalutation(sentence, g string) bool {
+	for idx := strings.Index(sentence, g); idx >= 0; {
+		rest := sentence[idx+len(g):]
+		isNounPhrase := strings.HasPrefix(rest, " de ") && !strings.HasPrefix(rest, " de novo")
+		if !isNounPhrase {
+			return true
+		}
+		next := strings.Index(rest, g)
+		if next < 0 {
+			return false
+		}
+		idx += len(g) + next
+	}
+	return false
+}
+
 var promiseRe = regexp.MustCompile(`(?i)\b(te (lembro|aviso|chamo)|pode deixar|deixa comigo|n[ãa]o (vou )?esquec)`)
 var timeRefRe = regexp.MustCompile(`(?i)(\b\d{1,2}[:h]\d{2}\b|\b\d{1,2}\s*h(oras)?\b|amanh[ãa]|mais tarde|daqui a)`)
-var clockRe = regexp.MustCompile(`\b(\d{1,2})[:h](\d{2})\b`)
+
+// clockRe extrai horário com minutos: "19:00", "19h30", "23:58h" (h final
+// tolerado — forma PT-BR comum).
+var clockRe = regexp.MustCompile(`\b(\d{1,2})[:h](\d{2})h?\b`)
+
+// hourOnlyRe extrai hora "seca": "19h", "às 19 horas". Avaliada só quando
+// clockRe não casa (clockRe captura "19h30" primeiro). "daqui a 2h" é
+// DURAÇÃO, não horário — excluída antes do lookup.
+var hourOnlyRe = regexp.MustCompile(`(?i)\b(\d{1,2})\s*h(?:oras)?\b`)
+var durationHourRe = regexp.MustCompile(`(?i)\bdaqui a\s+\d{1,2}\s*h`)
 
 // promiseGroundingTools: chamou uma destas neste turno → a promessa tem lastro.
+// adiar_remedio incluída: o adiamento persiste um cutucão real em
+// deferred_until — "te lembro lá pelas 18:40" após adiar é VERDADEIRO.
 var promiseGroundingTools = map[string]bool{
 	"agendar_lembrete":           true,
 	"criar_evento":               true,
 	"criar_evento_outro_usuario": true,
+	"adiar_remedio":              true,
 }
 
 // detectI2aUngroundedPromise — promessa FUTURA de aviso/lembrete numa sentença
@@ -285,11 +350,10 @@ func detectI2aUngroundedPromise(text string, toolsCalled []string, groundedTimes
 			continue
 		}
 		// Horário explícito que bate com lastro vigente → promessa verdadeira.
-		if m := clockRe.FindStringSubmatch(s); m != nil {
-			hhmm := fmt.Sprintf("%02s:%s", m[1], m[2])
-			if groundedTimes[hhmm] {
-				continue
-			}
+		// Atoi+%02d (não %02s: o flag 0 de fmt não zero-preenche strings —
+		// "9:30" viraria " 9:30" e nunca casaria com o "09:30" do lastro).
+		if hhmm, ok := extractPromisedClock(s); ok && groundedTimes[hhmm] {
+			continue
 		}
 		out = append(out, guardViolation{
 			Invariant: "I2a",
@@ -300,6 +364,32 @@ func detectI2aUngroundedPromise(text string, toolsCalled []string, groundedTimes
 		})
 	}
 	return out
+}
+
+// extractPromisedClock normaliza o horário prometido numa sentença para
+// "HH:MM". Cobre "19:00", "19h30", "23:58h" (clockRe) e a forma dominante
+// falada "19h"/"19 horas" (hourOnlyRe → HH:00). "daqui a 2h" é duração e
+// nunca vira 02:00.
+func extractPromisedClock(s string) (string, bool) {
+	if m := clockRe.FindStringSubmatch(s); m != nil {
+		var hh, mm int
+		fmt.Sscanf(m[1]+":"+m[2], "%d:%d", &hh, &mm)
+		if hh <= 23 && mm <= 59 {
+			return fmt.Sprintf("%02d:%02d", hh, mm), true
+		}
+		return "", false
+	}
+	if durationHourRe.MatchString(s) {
+		return "", false
+	}
+	if m := hourOnlyRe.FindStringSubmatch(s); m != nil {
+		var hh int
+		fmt.Sscanf(m[1], "%d", &hh)
+		if hh <= 23 {
+			return fmt.Sprintf("%02d:00", hh), true
+		}
+	}
+	return "", false
 }
 
 // claimToTools — tabela claim perfectivo → tools que o lastreiam (I2b).
@@ -380,9 +470,11 @@ func detectI3TransportNarration(text, userMsg string) []guardViolation {
 }
 
 // detectI4DisplayCitation — quando criar_evento/agendar_lembrete retornaram
-// um payload display=, a resposta DEVE conter o display verbatim (REGRA DE
-// CITAÇÃO, agora enforçada): matching de substring exato, zero NLP, zero
-// falso positivo.
+// um payload display=, a resposta DEVE conter o NÚCLEO do display verbatim
+// (REGRA DE CITAÇÃO, agora enforçada): matching de substring exato, zero NLP,
+// zero falso positivo. O segmento "|nota=" (avisos: ajuste de data, conflito
+// não-checado, contexto de viagem) é advisory — o modelo transmite com as
+// próprias palavras e o guard NÃO o exige verbatim.
 func detectI4DisplayCitation(text string, toolResults []string) []guardViolation {
 	var out []guardViolation
 	for _, r := range toolResults {
@@ -393,9 +485,8 @@ func detectI4DisplayCitation(text string, toolResults []string) []guardViolation
 		if !ok {
 			continue
 		}
-		// Nota de ajuste no fim do payload não faz parte do display verbatim.
-		if i := strings.Index(display, "\n(Esse horário já passou"); i >= 0 {
-			display = display[:i]
+		if core, _, found := strings.Cut(display, "|nota="); found {
+			display = core
 		}
 		display = strings.TrimSpace(display)
 		if display == "" || strings.Contains(text, display) {
@@ -403,11 +494,12 @@ func detectI4DisplayCitation(text string, toolResults []string) []guardViolation
 		}
 		out = append(out, guardViolation{
 			Invariant: "I4",
-			Detail:    fmt.Sprintf("display de OK_CRIADO ausente: %.80q", display),
+			Detail:    fmt.Sprintf("display de criação ausente: %.80q", display),
 			Sentence:  "", // não há sentença a remover; o fix é citar
+			Append:    display,
 			// Display RAW (sem %q): o modelo precisa reproduzi-lo verbatim —
 			// um \n escapado o induziria a escrever a sequência literal.
-			Feedback: "Sua resposta não citou o resultado oficial do evento criado. " +
+			Feedback: "Sua resposta não citou o resultado oficial da criação. " +
 				"Inclua este texto VERBATIM, sem alterar data/hora:\n" + display,
 		})
 	}
@@ -416,8 +508,10 @@ func detectI4DisplayCitation(text string, toolResults []string) []guardViolation
 
 // groundedPromiseTimes — horários (HH:MM, fuso local) em que JÁ existe
 // mecanismo de aviso para este usuário: lembretes de remédio restantes hoje
-// (TurnContext) ∪ lembretes pontuais pendentes (P2). Promessa nesses horários
-// é verdadeira.
+// (TurnContext) ∪ lembretes pontuais pendentes (P2) ∪ adiamentos de dose
+// vigentes (deferred_until — cobre o turno POSTERIOR ao adiar_remedio, em que
+// o modelo reafirma "te lembro às 18:40" sem chamar tool nenhuma). Promessa
+// nesses horários é verdadeira.
 func (a *Agent) groundedPromiseTimes(in guardInput) map[string]bool {
 	out := map[string]bool{}
 	if in.TC == nil {
@@ -430,6 +524,13 @@ func (a *Agent) groundedPromiseTimes(in guardInput) map[string]bool {
 		if pend, err := a.db.ListPendingReminders(in.User.ID); err == nil {
 			for _, p := range pend {
 				out[p.FireAt.In(in.TC.Loc).Format("15:04")] = true
+			}
+		}
+		if pcs, err := a.db.ListActiveMedicationPendingsForUser(in.User.ID); err == nil {
+			for _, pc := range pcs {
+				if pc.DeferredUntil != nil {
+					out[pc.DeferredUntil.In(in.TC.Loc).Format("15:04")] = true
+				}
 			}
 		}
 	}
@@ -498,25 +599,25 @@ func sentenceContaining(text, needle string) string {
 	return ""
 }
 
-// stripSentences remove as sentenças ofensoras preservando o resto.
+// stripSentences remove as sentenças ofensoras IN PLACE, preservando a
+// estrutura do resto (quebras de linha, listas, displays multi-linha). Cada
+// Sentence é substring contígua do original (splitSentences só apara as
+// bordas), então strings.Replace remove sem re-serializar — um rejoin com
+// espaço achataria um display OK_CRIADO multi-linha citado corretamente e a
+// re-checagem do I4 dispararia template em cima de texto bom.
 func stripSentences(text string, violations []guardViolation) string {
-	targets := map[string]bool{}
 	for _, v := range violations {
-		if s := strings.TrimSpace(v.Sentence); s != "" {
-			targets[strings.ToLower(s)] = true
-		}
-	}
-	if len(targets) == 0 {
-		return text
-	}
-	var kept []string
-	for _, s := range splitSentences(text) {
-		if targets[strings.ToLower(s)] {
+		s := strings.TrimSpace(v.Sentence)
+		if s == "" {
 			continue
 		}
-		kept = append(kept, s)
+		text = strings.Replace(text, s, "", 1)
 	}
-	return strings.TrimSpace(strings.Join(kept, " "))
+	// Limpa artefatos da remoção sem tocar a estrutura restante.
+	text = regexp.MustCompile(`[ \t]+\n`).ReplaceAllString(text, "\n")
+	text = regexp.MustCompile(`\n{3,}`).ReplaceAllString(text, "\n\n")
+	text = regexp.MustCompile(`[ \t]{2,}`).ReplaceAllString(text, " ")
+	return strings.TrimSpace(text)
 }
 
 func isInterrogative(s string) bool {
