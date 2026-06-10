@@ -83,6 +83,11 @@ func (s *Scheduler) Start() {
 	// minute%15==0 dentro do job — evita rajada.
 	s.cron.AddFunc("* * * * *", s.checkInactivity)
 
+	// Lembretes pontuais ("me lembra às 23:58") — contrato P2. Claim-first,
+	// catch-up com graça de 2h, bypass de quiet-hours por design (ver
+	// scheduler_reminders.go).
+	s.cron.AddFunc("* * * * *", s.checkAdHocReminders)
+
 	// Fase 5 (idosos): escala inatividade pra responsaveis (cron 1-min,
 	// gating in-process via shouldRunPhase5(30min)) + catchup diario de
 	// snapshot psicologico (cron 1-hora, gating 60min).

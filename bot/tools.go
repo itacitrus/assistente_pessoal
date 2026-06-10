@@ -62,6 +62,8 @@ func buildToolHandlers() map[string]ToolHandler {
 		"listar_viagens":             handleListarViagens,
 		"cancelar_viagem":            handleCancelarViagem,
 		"responder_permissao":        handleResponderPermissao,
+		"agendar_lembrete":           handleAgendarLembrete,
+		"cancelar_lembrete":          handleCancelarLembrete,
 	}
 	// Fase 3 (idosos): medicacao. Mantido em mapa proprio em
 	// tools_medication.go pra preservar coesao por feature.

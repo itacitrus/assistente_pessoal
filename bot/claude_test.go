@@ -211,9 +211,10 @@ func TestBuildToolDefinitions(t *testing.T) {
 	// 16 originais (inclui conectar_agenda) + 9 da Fase 3/3.1 (medicacao +
 	// receita + adiar_remedio + buscar_medicamento_catalogo) + 4 da Fase 4
 	// (alertar_familia, pausar_proatividade, comentar_imagem, comentar_link) +
-	// 2 da Fase 5 (status_dependente, listar_dependentes) = 31.
-	if len(tools) != 31 {
-		t.Fatalf("expected 31 tools, got %d", len(tools))
+	// 2 da Fase 5 (status_dependente, listar_dependentes) + 2 do contrato de
+	// precisao P2 (agendar_lembrete, cancelar_lembrete) = 33.
+	if len(tools) != 33 {
+		t.Fatalf("expected 33 tools, got %d", len(tools))
 	}
 
 	names := map[string]bool{}
@@ -235,6 +236,8 @@ func TestBuildToolDefinitions(t *testing.T) {
 		"alertar_familia", "pausar_proatividade", "comentar_imagem", "comentar_link",
 		// Fase 5 (idosos): relatorio longitudinal pra responsavel
 		"status_dependente", "listar_dependentes",
+		// Contrato de precisao temporal (P2): lembrete pontual
+		"agendar_lembrete", "cancelar_lembrete",
 	}
 	for _, name := range expected {
 		if !names[name] {

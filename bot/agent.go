@@ -595,6 +595,7 @@ Ferramentas disponíveis:
 - convidar_externo: mandar convite via WhatsApp para não-usuários. Quando convidar para MÚLTIPLOS eventos (ex: 3 dias de feira), envie UM convite para CADA dia — chame a ferramenta várias vezes.
 - gerar_link_meet: gerar link do Google Meet.
 - registrar_viagem, listar_viagens, cancelar_viagem: gerenciar períodos em outro fuso horário (veja seção TIMEZONE E VIAGENS).
+- agendar_lembrete, cancelar_lembrete: aviso pontual por mensagem ("me lembra às 23:58"). REGRA DURA: NUNCA prometa lembrar/avisar alguém em texto sem chamar agendar_lembrete — o lembrete só existe se a tool confirmar. Compromisso com lugar/pessoas/duração continua em criar_evento.
 
 CUIDADO DE FAMILIARES (RESPONSÁVEL):
 - Você também ajuda quem cuida de um familiar idoso (dependente). Para isso existem ferramentas próprias:
@@ -731,7 +732,7 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 		},
 		{
 			Name:        "criar_evento",
-			Description: "Cria um novo evento na agenda do usuario. Crie direto quando as informacoes forem claras. PREFERIVEL usar esta tool com todos os parametros (meet, attendees) de uma vez em vez de chamar criar_evento + gerar_link_meet + convidar_participante separadamente.",
+			Description: "Cria um novo evento na agenda do usuario. Crie direto quando as informacoes forem claras. PREFERIVEL usar esta tool com todos os parametros (meet, attendees) de uma vez em vez de chamar criar_evento + gerar_link_meet + convidar_participante separadamente. ROTEAMENTO: compromisso com lugar, pessoas ou duracao -> criar_evento (esta tool); aviso pontual 'me avisa/me lembra as HH' SEM semantica de evento -> agendar_lembrete; ambiguo com agenda Google conectada -> prefira criar_evento.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -915,6 +916,32 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 					}
 				},
 				"required": ["decision"]
+			}`),
+		},
+		{
+			Name:        "agendar_lembrete",
+			Description: "Agenda um aviso pontual por mensagem ('me lembra as 23:58', 'me avisa daqui 20 minutos'). Independe do Google Calendar — funciona para qualquer usuario. NUNCA prometa lembrar/avisar em texto sem chamar esta tool: o lembrete SO EXISTE se ela retornar sucesso. ROTEAMENTO: aviso pontual sem semantica de evento -> esta tool; compromisso com lugar, pessoas ou duracao -> criar_evento; ambiguo com agenda Google conectada -> prefira criar_evento. O resultado ecoa o horario RESOLVIDO pelo sistema (ex: rolagem para amanha quando a hora ja passou) — cite-o como veio.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"text": {"type": "string", "description": "O recado do lembrete (ex: 'aniversario do Clovis'). OBRIGATORIO."},
+					"date_source": {"type": "string", "enum": ["explicit", "inferred"], "description": "explicit quando o usuario deu marcador temporal de DIA (amanha, dia 20). inferred (default) quando so deu a hora — o sistema resolve: hora > agora -> hoje; hora <= agora -> amanha."},
+					"date": {"type": "string", "description": "Data YYYY-MM-DD, so quando date_source=explicit."},
+					"time_hhmm": {"type": "string", "description": "Horario HH:MM do aviso (ex: '23:58')."},
+					"offset_minutes": {"type": "integer", "description": "Alternativa: avisar daqui N minutos ('daqui a 20 min' -> 20). O sistema computa o instante — NUNCA compute voce."}
+				},
+				"required": ["text"]
+			}`),
+		},
+		{
+			Name:        "cancelar_lembrete",
+			Description: "Cancela um lembrete pontual pendente (criado com agendar_lembrete). Sem parametros, lista os pendentes para o usuario escolher.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"reminder_id": {"type": "integer", "description": "Id do lembrete (aparece na listagem)."},
+					"query": {"type": "string", "description": "Trecho do texto do lembrete para localizar (alternativa ao id)."}
+				}
 			}`),
 		},
 		// Fase 3 (idosos): medicacao + escalacao.

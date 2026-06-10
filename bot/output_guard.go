@@ -379,15 +379,23 @@ func detectI3TransportNarration(text, userMsg string) []guardViolation {
 	return out
 }
 
-// detectI4DisplayCitation — quando criar_evento retornou OK_CRIADO|display=,
-// a resposta DEVE conter o display verbatim (REGRA DE CITAÇÃO, agora
-// enforçada): matching de substring exato, zero NLP, zero falso positivo.
+// detectI4DisplayCitation — quando criar_evento/agendar_lembrete retornaram
+// um payload display=, a resposta DEVE conter o display verbatim (REGRA DE
+// CITAÇÃO, agora enforçada): matching de substring exato, zero NLP, zero
+// falso positivo.
 func detectI4DisplayCitation(text string, toolResults []string) []guardViolation {
 	var out []guardViolation
 	for _, r := range toolResults {
 		display, ok := strings.CutPrefix(r, "OK_CRIADO|display=")
 		if !ok {
+			display, ok = strings.CutPrefix(r, "LEMBRETE_SALVO|display=")
+		}
+		if !ok {
 			continue
+		}
+		// Nota de ajuste no fim do payload não faz parte do display verbatim.
+		if i := strings.Index(display, "\n(Esse horário já passou"); i >= 0 {
+			display = display[:i]
 		}
 		display = strings.TrimSpace(display)
 		if display == "" || strings.Contains(text, display) {
