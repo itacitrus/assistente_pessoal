@@ -31,6 +31,15 @@ type Config struct {
 	LLMProviderCompanion string
 	DeepSeekAPIKey       string
 	DeepSeekBaseURL      string // default https://api.deepseek.com/v1
+
+	// Output-guard (contrato de precisão temporal, P1).
+	// OUTPUT_GUARD_MODE: off | log | enforce. Default "log" — audita
+	// violações sem alterar a resposta; promover a "enforce" só após o
+	// aceite (7 dias com zero enforcement I1/I4 nos audits).
+	// GUARD_ENFORCE_PHONES: canário — telefones (CSV) que recebem enforce
+	// mesmo em modo log (admin primeiro).
+	OutputGuardMode    string
+	GuardEnforcePhones []string
 }
 
 func LoadConfig() (*Config, error) {
@@ -71,6 +80,16 @@ func LoadConfig() (*Config, error) {
 	cfg.LLMProviderCompanion = strings.ToLower(strings.TrimSpace(envOrDefault("LLM_PROVIDER_COMPANION", "anthropic")))
 	cfg.DeepSeekAPIKey = os.Getenv("DEEPSEEK_API_KEY")
 	cfg.DeepSeekBaseURL = strings.TrimSpace(os.Getenv("DEEPSEEK_BASE_URL"))
+
+	cfg.OutputGuardMode = strings.ToLower(strings.TrimSpace(envOrDefault("OUTPUT_GUARD_MODE", "log")))
+	if cfg.OutputGuardMode != "off" && cfg.OutputGuardMode != "log" && cfg.OutputGuardMode != "enforce" {
+		return nil, fmt.Errorf("OUTPUT_GUARD_MODE invalido %q (use off|log|enforce)", cfg.OutputGuardMode)
+	}
+	for _, p := range strings.Split(os.Getenv("GUARD_ENFORCE_PHONES"), ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			cfg.GuardEnforcePhones = append(cfg.GuardEnforcePhones, p)
+		}
+	}
 
 	// Validate required fields
 	required := map[string]string{

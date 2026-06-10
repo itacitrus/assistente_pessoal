@@ -55,20 +55,53 @@ func (a *Agent) runCompanion(ctx context.Context, user *User, message string, im
 	system := systemPartsToLLM(systemParts)
 	tools := toolDefsToLLM(buildToolDefinitions())
 
-	resp, toolsCalled, err := a.runLoopLLM(ctx, user, a.companionChat, system, messages, tools)
+	res, err := a.runLoopLLM(ctx, user, a.companionChat, system, messages, tools)
 	if err != nil {
 		return "", fmt.Errorf("agent companion: %w", err)
 	}
-	resp = stripLeadingStamp(resp)
 	// Salvaguarda deterministica: o companion (DeepSeek) as vezes NARRA "anotado"
 	// sem chamar marcar_remedio_tomado. Sem isso a dose fica 'pending' e a escalacao
 	// cutuca de novo ("o agente ignorou meu tomei"). Aqui, se a fala do idoso for
 	// confirmacao inequivoca E o LLM nao tocou nenhuma tool de remedio, persistimos
 	// pelos mesmos helpers idempotentes. Roda ANTES do envio: o proximo tick de
 	// escalacao (1min) ja ve a dose resolvida.
-	a.reconcileTakenAfterTurn(user, message, toolsCalled)
-	log.Printf("[%s] Companion final response (%d chars): %.100s", user.Name, len(resp), resp)
-	return resp, nil
+	a.reconcileTakenAfterTurn(user, message, res.ToolsCalled)
+
+	// Output-guard (P1) — mesmo contrato do caminho operacional; regenerate
+	// tool-less sobre o provider do companion (DeepSeek).
+	out, action := a.guardOutput(guardInput{
+		User: user, TC: tc, UserMsg: message,
+		ToolsCalled: res.ToolsCalled, ToolResults: res.ToolResults,
+		Engine: "companion",
+	}, res.Text, a.llmRewriteFn(ctx, a.companionChat, system, res.Messages))
+	if action != "none" {
+		log.Printf("[%s] guard action=%s", user.Name, action)
+	}
+	log.Printf("[%s] Companion final response (%d chars): %.100s", user.Name, len(out), out)
+	return out, nil
+}
+
+// llmRewriteFn — regenerateFn sobre llm.ChatProvider: UMA chamada de reescrita
+// com Tools omitido (DeepSeek não pode re-emitir tool_use sem tools no request).
+func (a *Agent) llmRewriteFn(ctx context.Context, provider llm.ChatProvider, system []llm.SystemPart, transcript []llm.Message) regenerateFn {
+	return func(feedback string) (string, error) {
+		msgs := append(append([]llm.Message{}, transcript...), llm.Message{
+			Role: llm.RoleUser,
+			Content: []llm.ContentBlock{{Type: "text", Text: "[CORREÇÃO DO SISTEMA] " + feedback +
+				" Reescreva APENAS a mensagem corrigida, sem comentários sobre a correção."}},
+		})
+		resp, err := provider.Chat(ctx, llm.ChatRequest{
+			System:      system,
+			Messages:    msgs,
+			MaxTokens:   4096,
+			Temperature: 0.4,
+			// Tools omitido de propósito.
+		})
+		if err != nil {
+			return "", err
+		}
+		return collectLLMText(resp.Content), nil
+	}
 }
 
 // medActionTools sao as tools que, quando chamadas pelo LLM, significam que ele JA
@@ -132,15 +165,23 @@ func (a *Agent) describeImageForCompanion(ctx context.Context, user *User, img I
 	return strings.TrimSpace(resp.Text)
 }
 
+// llmLoopResult espelha loopResult (agent.go) em tipos canonicos llm.* —
+// mesmos insumos para o output-guard e para o regenerate tool-less.
+type llmLoopResult struct {
+	Text        string
+	ToolsCalled []string
+	ToolResults []string
+	Messages    []llm.Message
+}
+
 // runLoopLLM e o loop de tool-use sobre llm.ChatProvider — espelha runLoop
 // (Anthropic) mas em tipos canonicos. Reaproveita o registry toolHandlers (a
 // assinatura do handler ja e agnostica de provider: ctx, agent, user, json).
-// runLoopLLM retorna (resposta, toolsCalled, err). toolsCalled lista os nomes das
-// tools EFETIVAMENTE executadas (sem erro) ao longo do loop — usado pela
-// salvaguarda pos-turno pra saber se o LLM ja tratou a tomada.
-func (a *Agent) runLoopLLM(ctx context.Context, user *User, provider llm.ChatProvider, system []llm.SystemPart, messages []llm.Message, tools []llm.ToolDef) (string, []string, error) {
+// ToolsCalled lista os nomes das tools EFETIVAMENTE executadas (sem erro) ao
+// longo do loop — usado pela salvaguarda pos-turno e pelo guard.
+func (a *Agent) runLoopLLM(ctx context.Context, user *User, provider llm.ChatProvider, system []llm.SystemPart, messages []llm.Message, tools []llm.ToolDef) (llmLoopResult, error) {
 	const maxIterations = 8
-	var toolsCalled []string
+	var toolsCalled, toolResults []string
 	for i := 0; i < maxIterations; i++ {
 		log.Printf("[%s] Companion loop iteration %d (provider=%s, msgs=%d)", user.Name, i+1, provider.Name(), len(messages))
 
@@ -152,13 +193,14 @@ func (a *Agent) runLoopLLM(ctx context.Context, user *User, provider llm.ChatPro
 			Temperature: 0.4,
 		})
 		if err != nil {
-			return "", toolsCalled, fmt.Errorf("companion chat: %w", err)
+			return llmLoopResult{ToolsCalled: toolsCalled, ToolResults: toolResults, Messages: messages}, fmt.Errorf("companion chat: %w", err)
 		}
 		log.Printf("[%s] Companion response: stop=%s blocks=%d tokens=in:%d/out:%d model=%s",
 			user.Name, resp.StopReason, len(resp.Content), resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.ModelUsed)
 
 		if resp.StopReason != llm.StopToolUse {
-			return collectLLMText(resp.Content), toolsCalled, nil
+			messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: resp.Content})
+			return llmLoopResult{Text: collectLLMText(resp.Content), ToolsCalled: toolsCalled, ToolResults: toolResults, Messages: messages}, nil
 		}
 
 		// Anexa o turno do assistant (texto + tool_use) como veio.
@@ -182,6 +224,7 @@ func (a *Agent) runLoopLLM(ctx context.Context, user *User, provider llm.ChatPro
 				continue
 			}
 			toolsCalled = append(toolsCalled, c.ToolName)
+			toolResults = append(toolResults, result)
 			preview := result
 			if len(preview) > 500 {
 				preview = preview[:500] + "...[truncated]"
@@ -191,7 +234,7 @@ func (a *Agent) runLoopLLM(ctx context.Context, user *User, provider llm.ChatPro
 		}
 		messages = append(messages, llm.Message{Role: llm.RoleUser, Content: results})
 	}
-	return "Desculpe, nao consegui completar a operacao (muitas etapas).", toolsCalled, nil
+	return llmLoopResult{Text: "Desculpe, nao consegui completar a operacao (muitas etapas).", ToolsCalled: toolsCalled, ToolResults: toolResults, Messages: messages}, nil
 }
 
 // errToolResultLLM monta um tool_result de erro no formato canonico.

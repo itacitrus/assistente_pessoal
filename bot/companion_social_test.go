@@ -206,12 +206,12 @@ func TestRunLoopLLM_TextOnly(t *testing.T) {
 	}}
 	a := &Agent{}
 	msgs := []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{{Type: "text", Text: "oi"}}}}
-	got, _, err := a.runLoopLLM(context.Background(), &User{Name: "X"}, prov, nil, msgs, nil)
+	res, err := a.runLoopLLM(context.Background(), &User{Name: "X"}, prov, nil, msgs, nil)
 	if err != nil {
 		t.Fatalf("runLoopLLM erro: %v", err)
 	}
-	if got != "oi, tudo bem!" {
-		t.Errorf("texto incorreto: %q", got)
+	if res.Text != "oi, tudo bem!" {
+		t.Errorf("texto incorreto: %q", res.Text)
 	}
 	if prov.calls != 1 {
 		t.Errorf("esperava 1 chamada, got %d", prov.calls)
@@ -225,12 +225,12 @@ func TestRunLoopLLM_ToolThenText(t *testing.T) {
 	}}
 	a := &Agent{}
 	msgs := []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{{Type: "text", Text: "faz algo"}}}}
-	got, _, err := a.runLoopLLM(context.Background(), &User{Name: "X"}, prov, nil, msgs, nil)
+	res, err := a.runLoopLLM(context.Background(), &User{Name: "X"}, prov, nil, msgs, nil)
 	if err != nil {
 		t.Fatalf("runLoopLLM erro: %v", err)
 	}
-	if got != "pronto" {
-		t.Errorf("texto final incorreto: %q", got)
+	if res.Text != "pronto" {
+		t.Errorf("texto final incorreto: %q", res.Text)
 	}
 	if prov.calls != 2 {
 		t.Errorf("esperava 2 chamadas, got %d", prov.calls)

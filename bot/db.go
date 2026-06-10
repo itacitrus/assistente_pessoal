@@ -610,6 +610,32 @@ func (db *DB) migrate() error {
 			last_refresh_at DATETIME NOT NULL,
 			PRIMARY KEY (user_id, scope)
 		)`,
+
+		// Lembretes pontuais ("me lembra às 23:58") — contrato de precisão
+		// temporal, P2. fire_at em UNIX EPOCH SEGUNDOS (INTEGER) de propósito:
+		// comparação inteira em GetDueReminders, dedup UNIQUE exato e zero
+		// ambiguidade de fuso do driver (o DSN não tem _loc; a disciplina
+		// .UTC() de db_medication.go é convenção de call site, não garantia).
+		// attempts conta falhas de ENVIO (cap 5 → status failed).
+		`CREATE TABLE IF NOT EXISTS reminders (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			text       TEXT    NOT NULL,
+			fire_at    INTEGER NOT NULL,
+			status     TEXT    NOT NULL DEFAULT 'pending'
+			           CHECK(status IN ('pending','sent','canceled','missed','failed')),
+			origin     TEXT    NOT NULL DEFAULT 'user_request',
+			attempts   INTEGER NOT NULL DEFAULT 0,
+			sent_at    DATETIME,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(status, fire_at)`,
+		// Índice único PARCIAL: dedup só entre PENDING. Sem o WHERE, o ciclo
+		// "me lembra" → "deixa pra lá" (canceled) → "pensando melhor, me
+		// lembra sim" colidiria com a row cancelada — a tool reportaria
+		// sucesso e nenhum lembrete existiria (B4 renascido com a tool presente).
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_reminders_pending_unique
+			ON reminders(user_id, fire_at, text) WHERE status='pending'`,
 	}
 	for _, stmt := range additive {
 		if _, err := db.conn.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column") {

@@ -77,12 +77,31 @@ func (a *Agent) RunProactive(ctx context.Context, user *User, hoursIdle int) (st
 	systemParts = a.appendMedicationPolicyPart(systemParts, user)
 	systemParts = a.appendCompanionAgoraPart(systemParts, user, tc)
 
-	response, _, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, systemParts)
+	res, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, systemParts)
 	if err != nil {
 		return "", fmt.Errorf("agent proactive: %w", err)
 	}
 
-	response = strings.TrimSpace(stripLeadingStamp(response))
+	// Resposta vazia = decisão legítima de não puxar conversa — checa ANTES
+	// do guard (o guard nunca devolve vazio; transformaria o silêncio
+	// intencional num template indesejado).
+	if strings.TrimSpace(res.Text) == "" {
+		log.Printf("[%s] RunProactive: agente decidiu nao puxar conversa", user.Name)
+		return "", nil
+	}
+
+	// Output-guard (P1): o proativo é a geração mais propensa a errar
+	// saudação (sem âncora de usuário) — mesma rede dos outros caminhos.
+	response, action := a.guardOutput(guardInput{
+		User: user, TC: tc, UserMsg: "",
+		ToolsCalled: res.ToolsCalled, ToolResults: res.ToolResults,
+		Engine: "proactive",
+	}, res.Text, a.anthropicRewriteFn(ctx, user, res.Messages, systemParts, anthropic.ModelClaudeSonnet4Dot6))
+	if action != "none" {
+		log.Printf("[%s] guard action=%s (proactive)", user.Name, action)
+	}
+
+	response = strings.TrimSpace(response)
 	if response == "" {
 		log.Printf("[%s] RunProactive: agente decidiu nao puxar conversa", user.Name)
 		return "", nil

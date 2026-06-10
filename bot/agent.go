@@ -188,11 +188,22 @@ func (a *Agent) Run(ctx context.Context, user *User, message string, images []Im
 		return a.runCompanion(ctx, user, message, images, systemParts, tc)
 	}
 
-	response, _, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, systemParts)
+	res, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, systemParts)
 	if err != nil {
 		return "", fmt.Errorf("agent: %w", err)
 	}
-	response = stripLeadingStamp(response)
+
+	// Output-guard (P1): invariantes determinísticas antes do transporte.
+	// Regenerate = UMA chamada de reescrita SEM tools sobre o transcript do
+	// turno (estruturalmente incapaz de re-executar criar_evento etc.).
+	response, action := a.guardOutput(guardInput{
+		User: user, TC: tc, UserMsg: message,
+		ToolsCalled: res.ToolsCalled, ToolResults: res.ToolResults,
+		Engine: "operational",
+	}, res.Text, a.anthropicRewriteFn(ctx, user, res.Messages, systemParts, anthropic.ModelClaudeSonnet4Dot6))
+	if action != "none" {
+		log.Printf("[%s] guard action=%s", user.Name, action)
+	}
 
 	log.Printf("[%s] Agent final response (%d chars): %.100s", user.Name, len(response), response)
 
@@ -200,6 +211,40 @@ func (a *Agent) Run(ctx context.Context, user *User, message string, images []Im
 	// transporte (Handler.persistOutbound), quando a resposta eh efetivamente
 	// enviada. Ver comentario em Handler.persistOutbound.
 	return response, nil
+}
+
+// anthropicRewriteFn fecha um regenerateFn sobre o transcript final do loop
+// Anthropic: anexa o turno de correção e faz UMA chamada com Tools OMITIDO —
+// o modelo vê o que foi commitado (tool_use/tool_result no transcript) mas
+// não pode re-executar nada. O turno sintético nunca é persistido.
+func (a *Agent) anthropicRewriteFn(ctx context.Context, user *User, transcript []anthropic.Message, systemParts []anthropic.MessageSystemPart, model anthropic.Model) regenerateFn {
+	return func(feedback string) (string, error) {
+		msgs := append(append([]anthropic.Message{}, transcript...), anthropic.Message{
+			Role: anthropic.RoleUser,
+			Content: []anthropic.MessageContent{anthropic.NewTextMessageContent(
+				"[CORREÇÃO DO SISTEMA] " + feedback + " Reescreva APENAS a mensagem corrigida, sem comentários sobre a correção.")},
+		})
+		markLastMessageForCache(msgs)
+		temp := float32(0.3)
+		resp, err := a.createMessagesWithRetry(ctx, user, anthropic.MessagesRequest{
+			Model:       model,
+			MaxTokens:   4096,
+			Temperature: &temp,
+			MultiSystem: systemParts,
+			Messages:    msgs,
+			// Tools omitido de propósito: reescrita não pode chamar tool.
+		})
+		if err != nil {
+			return "", err
+		}
+		var parts []string
+		for _, c := range resp.Content {
+			if c.Type == anthropic.MessagesContentTypeText {
+				parts = append(parts, c.GetText())
+			}
+		}
+		return strings.Join(parts, "\n"), nil
+	}
 }
 
 // dropCurrentTurnFromHistory remove a ÚLTIMA row do histórico quando ela é o
@@ -217,10 +262,24 @@ func dropCurrentTurnFromHistory(history []ConversationMessage, persistedContent 
 	return history
 }
 
+// loopResult é o resultado completo de um loop de tool-use: além do texto
+// final, expõe as tools efetivamente executadas (sem erro), os payloads de
+// resultado e o transcript final (com blocos tool_use/tool_result) — insumos
+// do output-guard: I2/I4 checam claims contra toolsCalled/toolResults, e o
+// regenerate tool-less anexa a correção ao MESMO transcript para o modelo ver
+// o que já foi commitado.
+type loopResult struct {
+	Text        string
+	ToolsCalled []string
+	ToolResults []string
+	Messages    []anthropic.Message
+}
+
 // runLoop is the core agent loop: send messages, handle tool_use, repeat.
-func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Message, model anthropic.Model, systemParts []anthropic.MessageSystemPart) (string, bool, error) {
+func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Message, model anthropic.Model, systemParts []anthropic.MessageSystemPart) (loopResult, error) {
 	tools := buildToolDefinitions()
 	maxIterations := 8
+	var toolsCalled, toolResults []string
 
 	for i := 0; i < maxIterations; i++ {
 		log.Printf("[%s] Agent loop iteration %d (model=%s, msgs=%d)", user.Name, i+1, model, len(messages))
@@ -240,7 +299,7 @@ func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Me
 			Tools:       tools,
 		})
 		if err != nil {
-			return "", false, fmt.Errorf("claude API: %w", err)
+			return loopResult{Messages: messages}, fmt.Errorf("claude API: %w", err)
 		}
 
 		u := resp.Usage
@@ -257,7 +316,9 @@ func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Me
 					textParts = append(textParts, c.GetText())
 				}
 			}
-			return strings.Join(textParts, "\n"), false, nil
+			text := strings.Join(textParts, "\n")
+			messages = append(messages, anthropic.Message{Role: anthropic.RoleAssistant, Content: resp.Content})
+			return loopResult{Text: text, ToolsCalled: toolsCalled, ToolResults: toolResults, Messages: messages}, nil
 		}
 
 		if resp.StopReason == anthropic.MessagesStopReasonToolUse {
@@ -268,7 +329,7 @@ func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Me
 			})
 
 			// Execute each tool call and build results
-			var toolResults []anthropic.MessageContent
+			var toolResultBlocks []anthropic.MessageContent
 			for _, c := range resp.Content {
 				if c.Type == anthropic.MessagesContentTypeToolUse && c.MessageContentToolUse != nil {
 					toolName := c.MessageContentToolUse.Name
@@ -279,14 +340,14 @@ func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Me
 
 					handler, ok := toolHandlers[toolName]
 					if !ok {
-						toolResults = append(toolResults, anthropic.NewToolResultMessageContent(toolID, fmt.Sprintf("Ferramenta desconhecida: %s", toolName), true))
+						toolResultBlocks = append(toolResultBlocks, anthropic.NewToolResultMessageContent(toolID, fmt.Sprintf("Ferramenta desconhecida: %s", toolName), true))
 						continue
 					}
 
 					result, err := handler(ctx, a, user, toolInput)
 					if err != nil {
 						log.Printf("[%s] Tool %s error: %v", user.Name, toolName, err)
-						toolResults = append(toolResults, anthropic.NewToolResultMessageContent(toolID, fmt.Sprintf("Erro: %v", err), true))
+						toolResultBlocks = append(toolResultBlocks, anthropic.NewToolResultMessageContent(toolID, fmt.Sprintf("Erro: %v", err), true))
 					} else {
 						// Log the exact string we ship back to the model. Lets a
 						// post-mortem see if the agent hallucinated success from
@@ -296,7 +357,9 @@ func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Me
 							preview = preview[:500] + "...[truncated]"
 						}
 						log.Printf("[%s] Tool %s result: %s", user.Name, toolName, preview)
-						toolResults = append(toolResults, anthropic.NewToolResultMessageContent(toolID, result, false))
+						toolsCalled = append(toolsCalled, toolName)
+						toolResults = append(toolResults, result)
+						toolResultBlocks = append(toolResultBlocks, anthropic.NewToolResultMessageContent(toolID, result, false))
 					}
 				}
 			}
@@ -304,16 +367,16 @@ func (a *Agent) runLoop(ctx context.Context, user *User, messages []anthropic.Me
 			// Send tool results back
 			messages = append(messages, anthropic.Message{
 				Role:    anthropic.RoleUser,
-				Content: toolResults,
+				Content: toolResultBlocks,
 			})
 			continue
 		}
 
 		// Unknown stop reason — return whatever text we have
-		return resp.GetFirstContentText(), false, nil
+		return loopResult{Text: resp.GetFirstContentText(), ToolsCalled: toolsCalled, ToolResults: toolResults, Messages: messages}, nil
 	}
 
-	return "Desculpe, nao consegui completar a operacao (muitas etapas).", false, nil
+	return loopResult{Text: "Desculpe, nao consegui completar a operacao (muitas etapas).", ToolsCalled: toolsCalled, ToolResults: toolResults, Messages: messages}, nil
 }
 
 // markLastMessageForCache attaches cache_control: ephemeral to the final
