@@ -237,7 +237,7 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 			return "", fmt.Errorf("create birthday event: %w", err)
 		}
 		agent.audit.Log(user.ID, "criar_evento", "", p.Title+" (aniversario)")
-		return FormatEventCreated(*created), nil
+		return FormatEventCreated(*created, time.Now()), nil
 	}
 
 	// Hint inicial de data para lookup de fuso: data explicita se houver,
@@ -403,7 +403,7 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 		res.Start.Format(time.RFC3339), res.Adjusted); auditErr != nil {
 		log.Printf("[%s] LogCriarEvento failed: %v", user.Name, auditErr)
 	}
-	display := FormatEventCreated(*created)
+	display := FormatEventCreated(*created, time.Now())
 	if res.AdjustNote != "" {
 		display = res.AdjustNote + "\n" + display
 	}
@@ -697,7 +697,7 @@ func handleCriarEventoOutroUsuario(ctx context.Context, agent *Agent, user *User
 
 	agent.audit.Log(user.ID, "criar_evento", target.Name, p.Title)
 	log.Printf("[%s] Created event on %s's calendar: %s", user.Name, target.Name, p.Title)
-	return fmt.Sprintf("Evento criado na agenda de %s: %s", target.Name, FormatEventCreated(*created)), nil
+	return fmt.Sprintf("Evento criado na agenda de %s: %s", target.Name, FormatEventCreated(*created, time.Now())), nil
 }
 
 type gerarLinkMeetParams struct {

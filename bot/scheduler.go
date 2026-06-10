@@ -150,7 +150,7 @@ func (s *Scheduler) checkUserReminders(user *User) {
 			continue
 		}
 
-		msg := FormatReminder(ev)
+		msg := FormatReminder(ev, now)
 		if err := s.sendMsg(user.PhoneNumber, msg); err != nil {
 			log.Printf("Scheduler: error sending reminder to %s: %v", user.Name, err)
 			continue

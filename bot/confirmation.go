@@ -155,7 +155,7 @@ func (cm *ConfirmationManager) executeConfirmation(user *User, pc *PendingConfir
 		if err := cm.db.ResolvePendingConfirmation(pc.ID, "confirmed"); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Evento criado na agenda de %s: %s", targetUser.Name, FormatEventCreated(*created)), nil
+		return fmt.Sprintf("Evento criado na agenda de %s: %s", targetUser.Name, FormatEventCreated(*created, time.Now())), nil
 	}
 
 	refreshToken, err := Decrypt(user.GoogleCredentials, cm.cfg.EncryptionKey)
@@ -172,7 +172,7 @@ func (cm *ConfirmationManager) executeConfirmation(user *User, pc *PendingConfir
 		return "", err
 	}
 
-	return FormatEventCreated(*created), nil
+	return FormatEventCreated(*created, time.Now()), nil
 }
 
 // executeMedicationConfirmation lida com confirmacao de pendings kind=medication.

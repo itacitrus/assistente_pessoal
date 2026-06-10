@@ -43,17 +43,33 @@ func TestFormatWeeklySummary(t *testing.T) {
 	}
 }
 
-func TestFormatReminder(t *testing.T) {
+// TestFormatReminder_IsDateExplicit: o lembrete é o artefato mais relido do
+// histórico — precisa carregar a própria data (absoluta PRIMEIRO, relativa
+// como anotação) para nunca mais ser temporalmente realocado (B2).
+func TestFormatReminder_IsDateExplicit(t *testing.T) {
 	ev := CalendarEvent{
 		Title: "Reuniao com CEO",
-		Start: time.Date(2026, 4, 10, 15, 0, 0, 0, time.UTC),
+		Start: time.Date(2026, 4, 10, 15, 0, 0, 0, time.UTC), // sexta
 	}
-	result := FormatReminder(ev)
-	if !strings.Contains(result, "Reuniao com CEO") {
-		t.Fatalf("reminder should contain event title, got: %s", result)
+	// now no mesmo dia → rótulo HOJE como anotação após a data absoluta.
+	now := time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC)
+	result := FormatReminder(ev, now)
+	for _, want := range []string{"Reuniao com CEO", "15:00", "Sexta, 10/04 (HOJE)"} {
+		if !strings.Contains(result, want) {
+			t.Fatalf("reminder deveria conter %q, got: %s", want, result)
+		}
 	}
-	if !strings.Contains(result, "15:00") {
-		t.Fatalf("reminder should contain time, got: %s", result)
+
+	// now um dia antes → AMANHÃ.
+	result = FormatReminder(ev, now.AddDate(0, 0, -1))
+	if !strings.Contains(result, "Sexta, 10/04 (AMANHÃ)") {
+		t.Fatalf("reminder deveria anotar AMANHÃ, got: %s", result)
+	}
+
+	// Outro dia → só a data absoluta, sem anotação relativa.
+	result = FormatReminder(ev, now.AddDate(0, 0, -5))
+	if !strings.Contains(result, "Sexta, 10/04 às 15:00") || strings.Contains(result, "(HOJE)") || strings.Contains(result, "(AMANHÃ)") {
+		t.Fatalf("sem rotulo relativo fora de hoje/amanha, got: %s", result)
 	}
 }
 
@@ -137,19 +153,74 @@ func TestRelativeDayLabel(t *testing.T) {
 
 func TestFormatEventCreated_RelativeLabel(t *testing.T) {
 	brt, _ := time.LoadLocation("America/Sao_Paulo")
-	// Evento com data fixa; asserta o formato estatico do output (titulo
-	// + weekday + DD/MM + HH:MM). O rotulo HOJE/AMANHA depende de time.Now()
-	// internamente e e coberto pelo TestRelativeDayLabel diretamente.
 	ev := CalendarEvent{
 		Title: "Reuniao com OTC",
 		Start: time.Date(2026, 4, 16, 9, 0, 0, 0, brt),
 		End:   time.Date(2026, 4, 16, 10, 0, 0, 0, brt),
 	}
-	out := FormatEventCreated(ev)
+	// Mesmo dia → data absoluta primeiro, HOJE como anotação.
+	now := time.Date(2026, 4, 16, 8, 0, 0, 0, brt)
+	out := FormatEventCreated(ev, now)
 	if !strings.Contains(out, "Reuniao com OTC") {
 		t.Fatalf("output deveria conter titulo, got: %s", out)
 	}
-	if !strings.Contains(out, "Quinta, 16/04 às 09:00") {
-		t.Fatalf("output deveria conter weekday/data/hora, got: %s", out)
+	if !strings.Contains(out, "Quinta, 16/04 (HOJE) às 09:00") {
+		t.Fatalf("output deveria ser absoluto-primeiro com anotacao relativa, got: %s", out)
+	}
+	// Outro dia → sem anotação relativa.
+	out = FormatEventCreated(ev, now.AddDate(0, 0, -10))
+	if !strings.Contains(out, "Quinta, 16/04 às 09:00") || strings.Contains(out, "(HOJE)") {
+		t.Fatalf("fora de hoje/amanha nao pode ter rotulo relativo, got: %s", out)
+	}
+}
+
+// TestFormatHistoryTurn_RelativePrefixes prova o helper de grounding: criado
+// em UTC (driver), exibido no fuso local; hoje/ontem/amanhã/dia-antigo/zero.
+func TestFormatHistoryTurn_RelativePrefixes(t *testing.T) {
+	loc := BRT()
+	now := time.Date(2026, 6, 9, 10, 0, 0, 0, loc) // terça
+
+	cases := []struct {
+		name    string
+		created time.Time
+		want    string
+	}{
+		{"hoje", time.Date(2026, 6, 9, 12, 12, 0, 0, time.UTC), "[hoje 09:12] oi"},     // 12:12Z = 09:12 BRT
+		{"ontem", time.Date(2026, 6, 8, 17, 0, 0, 0, time.UTC), "[ontem 14:00] oi"},    // 17:00Z = 14:00 BRT
+		{"amanha", time.Date(2026, 6, 10, 11, 0, 0, 0, time.UTC), "[amanhã 08:00] oi"}, // defensivo
+		{"semana passada", time.Date(2026, 6, 3, 13, 0, 0, 0, time.UTC), "[qua 03/06 10:00] oi"},
+		{"zero", time.Time{}, "oi"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatHistoryTurn("oi", tc.created, now, loc); got != tc.want {
+				t.Fatalf("formatHistoryTurn = %q, queria %q", got, tc.want)
+			}
+		})
+	}
+
+	// Fuso de viagem: carimbo na hora local do destino, não BRT.
+	lis, _ := time.LoadLocation("Europe/Lisbon")
+	created := time.Date(2026, 6, 9, 9, 0, 0, 0, time.UTC) // 10:00 em Lisboa (CEST)
+	nowLis := time.Date(2026, 6, 9, 15, 0, 0, 0, lis)
+	if got := formatHistoryTurn("oi", created, nowLis, lis); got != "[hoje 10:00] oi" {
+		t.Fatalf("carimbo em fuso de viagem = %q, queria \"[hoje 10:00] oi\"", got)
+	}
+}
+
+func TestStripLeadingStamp(t *testing.T) {
+	cases := map[string]string{
+		"[hoje 09:12] Bom dia, Fábio!":              "Bom dia, Fábio!",
+		"[ontem 14:00] oi":                          "oi",
+		"[ter 03/06 10:00] tudo bem?":               "tudo bem?",
+		"[hoje 10:00] [hoje 09:55] oi":              "oi", // eco composto
+		"Bom dia! [hoje 09:12] é meio-dia":          "Bom dia! [hoje 09:12] é meio-dia", // só no início
+		"sem carimbo":                               "sem carimbo",
+		"[amanhã 08:00] lembrete":                   "lembrete",
+	}
+	for in, want := range cases {
+		if got := stripLeadingStamp(in); got != want {
+			t.Errorf("stripLeadingStamp(%q)=%q, want %q", in, got, want)
+		}
 	}
 }

@@ -16,6 +16,62 @@ var weekdaysPT = map[time.Weekday]string{
 	time.Saturday:  "Sábado",
 }
 
+// weekdayAbbrevPT é a forma curta minúscula usada nos carimbos de histórico
+// ("[ter 03/06 14:00]"). Mantida em sincronia com leadingStampRe (turn_context.go).
+var weekdayAbbrevPT = map[time.Weekday]string{
+	time.Sunday:    "dom",
+	time.Monday:    "seg",
+	time.Tuesday:   "ter",
+	time.Wednesday: "qua",
+	time.Thursday:  "qui",
+	time.Friday:    "sex",
+	time.Saturday:  "sáb",
+}
+
+// formatHistoryTurn prefixa um turno do histórico com o carimbo relativo de
+// QUANDO ele aconteceu, computado em Go — a fonte da cegueira temporal do B2:
+// sem isso o modelo via um muro de texto sem datas e chutava "amanhã" para um
+// lembrete que disparou hoje. createdAt vem do driver em UTC (DATETIME
+// CURRENT_TIMESTAMP); a conversão usa o fuso LOCAL do usuário (travel-aware),
+// o mesmo do TurnContext — carimbo, relógio dinâmico e [AGORA] concordam por
+// construção.
+//
+//	mesmo dia    → "[hoje 09:12] "
+//	dia anterior → "[ontem 14:00] "
+//	dia seguinte → "[amanhã 08:00] " (defensivo; clock skew)
+//	outro dia    → "[ter 03/06 14:00] "
+//	zero         → conteúdo inalterado (compat com rows/tests sem CreatedAt)
+func formatHistoryTurn(content string, createdAt, now time.Time, loc *time.Location) string {
+	if createdAt.IsZero() {
+		return content
+	}
+	if loc == nil {
+		loc = BRT()
+	}
+	local := createdAt.In(loc)
+	nowLocal := now.In(loc)
+
+	dayDiff := dateOnly(nowLocal).Sub(dateOnly(local)) / (24 * time.Hour)
+	clock := local.Format("15:04")
+	var stamp string
+	switch dayDiff {
+	case 0:
+		stamp = "[hoje " + clock + "] "
+	case 1:
+		stamp = "[ontem " + clock + "] "
+	case -1:
+		stamp = "[amanhã " + clock + "] "
+	default:
+		stamp = fmt.Sprintf("[%s %s %s] ", weekdayAbbrevPT[local.Weekday()], local.Format("02/01"), clock)
+	}
+	return stamp + content
+}
+
+// dateOnly trunca para a meia-noite do dia calendário, no Location de t.
+func dateOnly(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+}
+
 // relativeDayLabel retorna "HOJE" se eventStart e now caem no mesmo dia
 // calendario (no fuso de eventStart); "AMANHA" se eventStart e o dia
 // calendario seguinte; string vazia caso contrario. Ancora narrativa
@@ -84,24 +140,33 @@ func FormatWeeklySummary(userName string, events []CalendarEvent, weekStart time
 	return sb.String()
 }
 
-func FormatReminder(ev CalendarEvent) string {
-	return fmt.Sprintf("Lembrete: *%s* começa às %s (em 1 hora)",
-		ev.Title, ev.Start.Format("15:04"))
+// FormatReminder é auto-datado: o lembrete é o artefato mais relido do
+// histórico, então carrega data absoluta PRIMEIRO e a palavra relativa como
+// anotação ("Terça, 03/06 (HOJE)") — lido amanhã com carimbo "[ontem ...]",
+// a âncora continua sendo a data absoluta, não um HOJE estaleça.
+func FormatReminder(ev CalendarEvent, now time.Time) string {
+	weekday := weekdaysPT[ev.Start.Weekday()]
+	rel := ""
+	if r := relativeDayLabel(ev.Start, now); r != "" {
+		rel = " (" + r + ")"
+	}
+	return fmt.Sprintf("Lembrete: *%s* — %s, %s%s às %s (em 1 hora)",
+		ev.Title, weekday, ev.Start.Format("02/01"), rel, ev.Start.Format("15:04"))
 }
 
-func FormatEventCreated(ev CalendarEvent) string {
+// FormatEventCreated segue a mesma ordem absoluto-primeiro do FormatReminder.
+func FormatEventCreated(ev CalendarEvent, now time.Time) string {
 	weekday := weekdaysPT[ev.Start.Weekday()]
 	if ev.EventType == "birthday" {
 		return fmt.Sprintf("Aniversário criado: *%s*\n%s, %s (repete todo ano)",
 			ev.Title, weekday, ev.Start.Format("02/01"))
 	}
-	rel := relativeDayLabel(ev.Start, time.Now())
-	prefix := ""
-	if rel != "" {
-		prefix = rel + " — "
+	rel := ""
+	if r := relativeDayLabel(ev.Start, now); r != "" {
+		rel = " (" + r + ")"
 	}
-	return fmt.Sprintf("Evento criado: *%s*\n%s%s, %s às %s",
-		ev.Title, prefix, weekday, ev.Start.Format("02/01"), ev.Start.Format("15:04"))
+	return fmt.Sprintf("Evento criado: *%s*\n%s, %s%s às %s",
+		ev.Title, weekday, ev.Start.Format("02/01"), rel, ev.Start.Format("15:04"))
 }
 
 func FormatEventList(events []CalendarEvent) string {

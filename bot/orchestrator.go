@@ -34,16 +34,29 @@ func (o *Orchestrator) ProcessUnknown(ctx context.Context, senderPhone, pushName
 	return response, nil
 }
 
-func (o *Orchestrator) Process(ctx context.Context, user *User, message string, images []ImageAttachment) (string, error) {
-	// Save user message to history
+// persistedUserContent é a string EXATA que Process grava em
+// conversation_history para um turno do usuário. Compartilhada com
+// Agent.Run/runCompanion (dropCurrentTurnFromHistory): como Process persiste
+// ANTES de rodar o agente, a última row do histórico é o próprio turno atual
+// e precisa ser reconhecida byte a byte para não entrar duplicada no contexto.
+func persistedUserContent(message string, imageCount int) string {
 	if message != "" {
-		o.db.AddConversationMessage(user.ID, "user", message)
-	} else if len(images) > 0 {
-		marker := "[imagem enviada]"
-		if len(images) > 1 {
-			marker = fmt.Sprintf("[%d imagens enviadas]", len(images))
-		}
-		o.db.AddConversationMessage(user.ID, "user", marker)
+		return message
+	}
+	if imageCount > 1 {
+		return fmt.Sprintf("[%d imagens enviadas]", imageCount)
+	}
+	if imageCount == 1 {
+		return "[imagem enviada]"
+	}
+	return ""
+}
+
+func (o *Orchestrator) Process(ctx context.Context, user *User, message string, images []ImageAttachment) (string, error) {
+	// Save user message to history (persist-antes-de-Run: o snippet de
+	// auditoria de handleCriarEvento lê o histórico e depende disso).
+	if content := persistedUserContent(message, len(images)); content != "" {
+		o.db.AddConversationMessage(user.ID, "user", content)
 	}
 
 	// Run agent

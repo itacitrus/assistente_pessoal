@@ -124,8 +124,18 @@ func (a *Agent) pickChat(user *User) llm.ChatProvider {
 
 // Run processes a user message using Sonnet with tool use.
 func (a *Agent) Run(ctx context.Context, user *User, message string, images []ImageAttachment) (string, error) {
+	// Um turno = um now = um fuso = um período (contrato de precisão temporal).
+	// Toda parte time-aware abaixo lê deste TurnContext — nunca de time.Now()
+	// próprio, senão duas amostras podem discordar na fronteira de período.
+	tc := a.newTurnContext(user, time.Now())
+
 	history, _ := a.db.GetConversationHistory(user.ID, 30)
-	messages := buildMessages(history, message)
+	// S2: o Orchestrator persiste a mensagem ANTES de Run, então a última row
+	// do histórico é o próprio turno atual — sem o drop, o modelo veria a
+	// mensagem 2× (e, com carimbos, as cópias divergiriam visivelmente,
+	// fabricando o estímulo de "mensagem em dobro").
+	history = dropCurrentTurnFromHistory(history, persistedUserContent(message, len(images)))
+	messages := buildMessages(history, message, tc.Now, tc.Loc)
 
 	// Attach all images to the last (current) user message
 	if len(images) > 0 {
@@ -162,13 +172,12 @@ func (a *Agent) Run(ctx context.Context, user *User, message string, images []Im
 		},
 		{
 			Type: "text",
-			Text: buildSystemPromptDynamic(pendingReq),
+			Text: buildSystemPromptDynamic(pendingReq, tc.Now, tc.Loc),
 		},
 	}
 	systemParts = a.appendMedicationPolicyPart(systemParts, user)
 	systemParts = a.appendCompanionPharmaPart(systemParts, user, message)
-	systemParts = a.appendCompanionDayContextPart(systemParts, user, time.Now())
-	systemParts = a.appendCompanionContinuationPart(systemParts, user)
+	systemParts = a.appendCompanionAgoraPart(systemParts, user, tc)
 
 	// Idoso roteia para o companion provider (DeepSeek em prod). O loop usa a
 	// abstracao llm.ChatProvider, reaproveitando os mesmos toolHandlers. Imagens
@@ -176,13 +185,14 @@ func (a *Agent) Run(ctx context.Context, user *User, message string, images []Im
 	// o DeepSeek-chat nao tem vision. Fallback (companionChat nil) cai no loop
 	// Anthropic abaixo.
 	if user.Type == UserTypeIdoso && a.companionChat != nil {
-		return a.runCompanion(ctx, user, message, images, systemParts)
+		return a.runCompanion(ctx, user, message, images, systemParts, tc)
 	}
 
 	response, _, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, systemParts)
 	if err != nil {
 		return "", fmt.Errorf("agent: %w", err)
 	}
+	response = stripLeadingStamp(response)
 
 	log.Printf("[%s] Agent final response (%d chars): %.100s", user.Name, len(response), response)
 
@@ -190,6 +200,21 @@ func (a *Agent) Run(ctx context.Context, user *User, message string, images []Im
 	// transporte (Handler.persistOutbound), quando a resposta eh efetivamente
 	// enviada. Ver comentario em Handler.persistOutbound.
 	return response, nil
+}
+
+// dropCurrentTurnFromHistory remove a ÚLTIMA row do histórico quando ela é o
+// próprio turno atual (role=user, conteúdo byte-idêntico ao que o Orchestrator
+// acabou de persistir). Só a última row matching é descartada — repetição
+// legítima do usuário em turno ANTERIOR é preservada (believe-the-user).
+func dropCurrentTurnFromHistory(history []ConversationMessage, persistedContent string) []ConversationMessage {
+	if persistedContent == "" || len(history) == 0 {
+		return history
+	}
+	last := history[len(history)-1]
+	if last.Role == "user" && last.Content == persistedContent {
+		return history[:len(history)-1]
+	}
+	return history
 }
 
 // runLoop is the core agent loop: send messages, handle tool_use, repeat.
@@ -361,7 +386,11 @@ func (a *Agent) createMessagesWithRetry(ctx context.Context, user *User, req ant
 	return anthropic.MessagesResponse{}, lastErr
 }
 
-func buildMessages(history []ConversationMessage, userMsg string) []anthropic.Message {
+// buildMessages serializa o histórico para o formato Anthropic, carimbando
+// cada turno passado com QUANDO ele aconteceu ("[ontem 14:00] ...") — grounding
+// temporal computado em Go (formatHistoryTurn). O turno ATUAL nunca é
+// carimbado: ele é "agora" por definição.
+func buildMessages(history []ConversationMessage, userMsg string, now time.Time, loc *time.Location) []anthropic.Message {
 	var msgs []anthropic.Message
 	for _, h := range history {
 		if h.Content == "" {
@@ -373,7 +402,7 @@ func buildMessages(history []ConversationMessage, userMsg string) []anthropic.Me
 		}
 		msgs = append(msgs, anthropic.Message{
 			Role:    role,
-			Content: []anthropic.MessageContent{anthropic.NewTextMessageContent(h.Content)},
+			Content: []anthropic.MessageContent{anthropic.NewTextMessageContent(formatHistoryTurn(h.Content, h.CreatedAt, now, loc))},
 		})
 	}
 	// Add current user message (may be empty if image-only — agent.Run adds image content after)
@@ -520,9 +549,15 @@ REGRA DURA — NUNCA AFIRME FATO SEM CONSULTAR:
 
 Regras gerais:
 - NUNCA finja ter executado uma ação sem chamar a ferramenta. NUNCA diga "cadastrei", "anotei", "marquei" se a ferramenta não foi chamada e não retornou sucesso.
-- NUNCA responda sobre agenda usando memória da conversa — sempre consulte.
+- NUNCA responda, afirme ou ALERTE sobre o estado da agenda (compromissos, horários, conflitos, sobreposições) usando a memória da conversa. O histórico serve para contexto (nomes, emails, o que foi discutido), NUNCA como fonte da verdade sobre o que está na agenda — sempre consulte buscar_agenda.
+- CONFLITO DE AGENDA: você só pode mencionar ou avisar de um possível conflito/sobreposição com base em uma ferramenta. Ao criar evento, é a própria criar_evento que detecta e retorna CONFLITO. Se o usuário perguntar sobre choque de horários, chame buscar_agenda no período exato ANTES de responder. É PROIBIDO inferir um conflito a partir de um lembrete ou evento citado no histórico — um lembrete antigo não prova que o evento ainda existe, nem em qual dia.
 - Antes de criar evento, confira se já foi criado. Não duplique.
 - Entenda áudios e contatos compartilhados (transcritos automaticamente).
+
+CARIMBOS DE TEMPO NO HISTÓRICO:
+- As mensagens do histórico começam com um carimbo do sistema indicando QUANDO aconteceram: [hoje HH:MM], [ontem HH:MM] ou [ter DD/MM HH:MM]. USE o carimbo para localizar cada fato no tempo — jamais presuma o dia de algo citado no passado.
+- NUNCA escreva carimbos assim nas suas respostas — são metadados internos, não fazem parte da conversa.
+- Palavras como HOJE/AMANHÃ dentro de uma linha do histórico valem para a data do carimbo DAQUELA linha, NÃO para agora. Para o dia de hoje, use sempre a linha de data e hora que o sistema informa a cada turno.
 
 PAPO, DESABAFO E FOFOCA (engajamento social):
 - Você não é só um executor de tarefas — é um assistente com quem dá gosto de conversar. Quando a pessoa SAI da tarefa (manda uma fofoca, comemora algo, desabafa, brinca, comenta a vida), LARGUE a concisão de tarefa e ENTRE no papo: reaja ao conteúdo, demonstre curiosidade genuína, jogue junto. Fofoca boa pede "não acredito, conta tudo!", "e aí, no que deu?", "essa eu não esperava, hein". Comemoração pede vibrar junto. Desabafo pede acolhimento antes de solução.
@@ -587,9 +622,17 @@ func (a *Agent) appendCompanionPharmaPart(parts []anthropic.MessageSystemPart, u
 	return append(parts, anthropic.MessageSystemPart{Type: "text", Text: buildCompanionPharmaRules()})
 }
 
-func buildSystemPromptDynamic(pendingReq *PermissionRequest) string {
-	now := time.Now().In(BRT()).Format("2006-01-02 15:04 (Monday)")
-	out := fmt.Sprintf("Data/hora atual: %s (fuso: America/Sao_Paulo).", now)
+// buildSystemPromptDynamic é a linha de relógio por chamada. now/loc vêm do
+// TurnContext do turno (nunca de time.Now() interno — testabilidade e
+// coerência com [AGORA] e carimbos por construção). Dia da semana e período
+// em PT-BR: o modelo não deriva nada, só lê.
+func buildSystemPromptDynamic(pendingReq *PermissionRequest, now time.Time, loc *time.Location) string {
+	if loc == nil {
+		loc = BRT()
+	}
+	local := now.In(loc)
+	out := fmt.Sprintf("Data/hora atual: %s (%s, %s) (fuso: %s).",
+		local.Format("2006-01-02 15:04"), weekdaysPTFull[local.Weekday()], periodOfDay(local.Hour()), loc.String())
 	if pendingReq != nil {
 		out += fmt.Sprintf(`
 

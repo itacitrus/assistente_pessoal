@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/giovannirambo/assistente_pessoal/bot/llm"
 )
@@ -132,12 +133,13 @@ func TestToolDefsToLLM(t *testing.T) {
 }
 
 func TestBuildMessagesLLM(t *testing.T) {
+	now := time.Date(2026, 6, 9, 10, 0, 0, 0, BRT())
 	hist := []ConversationMessage{
 		{Role: "user", Content: "oi"},
 		{Role: "assistant", Content: "olá, tudo bem?"},
 		{Role: "user", Content: ""}, // vazio é pulado
 	}
-	msgs := buildMessagesLLM(hist, "como vai?")
+	msgs := buildMessagesLLM(hist, "como vai?", now, BRT())
 	// 2 do histórico (vazio pulado) + 1 atual.
 	if len(msgs) != 3 {
 		t.Fatalf("esperava 3 mensagens, got %d", len(msgs))
@@ -150,9 +152,26 @@ func TestBuildMessagesLLM(t *testing.T) {
 	}
 
 	// Mensagem vazia (só imagem) recebe placeholder.
-	only := buildMessagesLLM(nil, "")
+	only := buildMessagesLLM(nil, "", now, BRT())
 	if only[0].Content[0].Text != "[imagem enviada]" {
 		t.Errorf("mensagem vazia deveria virar placeholder, got %q", only[0].Content[0].Text)
+	}
+}
+
+// TestBuildMessagesLLM_StampsHistoryTimestamps garante paridade DeepSeek:
+// o serializador companion carimba o histórico igual ao Anthropic.
+func TestBuildMessagesLLM_StampsHistoryTimestamps(t *testing.T) {
+	createdUTC := time.Date(2026, 6, 8, 17, 0, 0, 0, time.UTC) // 14:00 BRT ontem
+	hist := []ConversationMessage{
+		{Role: "assistant", Content: "Hora do Aradois 50mg, Fábio.", CreatedAt: createdUTC},
+	}
+	now := time.Date(2026, 6, 9, 10, 0, 0, 0, BRT())
+	msgs := buildMessagesLLM(hist, "tomei", now, BRT())
+	if got := msgs[0].Content[0].Text; !strings.HasPrefix(got, "[ontem 14:00] ") {
+		t.Errorf("turno de ontem deveria comecar com [ontem 14:00], got %q", got)
+	}
+	if cur := msgs[1].Content[0].Text; strings.HasPrefix(cur, "[") {
+		t.Errorf("turno atual nao pode ser carimbado, got %q", cur)
 	}
 }
 

@@ -708,9 +708,11 @@ func (db *DB) AddConversationMessage(userID int64, role, content string) error {
 	if err != nil {
 		return err
 	}
-	// Keep only last 20 messages per user
+	// Keep only last 50 messages per user. Tiebreaker por id: created_at tem
+	// resolucao de segundo; par user/assistant no mesmo segundo embaralharia
+	// qual row sobrevive no corte.
 	db.conn.Exec(`DELETE FROM conversation_history WHERE user_id = ? AND id NOT IN (
-		SELECT id FROM conversation_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 50
+		SELECT id FROM conversation_history WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 50
 	)`, userID, userID)
 	return nil
 }
@@ -737,9 +739,12 @@ func (db *DB) SecondsSinceLastAssistantMessage(userID int64) (float64, bool, err
 }
 
 func (db *DB) GetConversationHistory(userID int64, limit int) ([]ConversationMessage, error) {
+	// Tiebreaker por id: com carimbos de tempo visiveis ao modelo, a ordem dos
+	// turnos eh load-bearing; created_at sozinho (resolucao de segundo) pode
+	// inverter um par user/assistant gravado no mesmo segundo.
 	rows, err := db.conn.Query(
 		`SELECT role, content, created_at FROM conversation_history
-		 WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`, userID, limit)
+		 WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`, userID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -769,7 +774,7 @@ type ConversationMessage struct {
 func (db *DB) SearchConversationHistory(userID int64, query string, limit int) ([]ConversationMessage, error) {
 	rows, err := db.conn.Query(
 		`SELECT role, content, created_at FROM conversation_history
-		 WHERE user_id = ? AND content LIKE ? ORDER BY created_at DESC LIMIT ?`,
+		 WHERE user_id = ? AND content LIKE ? ORDER BY created_at DESC, id DESC LIMIT ?`,
 		userID, "%"+query+"%", limit)
 	if err != nil {
 		return nil, err

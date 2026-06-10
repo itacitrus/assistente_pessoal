@@ -22,8 +22,10 @@ import (
 //   - sem prompt cache (DeepSeek concatena tudo) — a flag Cacheable e ignorada.
 //
 // systemParts ja vem montado por Run (core + dinamico + politica + regras
-// farmacologicas condicionais), entao aqui so traduzimos pro formato llm.
-func (a *Agent) runCompanion(ctx context.Context, user *User, message string, images []ImageAttachment, systemParts []anthropic.MessageSystemPart) (string, error) {
+// farmacologicas condicionais + [AGORA]), entao aqui so traduzimos pro formato
+// llm. tc eh o TurnContext do turno (mesmo now/loc do prompt — coerencia por
+// construcao).
+func (a *Agent) runCompanion(ctx context.Context, user *User, message string, images []ImageAttachment, systemParts []anthropic.MessageSystemPart, tc *TurnContext) (string, error) {
 	augMsg := message
 	var descs []string
 	for _, img := range images {
@@ -45,7 +47,11 @@ func (a *Agent) runCompanion(ctx context.Context, user *User, message string, im
 	}
 
 	history, _ := a.db.GetConversationHistory(user.ID, 30)
-	messages := buildMessagesLLM(history, augMsg)
+	// S2: a mensagem ja foi persistida pelo Orchestrator — a ultima row eh o
+	// proprio turno atual. O match usa o texto PERSISTIDO (message), nao o
+	// augMsg (que carrega prefixos de descricao de imagem).
+	history = dropCurrentTurnFromHistory(history, persistedUserContent(message, len(images)))
+	messages := buildMessagesLLM(history, augMsg, tc.Now, tc.Loc)
 	system := systemPartsToLLM(systemParts)
 	tools := toolDefsToLLM(buildToolDefinitions())
 
@@ -53,6 +59,7 @@ func (a *Agent) runCompanion(ctx context.Context, user *User, message string, im
 	if err != nil {
 		return "", fmt.Errorf("agent companion: %w", err)
 	}
+	resp = stripLeadingStamp(resp)
 	// Salvaguarda deterministica: o companion (DeepSeek) as vezes NARRA "anotado"
 	// sem chamar marcar_remedio_tomado. Sem isso a dose fica 'pending' e a escalacao
 	// cutuca de novo ("o agente ignorou meu tomei"). Aqui, se a fala do idoso for
@@ -203,10 +210,10 @@ func collectLLMText(content []llm.ContentBlock) string {
 	return strings.Join(parts, "\n")
 }
 
-// buildMessagesLLM espelha buildMessages (Anthropic) em tipos canonicos. O
-// historico e armazenado como texto puro (tool_use/tool_result nao sao
-// persistidos), entao todo turno do historico vira um unico block de texto.
-func buildMessagesLLM(history []ConversationMessage, userMsg string) []llm.Message {
+// buildMessagesLLM espelha buildMessages (Anthropic) em tipos canonicos,
+// inclusive os carimbos temporais por turno (paridade DeepSeek/Sonnet: nenhum
+// serializador pode perder o grounding). O turno atual nunca e carimbado.
+func buildMessagesLLM(history []ConversationMessage, userMsg string, now time.Time, loc *time.Location) []llm.Message {
 	var msgs []llm.Message
 	for _, h := range history {
 		if h.Content == "" {
@@ -216,7 +223,7 @@ func buildMessagesLLM(history []ConversationMessage, userMsg string) []llm.Messa
 		if h.Role == "assistant" {
 			role = llm.RoleAssistant
 		}
-		msgs = append(msgs, llm.Message{Role: role, Content: []llm.ContentBlock{{Type: "text", Text: h.Content}}})
+		msgs = append(msgs, llm.Message{Role: role, Content: []llm.ContentBlock{{Type: "text", Text: formatHistoryTurn(h.Content, h.CreatedAt, now, loc)}}})
 	}
 	if userMsg == "" {
 		userMsg = "[imagem enviada]"
@@ -299,75 +306,12 @@ func (a *Agent) upcomingMedRemindersToday(user *User, now time.Time) []upcomingR
 	return out
 }
 
-// appendCompanionDayContextPart injeta o [CONTEXTO DO DIA] no prompt do idoso:
-// quais lembretes de remedio ainda faltam hoje. Permite ao companheiro decidir
-// se eh o ultimo contato do dia antes de se despedir com "boa noite". No-op
-// para nao-idosos. So injeta de tarde/noite (>=14h local) — de manha "ultimo
-// contato do dia" nao faz sentido e so polui o prompt.
-func (a *Agent) appendCompanionDayContextPart(parts []anthropic.MessageSystemPart, user *User, now time.Time) []anthropic.MessageSystemPart {
-	if user == nil || user.Type != UserTypeIdoso {
-		return parts
-	}
-	loc := a.db.GetEventTimezone(user.ID, now)
-	if loc == nil {
-		loc = BRT()
-	}
-	if now.In(loc).Hour() < 14 {
-		return parts
-	}
-	rem := a.upcomingMedRemindersToday(user, now)
-	var text string
-	if len(rem) == 0 {
-		text = "[CONTEXTO DO DIA] Não há mais lembretes de remédio programados para hoje. " +
-			"Se for noite e fizer sentido, pode se despedir desejando boa noite/bom descanso."
-	} else {
-		var b strings.Builder
-		b.WriteString("[CONTEXTO DO DIA] Ainda há lembrete(s) de remédio HOJE: ")
-		for i, r := range rem {
-			if i > 0 {
-				b.WriteString("; ")
-			}
-			b.WriteString(r.at.Format("15:04"))
-			b.WriteString(" (")
-			b.WriteString(strings.Join(r.names, ", "))
-			b.WriteString(")")
-		}
-		b.WriteString(". Portanto ESTE não é o último contato do dia — NÃO se despeça com " +
-			"\"boa noite\"/\"descanse bem\"/\"até amanhã\". Encerre de forma aberta (\"estou por aqui\").")
-		text = b.String()
-	}
-	return append(parts, anthropic.MessageSystemPart{Type: "text", Text: text})
-}
-
-// continuationWindow eh por quanto tempo, apos a ultima fala do bot, ainda
-// tratamos o turno como "mesma conversa em andamento" — dentro disso o companheiro
-// nao deve recomecar com saudacao. Cobre com folga o caso do idoso mandar a
-// mensagem em pedacos (elderBufferDelay + tempo de geracao) e a troca normal.
-const continuationWindow = 6 * time.Minute
-
-// appendCompanionContinuationPart injeta um aviso determinISTICO de "CONTINUAÇÃO"
-// quando o bot acabou de falar com o idoso (ultima fala assistant < continuationWindow).
-// Evita o efeito "dois agentes": sem isso, dois turnos colados (idoso mandou "Bom
-// dia" e depois "Pronto") geravam duas saudacoes seguidas. No-op para nao-idosos e
-// quando faz tempo que o bot nao fala (ai uma saudacao leve eh natural).
-func (a *Agent) appendCompanionContinuationPart(parts []anthropic.MessageSystemPart, user *User) []anthropic.MessageSystemPart {
-	if user == nil || user.Type != UserTypeIdoso {
-		return parts
-	}
-	ageSec, ok, err := a.db.SecondsSinceLastAssistantMessage(user.ID)
-	if err != nil || !ok {
-		return parts
-	}
-	if ageSec > continuationWindow.Seconds() {
-		return parts
-	}
-	text := "[CONTINUAÇÃO IMEDIATA] Você acabou de falar com " + firstName(user.Name) +
-		" há instantes, NESTA mesma conversa. NÃO recomece com saudação (\"bom dia\", \"oi\", " +
-		"\"olá\", \"boa tarde\", \"boa noite\") nem repita uma pergunta que você já fez agora. " +
-		"Responda só o que ele mandou por último, curto e natural — como UMA pessoa que continua " +
-		"a conversa, não como alguém que está chegando agora."
-	return append(parts, anthropic.MessageSystemPart{Type: "text", Text: text})
-}
+// NOTA: as antigas appendCompanionDayContextPart ([CONTEXTO DO DIA]) e
+// appendCompanionContinuationPart ([CONTINUAÇÃO IMEDIATA]) foram fundidas no
+// bloco único [AGORA] (renderAgoraPart, turn_context.go) — três strings
+// mantidas separadamente "concordando" por escopo manual era o hazard que
+// gerou o "boa noite às 7h". upcomingMedRemindersToday (acima) segue como a
+// fonte de dados, agora consumida pelo TurnContext.
 
 // toolDefsToLLM converte as ToolDefinition do Anthropic pro ToolDef canonico.
 // anthropic.ToolDefinition.InputSchema e `any` (guarda um json.RawMessage em

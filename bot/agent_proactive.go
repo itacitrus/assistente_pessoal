@@ -38,6 +38,12 @@ func (a *Agent) RunProactive(ctx context.Context, user *User, hoursIdle int) (st
 		return "", fmt.Errorf("RunProactive: user %s is not idoso (type=%s)", user.Name, user.Type)
 	}
 
+	// Mesmo contrato temporal do Run: um turno = um now = um período. O
+	// proativo é a geração SEM âncora de usuário — exatamente onde uma
+	// saudação de período errado é mais provável; sem o [AGORA] aqui, o
+	// "boa noite às 7h" voltaria pela porta sem guarda.
+	tc := a.newTurnContext(user, time.Now())
+
 	history, _ := a.db.GetConversationHistory(user.ID, 30)
 
 	syntheticPrompt := fmt.Sprintf(
@@ -49,7 +55,9 @@ func (a *Agent) RunProactive(ctx context.Context, user *User, hoursIdle int) (st
 		user.Name, hoursIdle,
 	)
 	syntheticPrompt += proactiveAvoidRepeatHint(a.db, user.ID)
-	messages := buildMessages(history, syntheticPrompt)
+	// Histórico carimbado; o prompt sintético [SISTEMA] é o turno atual e fica
+	// sem prefixo (e nunca é persistido).
+	messages := buildMessages(history, syntheticPrompt, tc.Now, tc.Loc)
 
 	// Persona companion via roteador. user.Type==idoso garante.
 	pendingReq, _ := a.db.GetPendingPermissionRequest(user.ID)
@@ -63,17 +71,18 @@ func (a *Agent) RunProactive(ctx context.Context, user *User, hoursIdle int) (st
 		},
 		{
 			Type: "text",
-			Text: buildSystemPromptDynamic(pendingReq),
+			Text: buildSystemPromptDynamic(pendingReq, tc.Now, tc.Loc),
 		},
 	}
 	systemParts = a.appendMedicationPolicyPart(systemParts, user)
+	systemParts = a.appendCompanionAgoraPart(systemParts, user, tc)
 
 	response, _, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, systemParts)
 	if err != nil {
 		return "", fmt.Errorf("agent proactive: %w", err)
 	}
 
-	response = strings.TrimSpace(response)
+	response = strings.TrimSpace(stripLeadingStamp(response))
 	if response == "" {
 		log.Printf("[%s] RunProactive: agente decidiu nao puxar conversa", user.Name)
 		return "", nil

@@ -12,6 +12,7 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
+	"golang.org/x/text/unicode/norm"
 )
 
 // bufferDelay is how long we wait for additional messages from the same user
@@ -295,7 +296,7 @@ func (h *Handler) flushBuffer(phone string, gen uint64) {
 	delete(h.buffers, phone)
 	h.bufMu.Unlock()
 
-	text := strings.Join(pb.texts, "\n")
+	text := strings.Join(dedupCoalescedTexts(pb.texts), "\n")
 	ctx := context.Background()
 
 	// Re-lookup user at flush time in case state changed during buffering.
@@ -365,6 +366,38 @@ func (h *Handler) flushBuffer(phone string, gen uint64) {
 	if user.Type == UserTypeIdoso && h.orchestrator != nil && h.orchestrator.agent != nil {
 		go h.maybeSnapshotIdoso(user.ID)
 	}
+}
+
+// dedupCoalescedTexts colapsa duplicatas DENTRO de uma mesma janela de
+// coalescing (double-tap do usuário ou re-entrega do WhatsApp com ID novo):
+// sem isso, duas linhas idênticas entram num único turno e o modelo vê uma
+// duplicata literal — e a narra ("mensagem veio em dobro"). Comparação
+// normalizada (NFC + lowercase + whitespace colapsado, inclusive NBSP);
+// preserva ordem e a PRIMEIRA forma original. Escopo estrito intra-janela:
+// repetição legítima em turnos separados não passa por aqui (believe-the-user).
+func dedupCoalescedTexts(texts []string) []string {
+	if len(texts) < 2 {
+		return texts
+	}
+	seen := make(map[string]bool, len(texts))
+	out := make([]string, 0, len(texts))
+	for _, t := range texts {
+		key := strings.ToLower(strings.Join(strings.Fields(norm.NFC.String(t)), " "))
+		if key == "" {
+			continue
+		}
+		if seen[key] {
+			log.Printf("coalesce: duplicata intra-janela descartada (%.40q)", t)
+			continue
+		}
+		seen[key] = true
+		out = append(out, t)
+	}
+	if len(out) == 0 {
+		// Tudo era whitespace — devolve como veio (caller decide o que fazer).
+		return texts
+	}
+	return out
 }
 
 // maybeSnapshotIdoso decide se chama o snapshot writer. Heuristica simples
