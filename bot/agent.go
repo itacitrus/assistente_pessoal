@@ -520,6 +520,7 @@ Exemplos de raciocínio correto:
 - "convida o ti pra essa tb" → ti@ já foi mencionado nesta conversa, "essa" = último evento discutido → buscar_agenda pra achar → convidar.
 - "meu pai" → buscar_memoria primeiro, só pedir info se não encontrar.
 - "coloca o dia inteiro" sobre evento existente → editar_evento com new_time="00:00" e new_duration_minutes=1440.
+- "ontem foi aniversário do pupuzinho" + "salva na agenda" → criar_evento(is_birthday=true, title="Aniversário Pupuzinho"). "pupuzinho" JÁ é o nome; NÃO pergunte nome completo.
 
 AGENDA NÃO CONECTADA: se uma tool de agenda devolver que o Google Calendar não está conectado, NUNCA apenas avise que não dá. Ofereça conectar em linguagem natural ("sua agenda do Google ainda não está conectada — quer que eu te mande o link pra conectar agora?"). Se a pessoa aceitar (sim/quero/pode mandar), chame conectar_agenda — ela manda o link no WhatsApp. Depois, retome o que a pessoa pediu (ex: "assim que conectar, eu te mostro os compromissos de amanhã").
 
@@ -541,6 +542,11 @@ RECORRÊNCIA:
 - "toda segunda" → RRULE:FREQ=WEEKLY;BYDAY=MO
 - "todo dia" → RRULE:FREQ=DAILY
 - "todo mês" → RRULE:FREQ=MONTHLY
+
+APELIDO/IDENTIFICADOR JÁ É NOME — NÃO SUPER-PERGUNTE:
+- Um apelido, alcunha ou identificador que o usuário forneceu (ex: "pupuzinho", "o vizinho do 302", "minha chefe") JÁ É um título suficiente e completo para evento ou memória. NUNCA peça "nome completo", "sobrenome" ou "nome real" — isso não é requisito do sistema e irrita o usuário. Para aniversário, "Aniversário <apelido>" basta.
+- Quando o usuário der instrução LITERAL de como salvar ("salva como X", "do jeito que falei", "como eu disse"), OBEDEÇA ao pé da letra: use X verbatim e crie na hora. Não reabra a pergunta que ele acabou de responder.
+- "Ontem/semana passada foi aniversário de <pessoa>" + "salva na agenda" → criar_evento(is_birthday=true, title="Aniversário <pessoa>"). Aniversário é anual: data no passado é NORMAL e aceita — não peça confirmação de data nem trate como erro.
 
 REGRAS CRÍTICAS PARA CRIAR EVENTOS:
 - Se faltar o horário, use seu julgamento: eventos como feiras, viagens, feriados → crie como dia inteiro (00:00, 1440min). Reuniões e compromissos com hora implícita → consulte a agenda, sugira o primeiro horário livre e só confirme (ex: "Marquei pra 10h, tudo bem?").
@@ -617,6 +623,7 @@ Regras gerais:
 - CONFLITO DE AGENDA: você só pode mencionar ou avisar de um possível conflito/sobreposição com base em uma ferramenta. Ao criar evento, é a própria criar_evento que detecta e retorna CONFLITO. Se o usuário perguntar sobre choque de horários, chame buscar_agenda no período exato ANTES de responder. É PROIBIDO inferir um conflito a partir de um lembrete ou evento citado no histórico — um lembrete antigo não prova que o evento ainda existe, nem em qual dia.
 - Antes de criar evento, confira se já foi criado. Não duplique.
 - Entenda áudios e contatos compartilhados (transcritos automaticamente).
+- Nunca comente o funcionamento interno da entrega de mensagens (duplicação, reenvio, junção). Se um texto parecer repetido, atenda UMA vez, em silêncio — só fale do assunto se o usuário mesmo levantar.
 
 CARIMBOS DE TEMPO NO HISTÓRICO:
 - As mensagens do histórico começam com um carimbo do sistema indicando QUANDO aconteceram: [hoje HH:MM], [ontem HH:MM] ou [ter DD/MM HH:MM]. USE o carimbo para localizar cada fato no tempo — jamais presuma o dia de algo citado no passado.
@@ -736,7 +743,7 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"title": {"type": "string", "description": "Titulo do evento"},
+					"title": {"type": "string", "description": "Titulo do evento. Use EXATAMENTE o identificador que o usuario forneceu — um apelido como 'pupuzinho' JA E um titulo valido e completo. NUNCA exija nome completo/sobrenome/nome real. Se o usuario disser 'salva como X' / 'do jeito que falei', use X literalmente."},
 					"date_source": {"type": "string", "enum": ["explicit", "inferred"], "description": "explicit quando o usuario mencionou qualquer marcador temporal (data, dia da semana, amanha, hoje, daqui N dias). inferred quando o usuario mencionou APENAS hora, sem nenhum marcador temporal. OBRIGATORIO."},
 					"date": {"type": "string", "description": "Data YYYY-MM-DD. Obrigatorio quando date_source=explicit. IGNORADO pelo sistema quando date_source=inferred (o sistema resolve via regra deterministica: hora > agora -> hoje; hora <= agora -> amanha)."},
 					"time": {"type": "string", "description": "Horario de inicio HH:MM. Para horas bare menores que 07:00 sem qualificador, aplique PM-default (ex: '2h' -> 14:00, '5h' -> 17:00). Qualificadores 'da madrugada'/'da manha' mantem AM."},
@@ -798,7 +805,7 @@ func buildToolDefinitions() []anthropic.ToolDefinition {
 				"type": "object",
 				"properties": {
 					"target_user": {"type": "string", "description": "Nome do usuario alvo"},
-					"title": {"type": "string", "description": "Titulo do evento"},
+					"title": {"type": "string", "description": "Titulo do evento. Use EXATAMENTE o identificador que o usuario forneceu — um apelido como 'pupuzinho' JA E um titulo valido e completo. NUNCA exija nome completo/sobrenome/nome real. Se o usuario disser 'salva como X' / 'do jeito que falei', use X literalmente."},
 					"date": {"type": "string", "description": "Data do evento (YYYY-MM-DD)"},
 					"time": {"type": "string", "description": "Horario de inicio (HH:MM). Obrigatorio exceto para aniversarios."},
 					"duration_minutes": {"type": "integer", "description": "Duracao em minutos (default: 60)"},

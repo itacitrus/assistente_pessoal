@@ -239,7 +239,7 @@ func handleCriarEvento(ctx context.Context, agent *Agent, user *User, params jso
 			return "", fmt.Errorf("create birthday event: %w", err)
 		}
 		agent.audit.Log(user.ID, "criar_evento", "", p.Title+" (aniversario)")
-		return FormatEventCreated(*created, time.Now()), nil
+		return birthdayCreatedResult(created, time.Now()), nil
 	}
 
 	// Hint inicial de data para lookup de fuso: data explicita se houver,
@@ -700,6 +700,15 @@ func handleCriarEventoOutroUsuario(ctx context.Context, agent *Agent, user *User
 	agent.audit.Log(user.ID, "criar_evento", target.Name, p.Title)
 	log.Printf("[%s] Created event on %s's calendar: %s", user.Name, target.Name, p.Title)
 	return fmt.Sprintf("Evento criado na agenda de %s: %s", target.Name, FormatEventCreated(*created, time.Now())), nil
+}
+
+// birthdayCreatedResult — mesmo envelope do caminho normal de criar_evento:
+// a REGRA DE CITAÇÃO (e o guard I4) ancoram no display verbatim. Aniversário
+// não pode bypassar o contrato, senão o modelo freehandeia a data relativa
+// (modo de falha do B2) exatamente no cenário-bandeira do B1 (apelido +
+// is_birthday).
+func birthdayCreatedResult(created *CalendarEvent, now time.Time) string {
+	return "OK_CRIADO|display=" + FormatEventCreated(*created, now)
 }
 
 type gerarLinkMeetParams struct {
