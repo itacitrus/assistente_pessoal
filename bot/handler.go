@@ -107,6 +107,33 @@ func normalizeBRPhone(phone string) []string {
 	return variants
 }
 
+// lidResolver é o subconjunto de store.LIDStore que a resolução inbound usa.
+type lidResolver interface {
+	GetPNForLID(ctx context.Context, lid types.JID) (types.JID, error)
+}
+
+// resolveSenderJID normaliza o remetente para um JID de telefone
+// (@s.whatsapp.net). Com a migração LID do WhatsApp, DMs chegam com Sender
+// @lid; o telefone vem em SenderAlt (sender_pn do próprio stanza — fonte
+// autoritativa) ou, na falta dele, no mapping LID→PN do store aprendido em
+// tráfego anterior. Retorna ok=false quando o LID não resolve — o caller DEVE
+// descartar a mensagem em vez de tratar os dígitos do LID como telefone.
+func resolveSenderJID(info *types.MessageInfo, lids lidResolver) (types.JID, bool) {
+	sender := info.Sender.ToNonAD()
+	if sender.Server != types.HiddenUserServer {
+		return sender, true
+	}
+	if alt := info.SenderAlt.ToNonAD(); alt.Server == types.DefaultUserServer && alt.User != "" {
+		log.Printf("DEBUG: resolved LID %s -> phone %s (SenderAlt)", sender.User, alt.User)
+		return alt, true
+	}
+	if resolved, err := lids.GetPNForLID(context.Background(), sender); err == nil && resolved.User != "" {
+		log.Printf("DEBUG: resolved LID %s -> phone %s (store)", sender.User, resolved.User)
+		return resolved.ToNonAD(), true
+	}
+	return sender, false
+}
+
 func (h *Handler) handleMessage(msg *events.Message) {
 	// Ignore non-DM messages: groups, broadcasts, newsletters, status updates
 	chat := msg.Info.Chat
@@ -133,15 +160,13 @@ func (h *Handler) handleMessage(msg *events.Message) {
 	h.processedMu.Unlock()
 
 	// Resolve sender phone number — WhatsApp may use LID instead of phone number
-	senderJID := msg.Info.Sender.ToNonAD()
-	if senderJID.Server == "lid" {
-		resolved, resolveErr := h.client.Store.LIDs.GetPNForLID(context.Background(), senderJID)
-		if resolveErr == nil && resolved.User != "" {
-			log.Printf("DEBUG: resolved LID %s -> phone %s", senderJID.User, resolved.User)
-			senderJID = resolved.ToNonAD()
-		} else {
-			log.Printf("DEBUG: could not resolve LID %s: %v", senderJID.User, resolveErr)
-		}
+	senderJID, pnOK := resolveSenderJID(&msg.Info, h.client.Store.LIDs)
+	if !pnOK {
+		// Nunca seguir com dígitos de LID como "telefone": downstream isso vira
+		// lead/usuário keyed pelo LID (corrupção permanente) e manda cadastrado
+		// pro funil de vendas. Melhor descartar com log alto e investigar.
+		log.Printf("ALERTA: descartando mensagem de LID %s sem resolução para telefone (SenderAlt vazio e store sem mapping) — id=%s pushName=%q", msg.Info.Sender.User, msg.Info.ID, msg.Info.PushName)
+		return
 	}
 
 	sender := senderJID.User
