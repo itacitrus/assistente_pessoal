@@ -136,11 +136,12 @@ func TestProfileFacts_AggregatesRelationsPeopleTrips(t *testing.T) {
 	// Memoria social (pessoa) + memoria de risco (deve ser ocultada).
 	_ = db.SaveMemory(maria.ID, "social_context", "dr_roberto", "cardiologista")
 	_ = db.SaveMemory(maria.ID, "risco:queda_recente", "caiu no banheiro", "x")
-	// Viagem futura.
+	// Viagem futura — datas relativas a hoje para o teste nao "vencer" com o
+	// calendario (datas fixas ja quebraram esta suite quando a viagem passou).
 	tp := &TravelPeriod{
 		UserID:       maria.ID,
-		StartDate:    mustDate(t, "2026-06-10"),
-		EndDate:      mustDate(t, "2026-06-20"),
+		StartDate:    mustDate(t, time.Now().AddDate(0, 0, 10).Format("2006-01-02")),
+		EndDate:      mustDate(t, time.Now().AddDate(0, 0, 20).Format("2006-01-02")),
 		Timezone:     "Europe/Paris",
 		LocationName: "Paris",
 	}
