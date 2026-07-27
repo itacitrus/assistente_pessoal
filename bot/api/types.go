@@ -380,6 +380,24 @@ type AgendaEvent struct {
 	Location string     `json:"location"`
 }
 
+// CreateEventInput eh o payload de POST /api/v1/me/agenda/events. Date/Time sao
+// wall-clock (localizados no fuso do titular pelo adapter). DurationMin default
+// 60. Notify avisa o titular no WhatsApp ao criar.
+type CreateEventInput struct {
+	Title       string `json:"title"`
+	Date        string `json:"date"` // YYYY-MM-DD
+	Time        string `json:"time"` // HH:MM
+	DurationMin int    `json:"duration_min"`
+	Notify      bool   `json:"notify"`
+}
+
+// CreateEventResult eh a resposta de criacao: o evento criado + se o aviso no
+// WhatsApp foi entregue.
+type CreateEventResult struct {
+	Event    AgendaEvent `json:"event"`
+	Notified bool        `json:"notified"`
+}
+
 // ActivityItem eh uma entrada recente do action_log do usuario. Label eh a
 // descricao PT-BR amigavel da acao.
 type ActivityItem struct {

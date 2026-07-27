@@ -11,9 +11,11 @@ const testEncKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab
 
 // fakeCal implementa calendarReader pra testes sem OAuth real.
 type fakeCal struct {
-	events []CalendarEvent
-	err    error
-	calls  int
+	events    []CalendarEvent
+	err       error
+	calls     int
+	created   *CalendarEvent // último evento passado a CreateEvent
+	createErr error
 }
 
 func (f *fakeCal) ListEvents(_ context.Context, _, _ string, _, _ time.Time) ([]CalendarEvent, error) {
@@ -22,6 +24,18 @@ func (f *fakeCal) ListEvents(_ context.Context, _, _ string, _, _ time.Time) ([]
 		return nil, f.err
 	}
 	return f.events, nil
+}
+
+func (f *fakeCal) CreateEvent(_ context.Context, _, _ string, ev CalendarEvent) (*CalendarEvent, error) {
+	if f.createErr != nil {
+		return nil, f.createErr
+	}
+	out := ev
+	if out.ID == "" {
+		out.ID = "evt-created"
+	}
+	f.created = &out
+	return &out, nil
 }
 
 func (f *fakeCal) AuthURL(state string) string {

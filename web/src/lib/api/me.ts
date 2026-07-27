@@ -1,6 +1,7 @@
 import { ApiError, fetchApi } from "@/lib/api";
 import type {
   ActivityResponse,
+  AgendaEvent,
   AgendaEventsResponse,
   AgendaResponse,
   CreateMedicationBody,
@@ -55,6 +56,35 @@ export async function getMyAgendaEvents(
   return fetchApi<AgendaEventsResponse>(`/api/v1/me/agenda/events?${qs}`, {
     method: "GET",
     cookie: cookieHeader,
+  });
+}
+
+export interface CreateAgendaEventInput {
+  title: string;
+  date: string; // YYYY-MM-DD
+  time: string; // HH:MM
+  duration_min?: number;
+  notify?: boolean;
+}
+
+export interface CreateAgendaEventResult {
+  event: AgendaEvent;
+  notified: boolean;
+}
+
+/**
+ * POST /api/v1/me/agenda/events
+ *
+ * Cria um compromisso na agenda do usuário efetivo (funciona no "ver como").
+ * Data/hora são localizadas no fuso do titular pelo backend. Se `notify`, avisa
+ * o titular no WhatsApp — `notified` na resposta diz se o aviso saiu.
+ */
+export async function createMyAgendaEvent(
+  input: CreateAgendaEventInput,
+): Promise<CreateAgendaEventResult> {
+  return fetchApi<CreateAgendaEventResult>("/api/v1/me/agenda/events", {
+    method: "POST",
+    json: input,
   });
 }
 

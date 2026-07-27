@@ -80,6 +80,15 @@ type fakeStore struct {
 	upcomingErr      error
 	activityErr      error
 	insightsDataErr  error
+
+	// CreateAgendaEvent capture/override.
+	createEventCalls []createEventCall
+	createEventErr   error
+}
+
+type createEventCall struct {
+	UserID int64
+	In     CreateEventInput
 }
 
 type fakeSession struct {
@@ -626,6 +635,19 @@ func (s *fakeStore) UpcomingEvents(_ context.Context, userID int64) ([]AgendaEve
 	out := make([]AgendaEvent, len(s.upcoming[userID]))
 	copy(out, s.upcoming[userID])
 	return out, nil
+}
+
+func (s *fakeStore) CreateAgendaEvent(_ context.Context, userID int64, in CreateEventInput) (CreateEventResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.createEventCalls = append(s.createEventCalls, createEventCall{UserID: userID, In: in})
+	if s.createEventErr != nil {
+		return CreateEventResult{}, s.createEventErr
+	}
+	return CreateEventResult{
+		Event:    AgendaEvent{ID: "evt-1", Title: in.Title},
+		Notified: in.Notify,
+	}, nil
 }
 
 func (s *fakeStore) EventsInRange(_ context.Context, userID int64, from, to time.Time) ([]AgendaEvent, error) {
