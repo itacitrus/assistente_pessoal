@@ -2,11 +2,13 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/giovannirambo/assistente_pessoal/bot/synthesis"
@@ -56,10 +58,19 @@ func (s *Server) handleMeAgenda(w http.ResponseWriter, r *http.Request) {
 // Janela limitada a 62 dias (cobre a grade de um mes com sobras) pra evitar
 // varreduras grandes no Google Calendar.
 func (s *Server) handleMeAgendaEvents(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleMeAgendaEventsList(w, r)
+	case http.MethodPost:
+		s.handleMeAgendaEventCreate(w, r)
+	default:
 		writeError(w, http.StatusMethodNotAllowed, CodeValidation, "Método não permitido.")
-		return
 	}
+}
+
+// handleMeAgendaEventsList — GET /api/v1/me/agenda/events?from&to. Lista os
+// eventos do Google Calendar do usuário efetivo no intervalo.
+func (s *Server) handleMeAgendaEventsList(w http.ResponseWriter, r *http.Request) {
 	user := userFromContext(r.Context())
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Não autenticado.")
@@ -97,6 +108,58 @@ func (s *Server) handleMeAgendaEvents(w http.ResponseWriter, r *http.Request) {
 		GoogleConnected: user.GoogleConnected,
 		Events:          events,
 	})
+}
+
+// handleMeAgendaEventCreate — POST /api/v1/me/agenda/events. Cria um evento na
+// agenda do usuário EFETIVO (userFromContext) — assim um admin em "ver como"
+// lança na agenda da pessoa que está vendo. RequireOrigin (aplicado na rota)
+// cobre CSRF; RequireAuth garante a sessão.
+func (s *Server) handleMeAgendaEventCreate(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, CodeUnauthorized, "Não autenticado.")
+		return
+	}
+	var in CreateEventInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, CodeValidation, "JSON inválido.")
+		return
+	}
+	in.Title = strings.TrimSpace(in.Title)
+	if in.Title == "" {
+		writeError(w, http.StatusBadRequest, CodeValidation, "Informe o título do compromisso.")
+		return
+	}
+	if _, err := time.Parse("2006-01-02", in.Date); err != nil {
+		writeError(w, http.StatusBadRequest, CodeValidation, "Data inválida (use AAAA-MM-DD).")
+		return
+	}
+	if _, err := time.Parse("15:04", in.Time); err != nil {
+		writeError(w, http.StatusBadRequest, CodeValidation, "Hora inválida (use HH:MM).")
+		return
+	}
+	if in.DurationMin < 0 || in.DurationMin > 24*60 {
+		writeError(w, http.StatusBadRequest, CodeValidation, "Duração inválida.")
+		return
+	}
+
+	res, err := s.store.CreateAgendaEvent(r.Context(), user.ID, in)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNoCalendar):
+			writeError(w, http.StatusConflict, CodeValidation, "Conecte o Google Calendar primeiro para criar compromissos.")
+		case errors.Is(err, ErrValidation):
+			writeError(w, http.StatusBadRequest, CodeValidation, "Data ou hora inválida.")
+		case errors.Is(err, ErrNotFound):
+			writeError(w, http.StatusNotFound, CodeNotFound, "Usuário não encontrado.")
+		default:
+			log.Printf("api: create agenda event: %v", err)
+			writeError(w, http.StatusInternalServerError, CodeInternal, "Erro ao criar o compromisso.")
+		}
+		return
+	}
+	s.store.Audit(r.Context(), user.ID, "criar_evento", "", "via=painel|title="+in.Title)
+	writeJSON(w, http.StatusOK, res)
 }
 
 // handleMeActivity — GET /api/v1/me/activity?limit=100. Historico completo das

@@ -33,6 +33,7 @@ import (
 // permitir fake em testes sem OAuth real. *CalendarClient satisfaz isto.
 type calendarReader interface {
 	ListEvents(ctx context.Context, refreshToken, calendarID string, start, end time.Time) ([]CalendarEvent, error)
+	CreateEvent(ctx context.Context, refreshToken, calendarID string, ev CalendarEvent) (*CalendarEvent, error)
 	AuthURL(state string) string
 }
 
@@ -784,6 +785,67 @@ func (a *apiAdapter) EventsInRange(ctx context.Context, userID int64, from, to t
 		return nil, fmt.Errorf("list events: %w", err)
 	}
 	return agendaEventsToAPI(events), nil
+}
+
+// CreateAgendaEvent cria um evento no Google Calendar do titular, localizando
+// data+hora no fuso dele (respeita viagem ativa via GetEventTimezone) e reusando
+// o CreateEvent do CalendarClient — o evento fica idêntico ao criado pelo bot,
+// então o scheduler manda o lembrete automático sem código extra.
+func (a *apiAdapter) CreateAgendaEvent(ctx context.Context, userID int64, in api.CreateEventInput) (api.CreateEventResult, error) {
+	user, err := a.db.GetUserByID(userID)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return api.CreateEventResult{}, api.ErrNotFound
+		}
+		return api.CreateEventResult{}, err
+	}
+	if user.GoogleCredentials == "" {
+		return api.CreateEventResult{}, api.ErrNoCalendar
+	}
+	refreshToken, err := Decrypt(user.GoogleCredentials, a.encKey)
+	if err != nil {
+		return api.CreateEventResult{}, fmt.Errorf("decrypt credentials: %w", err)
+	}
+
+	// Localiza a data+hora no fuso do titular. Parse provisório na BRT só para
+	// resolver o fuso vigente naquele instante (viagem), depois re-parse no fuso
+	// real — assim um evento durante uma viagem cai no horário local certo.
+	prov, err := time.ParseInLocation("2006-01-02 15:04", in.Date+" "+in.Time, BRT())
+	if err != nil {
+		return api.CreateEventResult{}, fmt.Errorf("%w: data/hora inválida", api.ErrValidation)
+	}
+	loc := a.db.GetEventTimezone(user.ID, prov)
+	start, err := time.ParseInLocation("2006-01-02 15:04", in.Date+" "+in.Time, loc)
+	if err != nil {
+		return api.CreateEventResult{}, fmt.Errorf("%w: data/hora inválida", api.ErrValidation)
+	}
+
+	dur := time.Duration(in.DurationMin) * time.Minute
+	if dur <= 0 {
+		dur = 60 * time.Minute
+	}
+	ev := CalendarEvent{
+		Title:    strings.TrimSpace(in.Title),
+		Start:    start,
+		End:      start.Add(dur),
+		Timezone: loc.String(),
+	}
+	created, err := a.cal.CreateEvent(ctx, refreshToken, user.GoogleCalendarID, ev)
+	if err != nil {
+		return api.CreateEventResult{}, fmt.Errorf("create event: %w", err)
+	}
+
+	res := api.CreateEventResult{Event: agendaEventsToAPI([]CalendarEvent{*created})[0]}
+	if in.Notify {
+		msg := fmt.Sprintf("Compromisso marcado: *%s* — %s às %s. 🗓️",
+			ev.Title, start.In(loc).Format("02/01"), start.In(loc).Format("15:04"))
+		if sendErr := a.sendMsg(user.PhoneNumber, msg); sendErr != nil {
+			log.Printf("api: aviso de compromisso a %s falhou: %v", user.PhoneNumber, sendErr)
+		} else {
+			res.Notified = true
+		}
+	}
+	return res, nil
 }
 
 // agendaEventsToAPI converte CalendarEvent -> api.AgendaEvent. ListEvents ja

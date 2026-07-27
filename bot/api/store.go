@@ -123,6 +123,11 @@ type Store interface {
 	// usado pela visao de calendario mensal navegavel. Lista vazia se sem
 	// Google conectado.
 	EventsInRange(ctx context.Context, userID int64, from, to time.Time) ([]AgendaEvent, error)
+	// CreateAgendaEvent cria um evento no Google Calendar do usuario, localizando
+	// data+hora no fuso dele. Retorna ErrNoCalendar se o Google nao esta
+	// conectado. Se in.Notify, avisa o titular no WhatsApp (falha no aviso nao
+	// derruba a criacao — Notified reflete o resultado do envio).
+	CreateAgendaEvent(ctx context.Context, userID int64, in CreateEventInput) (CreateEventResult, error)
 	// RecentActivity le as ultimas `limit` entradas RELEVANTES (allowlist
 	// IsRelevantActivity) do action_log do usuario, mais recentes primeiro.
 	RecentActivity(ctx context.Context, userID int64, limit int) ([]ActivityItem, error)
@@ -183,6 +188,7 @@ type Store interface {
 // Store-level sentinels. Adapter mapeia erros internos de *DB pra estes.
 var (
 	ErrNotFound       = errors.New("api: not found")
+	ErrNoCalendar     = errors.New("api: google calendar not connected")
 	ErrConflict       = errors.New("api: conflict")
 	ErrSessionInvalid = errors.New("api: session invalid")
 	ErrSessionExpired = errors.New("api: session expired")

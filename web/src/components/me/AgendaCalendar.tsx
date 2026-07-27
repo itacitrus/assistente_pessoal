@@ -11,6 +11,7 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { AddEventForm } from "@/components/me/AddEventForm";
 import { ApiError } from "@/lib/api";
 import { getMyAgendaEvents } from "@/lib/api/me";
 import { cn } from "@/lib/utils";
@@ -84,6 +85,8 @@ export function AgendaCalendar() {
     "loading",
   );
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
+  // Bump para recarregar os eventos após criar um compromisso.
+  const [reloadKey, setReloadKey] = React.useState(0);
 
   // 42 células (6 semanas) a partir do domingo inicial.
   const cells = React.useMemo(() => {
@@ -124,7 +127,7 @@ export function AgendaCalendar() {
     return () => {
       cancelled = true;
     };
-  }, [cells]);
+  }, [cells, reloadKey]);
 
   const byDay = React.useMemo(() => {
     const map = new Map<string, AgendaEvent[]>();
@@ -199,6 +202,18 @@ export function AgendaCalendar() {
         <Alert variant="destructive">
           <AlertDescription>{errorMsg}</AlertDescription>
         </Alert>
+      ) : null}
+
+      {connected ? (
+        <AddEventForm
+          defaultDate={selected}
+          onCreated={(dayKey) => {
+            const d = new Date(dayKey + "T12:00:00");
+            setView({ year: d.getFullYear(), month: d.getMonth() });
+            setSelected(dayKey);
+            setReloadKey((k) => k + 1);
+          }}
+        />
       ) : null}
 
       <Card className="overflow-hidden shadow-warm">

@@ -181,8 +181,9 @@ func (s *Server) Mount(mux *http.ServeMux) {
 	// (segue o padrao de /api/v1/me, que tambem eh GET autenticado).
 	mux.Handle(s.route("/api/v1/me/agenda"),
 		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMeAgenda))))
+	// GET lista; POST cria (RequireOrigin deixa GET passar e exige Origin no POST).
 	mux.Handle(s.route("/api/v1/me/agenda/events"),
-		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMeAgendaEvents))))
+		s.CORS(s.RequireOrigin(s.RequireAuth(http.HandlerFunc(s.handleMeAgendaEvents)))))
 	mux.Handle(s.route("/api/v1/me/insights"),
 		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleMeInsights))))
 	mux.Handle(s.route("/api/v1/me/insights/refresh"),
