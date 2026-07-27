@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { ShieldCheck } from "lucide-react";
+import Link from "next/link";
+import { ChevronRight, ShieldCheck, Smartphone } from "lucide-react";
 
 import { AdminUserSearch } from "@/components/admin/AdminUserSearch";
 import { ApiError } from "@/lib/api";
@@ -51,6 +52,24 @@ export default async function AdminPage() {
           ajustar a agenda, os remédios e as preferências dela.
         </p>
       </section>
+
+      <Link
+        href="/dashboard/admin/whatsapp"
+        className="flex items-center justify-between rounded-lg border border-border bg-card p-4 transition-colors hover:border-[--zello-emerald] hover:bg-accent/40"
+      >
+        <span className="flex items-center gap-3">
+          <Smartphone className="h-5 w-5 text-[--zello-emerald]" aria-hidden />
+          <span>
+            <span className="block text-sm font-medium text-foreground">
+              Conexão do WhatsApp
+            </span>
+            <span className="block text-sm text-muted-foreground">
+              Parear o bot (código ou QR) quando o vínculo for perdido.
+            </span>
+          </span>
+        </span>
+        <ChevronRight className="h-5 w-5 text-muted-foreground" aria-hidden />
+      </Link>
 
       <AdminUserSearch initialUsers={initialUsers} />
     </div>

@@ -32,6 +32,9 @@ type Server struct {
 	// ADMIN_PHONES) — nao em dado editavel —, entao nao da pra escalar por
 	// bug de banco.
 	adminPhones map[string]struct{}
+	// pairer dirige o pareamento do WhatsApp (implementado no main). Pode ser
+	// nil em contextos sem whatsmeow — handlers respondem 503.
+	pairer Pairer
 	// insightsInFlight deduplica o regen assincrono de insights por (user,days).
 	insightsInFlight sync.Map // map[string]struct{}
 }
@@ -62,6 +65,9 @@ type Config struct {
 	// internamente pra so digitos) com privilegio de admin no painel. Vazio =
 	// ninguem tem acesso admin (area fica invisivel/403).
 	AdminPhones []string
+	// Pairer dirige o pareamento do WhatsApp (código de 8 dígitos + QR) a
+	// partir da página admin. Pode ser nil — handlers respondem 503.
+	Pairer Pairer
 }
 
 // NewServer constroi com defaults ajuiziados. Caller eh responsavel pelo
@@ -99,6 +105,7 @@ func NewServer(cfg Config) *Server {
 		insightsTTL:    cfg.InsightsCacheTTL,
 		reportClient:   cfg.ReportClient,
 		adminPhones:    admins,
+		pairer:         cfg.Pairer,
 	}
 }
 
@@ -208,6 +215,16 @@ func (s *Server) Mount(mux *http.ServeMux) {
 		s.CORS(s.RequireAuth(http.HandlerFunc(s.handleAdminUsers))))
 	mux.Handle(s.route("/api/v1/admin/impersonate"),
 		s.CORS(s.RequireOrigin(s.RequireAuth(http.HandlerFunc(s.handleAdminImpersonate)))))
+
+	// Pareamento do WhatsApp pela página admin. Status é leitura (sem
+	// RequireOrigin); start/reset são mutações (RequireOrigin p/ CSRF). O gate
+	// de admin vive dentro de cada handler (dono real da sessão).
+	mux.Handle(s.route("/api/v1/admin/pairing/status"),
+		s.CORS(s.RequireAuth(http.HandlerFunc(s.handlePairingStatus))))
+	mux.Handle(s.route("/api/v1/admin/pairing/start"),
+		s.CORS(s.RequireOrigin(s.RequireAuth(http.HandlerFunc(s.handlePairingStart)))))
+	mux.Handle(s.route("/api/v1/admin/pairing/reset"),
+		s.CORS(s.RequireOrigin(s.RequireAuth(http.HandlerFunc(s.handlePairingReset)))))
 }
 
 // handleDependentsCollection roteia GET (list) vs POST (create) pra coleção.
