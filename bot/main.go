@@ -15,7 +15,6 @@ import (
 
 	"github.com/giovannirambo/assistente_pessoal/bot/api"
 	"github.com/giovannirambo/assistente_pessoal/bot/llm"
-	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -162,6 +161,12 @@ func runBot() {
 	clientLog := waLog.Stdout("Client", "WARN", true)
 	waClient := whatsmeow.NewClient(deviceStore, clientLog)
 
+	// holder é a indireção que deixa handler/watchdog lerem sempre o client
+	// vivo. O re-pareamento (PairingManager) troca o client via holder.Set sem
+	// reiniciar o processo.
+	holder := &ClientHolder{}
+	holder.Set(waClient)
+
 	cal := NewCalendarClient(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRedirectURI)
 	transcription := NewTranscriptionClient(cfg.TranscriptionURL)
 	agent := NewAgent(cfg.AnthropicAPIKey, cal, db, cfg, nil)
@@ -190,7 +195,7 @@ func runBot() {
 
 	orchestrator := NewOrchestrator(agent, transcription, db)
 
-	handler := NewHandler(waClient, db, orchestrator)
+	handler := NewHandler(holder, db, orchestrator)
 	agent.sendMsg = handler.SendTextToPhone
 	waClient.AddEventHandler(handler.HandleEvent)
 
@@ -210,28 +215,41 @@ func runBot() {
 		return RegenerateDependentSynthesis(ctx, db, report, dep, days)
 	})
 
-	if waClient.Store.ID == nil {
-		qrChan, _ := waClient.GetQRChannel(context.Background())
-		err = waClient.Connect()
-		if err != nil {
-			log.Fatalf("Failed to connect: %v", err)
-		}
-		for evt := range qrChan {
-			if evt.Event == "code" {
-				fmt.Println("QR Code — scan with WhatsApp:")
-				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
-				fmt.Println(evt.Code)
-			} else {
-				log.Printf("QR event: %s", evt.Event)
+	// Gerenciador de pareamento: dirige o pareamento pela página admin (código
+	// de 8 dígitos + QR) e no boot quando não há device pareado. begin cria um
+	// device limpo a cada tentativa; no sucesso, publica o client vivo no holder.
+	pairMgr := NewPairingManager(
+		newWAPairingBegin(container, clientLog, handler, holder),
+		func(ctx context.Context) error {
+			c := holder.Get()
+			if c == nil {
+				return nil
 			}
+			return c.Logout(ctx)
+		},
+		func() string {
+			c := holder.Get()
+			if c != nil && c.Store.ID != nil {
+				return "+" + c.Store.ID.User
+			}
+			return ""
+		},
+	)
+
+	if waClient.Store.ID == nil {
+		// Sem device pareado: NÃO bloqueia no stdout. Sobe o HTTP e deixa o
+		// pareamento ser dirigido pela página admin. Auto-inicia um QR para o
+		// fallback (código bruto vai pro log) e para a página já ter algo.
+		log.Println("WhatsApp NÃO pareado — abra /dashboard/admin/whatsapp para parear (código ou QR).")
+		if err := pairMgr.Start("qr", ""); err != nil {
+			log.Printf("pareamento inicial (QR) não iniciou: %v — use a página admin", err)
 		}
 	} else {
-		err = waClient.Connect()
-		if err != nil {
+		if err = waClient.Connect(); err != nil {
 			log.Fatalf("Failed to connect: %v", err)
 		}
+		log.Println("WhatsApp connected")
 	}
-	log.Println("WhatsApp connected")
 
 	// Fase 3 (idosos): notifier abstrai canal de envio para escalacao;
 	// engine de escalacao decide quando insistir/avisar familia. Toda mensagem
@@ -247,7 +265,7 @@ func runBot() {
 
 	// Start watchdog
 	adminPhone := os.Getenv("ADMIN_PHONE")
-	watchdog := NewWatchdog(waClient, handler.SendTextToPhone, adminPhone)
+	watchdog := NewWatchdog(holder, handler.SendTextToPhone, adminPhone)
 	watchdog.Start()
 
 	// Fase 2 (web/UI): API REST do painel sobe no mesmo http.Server. Adapter
@@ -263,6 +281,7 @@ func runBot() {
 		CookieDomain:   resolveCookieDomain(),
 		ReportClient:   report,
 		AdminPhones:    resolveAdminPhones(),
+		Pairer:         newAPIPairer(pairMgr),
 	})
 
 	// Refresh diario dos insights de agenda do titular: o scheduler nao conhece

@@ -37,7 +37,7 @@ type pendingBuffer struct {
 }
 
 type Handler struct {
-	client         *whatsmeow.Client
+	holder         *ClientHolder
 	db             *DB
 	orchestrator   *Orchestrator
 	unknownReplied map[string]time.Time
@@ -54,9 +54,9 @@ type Handler struct {
 	procMu    sync.Mutex
 }
 
-func NewHandler(client *whatsmeow.Client, db *DB, orchestrator *Orchestrator) *Handler {
+func NewHandler(holder *ClientHolder, db *DB, orchestrator *Orchestrator) *Handler {
 	return &Handler{
-		client:         client,
+		holder:         holder,
 		db:             db,
 		orchestrator:   orchestrator,
 		unknownReplied: make(map[string]time.Time),
@@ -64,6 +64,13 @@ func NewHandler(client *whatsmeow.Client, db *DB, orchestrator *Orchestrator) *H
 		buffers:        make(map[string]*pendingBuffer),
 		procLocks:      make(map[string]*sync.Mutex),
 	}
+}
+
+// client devolve o *whatsmeow.Client vivo. Passa pelo holder para que o
+// re-pareamento em runtime (que troca o client) seja transparente a todos os
+// pontos de envio/download.
+func (h *Handler) client() *whatsmeow.Client {
+	return h.holder.Get()
 }
 
 // getProcLock devolve (criando se preciso) o mutex de serializacao de turno para
@@ -160,7 +167,7 @@ func (h *Handler) handleMessage(msg *events.Message) {
 	h.processedMu.Unlock()
 
 	// Resolve sender phone number — WhatsApp may use LID instead of phone number
-	senderJID, pnOK := resolveSenderJID(&msg.Info, h.client.Store.LIDs)
+	senderJID, pnOK := resolveSenderJID(&msg.Info, h.client().Store.LIDs)
 	if !pnOK {
 		// Nunca seguir com dígitos de LID como "telefone": downstream isso vira
 		// lead/usuário keyed pelo LID (corrupção permanente) e manda cadastrado
@@ -228,7 +235,7 @@ func (h *Handler) handleMessage(msg *events.Message) {
 	hadAudio := false
 	if audioMsg := msg.Message.GetAudioMessage(); audioMsg != nil && text == "" {
 		hadAudio = true
-		audioData, audioErr := h.client.Download(ctx, audioMsg)
+		audioData, audioErr := h.client().Download(ctx, audioMsg)
 		if audioErr != nil {
 			log.Printf("Error downloading audio from %s: %v", sender, audioErr)
 			h.sendText(senderJID, "Nao consegui baixar o audio. Tente novamente.")
@@ -242,7 +249,7 @@ func (h *Handler) handleMessage(msg *events.Message) {
 		}
 	}
 	if imgMsg := msg.Message.GetImageMessage(); imgMsg != nil {
-		imgData, imgErr := h.client.Download(ctx, imgMsg)
+		imgData, imgErr := h.client().Download(ctx, imgMsg)
 		if imgErr != nil {
 			log.Printf("Error downloading image from %s: %v", sender, imgErr)
 		} else {
@@ -486,7 +493,7 @@ func (h *Handler) sendWithRetry(to types.JID, text string) error {
 		if attempt > 0 {
 			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
 		}
-		_, err = h.client.SendMessage(context.Background(), to, &waE2E.Message{
+		_, err = h.client().SendMessage(context.Background(), to, &waE2E.Message{
 			Conversation: &text,
 		})
 		if err == nil {
@@ -499,7 +506,7 @@ func (h *Handler) sendWithRetry(to types.JID, text string) error {
 
 func (h *Handler) SendTextToPhone(phone, text string) error {
 	// Try to verify the number is on WhatsApp first
-	results, err := h.client.IsOnWhatsApp(context.Background(), []string{"+" + phone})
+	results, err := h.client().IsOnWhatsApp(context.Background(), []string{"+" + phone})
 	if err != nil {
 		log.Printf("IsOnWhatsApp check failed for %s: %v", phone, err)
 	} else if len(results) > 0 && results[0].IsIn {
