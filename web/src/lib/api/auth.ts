@@ -44,6 +44,28 @@ export async function verifyToken(token: string): Promise<{ user: User }> {
   });
 }
 
+/**
+ * POST /api/v1/auth/admin-login
+ *
+ * Login out-of-band do admin via TOTP (código de 6 dígitos do app
+ * autenticador), independente do WhatsApp — quebra o deadlock em que o magic
+ * link chega pelo WhatsApp que está fora do ar. Sucesso seta o cookie e devolve
+ * `{ user }`. Erros são genéricos (401) — não revela se o número é admin.
+ */
+export async function adminLogin(
+  phone: string,
+  code: string,
+): Promise<{ user: User }> {
+  const e164 = normalizePhoneE164BR(phone);
+  if (!e164) {
+    throw new Error("invalid_phone_local");
+  }
+  return fetchApi<{ user: User }>("/api/v1/auth/admin-login", {
+    method: "POST",
+    json: { phone: e164, code: code.replace(/\D/g, "") },
+  });
+}
+
 /** POST /api/v1/auth/logout */
 export async function logout(): Promise<{ ok: true }> {
   return fetchApi<{ ok: true }>("/api/v1/auth/logout", { method: "POST" });

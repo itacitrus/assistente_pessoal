@@ -34,6 +34,7 @@ func main() {
 		fmt.Println("  revoke-access  Revoke a user's permission to schedule on another's calendar")
 		fmt.Println("  list-access    List users a given user can schedule for")
 		fmt.Println("  test-birthday  Create and delete a birthday event to validate Google API constraints")
+		fmt.Println("  admin-totp-setup  Generate an admin TOTP secret (env + QR) for out-of-band login")
 		os.Exit(1)
 	}
 
@@ -54,6 +55,8 @@ func main() {
 		listAccess()
 	case "test-birthday":
 		testBirthday()
+	case "admin-totp-setup":
+		adminTOTPSetup()
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])
 		os.Exit(1)
@@ -273,15 +276,16 @@ func runBot() {
 	// e base URL controlam CORS e o link do magic.
 	apiAdapter := newAPIAdapter(db, agent.audit, report, cal, cfg.EncryptionKey, handler.SendTextToPhone)
 	apiServer := api.NewServer(api.Config{
-		Store:          apiAdapter,
-		WebBaseURL:     resolveWebBaseURL(),
-		PathPrefix:     resolveAPIPathPrefix(),
-		AllowedOrigins: resolveWebOrigins(),
-		CookieSecure:   resolveCookieSecure(),
-		CookieDomain:   resolveCookieDomain(),
-		ReportClient:   report,
-		AdminPhones:    resolveAdminPhones(),
-		Pairer:         newAPIPairer(pairMgr),
+		Store:           apiAdapter,
+		WebBaseURL:      resolveWebBaseURL(),
+		PathPrefix:      resolveAPIPathPrefix(),
+		AllowedOrigins:  resolveWebOrigins(),
+		CookieSecure:    resolveCookieSecure(),
+		CookieDomain:    resolveCookieDomain(),
+		ReportClient:    report,
+		AdminPhones:     resolveAdminPhones(),
+		Pairer:          newAPIPairer(pairMgr),
+		AdminTOTPSecret: strings.TrimSpace(os.Getenv("ADMIN_TOTP_SECRET")),
 	})
 
 	// Refresh diario dos insights de agenda do titular: o scheduler nao conhece

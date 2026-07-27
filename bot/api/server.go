@@ -35,6 +35,13 @@ type Server struct {
 	// pairer dirige o pareamento do WhatsApp (implementado no main). Pode ser
 	// nil em contextos sem whatsmeow — handlers respondem 503.
 	pairer Pairer
+	// adminTOTPSecret habilita o login out-of-band do admin (base32). Vazio =
+	// login TOTP desabilitado. Vive na config de deploy, não no banco.
+	adminTOTPSecret string
+	// adminTOTPLastStep guarda o último passo de tempo TOTP consumido com
+	// sucesso, para rejeitar replay do mesmo código dentro da janela de validade.
+	adminTOTPLastStep int64
+	adminTOTPMu       sync.Mutex
 	// insightsInFlight deduplica o regen assincrono de insights por (user,days).
 	insightsInFlight sync.Map // map[string]struct{}
 }
@@ -68,6 +75,9 @@ type Config struct {
 	// Pairer dirige o pareamento do WhatsApp (código de 8 dígitos + QR) a
 	// partir da página admin. Pode ser nil — handlers respondem 503.
 	Pairer Pairer
+	// AdminTOTPSecret (base32) habilita o login out-of-band do admin via TOTP.
+	// Vazio = desabilitado. Vem da env ADMIN_TOTP_SECRET (deploy config).
+	AdminTOTPSecret string
 }
 
 // NewServer constroi com defaults ajuiziados. Caller eh responsavel pelo
@@ -94,28 +104,38 @@ func NewServer(cfg Config) *Server {
 		}
 	}
 	return &Server{
-		store:          cfg.Store,
-		webBaseURL:     cfg.WebBaseURL,
-		pathPrefix:     cfg.PathPrefix,
-		allowedOrigins: cfg.AllowedOrigins,
-		cookieSecure:   cfg.CookieSecure,
-		cookieDomain:   strings.TrimSpace(cfg.CookieDomain),
-		statusCache:    newStatusCache(cfg.StatusCacheTTL),
-		insightsCache:  newInsightsCache(cfg.InsightsCacheTTL),
-		insightsTTL:    cfg.InsightsCacheTTL,
-		reportClient:   cfg.ReportClient,
-		adminPhones:    admins,
-		pairer:         cfg.Pairer,
+		store:           cfg.Store,
+		webBaseURL:      cfg.WebBaseURL,
+		pathPrefix:      cfg.PathPrefix,
+		allowedOrigins:  cfg.AllowedOrigins,
+		cookieSecure:    cfg.CookieSecure,
+		cookieDomain:    strings.TrimSpace(cfg.CookieDomain),
+		statusCache:     newStatusCache(cfg.StatusCacheTTL),
+		insightsCache:   newInsightsCache(cfg.InsightsCacheTTL),
+		insightsTTL:     cfg.InsightsCacheTTL,
+		reportClient:    cfg.ReportClient,
+		adminPhones:     admins,
+		pairer:          cfg.Pairer,
+		adminTOTPSecret: strings.TrimSpace(cfg.AdminTOTPSecret),
 	}
 }
 
 // isAdmin retorna true se o telefone do usuario estiver no allowlist de admin.
 // Comparacao por digitos normalizados — robusta a "+55", espacos e mascaras.
 func (s *Server) isAdmin(u *User) bool {
-	if u == nil || len(s.adminPhones) == 0 {
+	if u == nil {
 		return false
 	}
-	_, ok := s.adminPhones[digitsOnly(u.PhoneNumber)]
+	return s.isAdminPhone(u.PhoneNumber)
+}
+
+// isAdminPhone retorna true se o telefone (qualquer formato) estiver no
+// allowlist de admin. Comparacao por digitos normalizados.
+func (s *Server) isAdminPhone(phone string) bool {
+	if len(s.adminPhones) == 0 {
+		return false
+	}
+	_, ok := s.adminPhones[digitsOnly(phone)]
 	return ok
 }
 
@@ -146,6 +166,10 @@ func (s *Server) Mount(mux *http.ServeMux) {
 		s.CORS(s.RequireOrigin(http.HandlerFunc(s.handleVerify))))
 	mux.Handle(s.route("/api/v1/auth/logout"),
 		s.CORS(s.RequireOrigin(s.RequireAuth(http.HandlerFunc(s.handleLogout)))))
+	// Login out-of-band do admin via TOTP — não depende do WhatsApp (quebra o
+	// deadlock: magic link chega pelo WhatsApp, que pode estar fora do ar).
+	mux.Handle(s.route("/api/v1/auth/admin-login"),
+		s.CORS(s.RequireOrigin(http.HandlerFunc(s.handleAdminLogin))))
 
 	// Me / preferences.
 	mux.Handle(s.route("/api/v1/me"),
