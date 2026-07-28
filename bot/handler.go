@@ -52,6 +52,10 @@ type Handler struct {
 	// dupla saudacao). Lazy via getProcLock.
 	procLocks map[string]*sync.Mutex
 	procMu    sync.Mutex
+	// backfillMu serializa o processamento de blobs de HistorySync (reconecte):
+	// dois blobs concorrentes não podem ler a mesma marca d'água antiga e
+	// selecionar o mesmo backlog duas vezes.
+	backfillMu sync.Mutex
 }
 
 func NewHandler(holder *ClientHolder, db *DB, orchestrator *Orchestrator) *Handler {
@@ -90,6 +94,98 @@ func (h *Handler) HandleEvent(evt interface{}) {
 	switch v := evt.(type) {
 	case *events.Message:
 		h.handleMessage(v)
+	case *events.HistorySync:
+		h.handleHistorySync(v)
+	}
+}
+
+// handleHistorySync responde o backlog entregue no reconecte. O WhatsApp
+// bufferiza as mensagens recebidas enquanto o bot esteve fora e as entrega em
+// blob via HistorySync (não via events.Message). Reusamos o caminho ao vivo
+// (handleMessage) só para o que é genuinamente não-tratado: de usuário
+// registrado/ativo, mais novo que a marca d'água do usuário, dentro da janela de
+// 24h, deduplicado e com teto. Ver docs/superpowers/specs/
+// 2026-07-27-backfill-reconnect-design.md.
+func (h *Handler) handleHistorySync(hs *events.HistorySync) {
+	if hs == nil || hs.Data == nil {
+		return
+	}
+	// Serializa: dois blobs não podem ler a mesma marca d'água antiga em paralelo.
+	h.backfillMu.Lock()
+	defer h.backfillMu.Unlock()
+
+	client := h.client()
+	if client == nil {
+		return
+	}
+
+	var cands []backfillCandidate
+	watermarks := make(map[int64]time.Time)
+	skippedUnresolved := 0 // DMs cujo LID não resolveu p/ telefone (store sem mapping)
+
+	for _, conv := range hs.Data.GetConversations() {
+		chatJID, err := types.ParseJID(conv.GetID())
+		if err != nil {
+			continue
+		}
+		for _, hmsg := range conv.GetMessages() {
+			webMsg := hmsg.GetMessage()
+			if webMsg == nil {
+				continue
+			}
+			msg, err := client.ParseWebMessage(chatJID, webMsg)
+			if err != nil || msg == nil {
+				continue
+			}
+			// Só DMs: espelha o filtro do handleMessage. Feito ANTES do teto para
+			// grupo movimentado não consumir as vagas do cap de DMs reais.
+			chat := msg.Info.Chat
+			if msg.Info.IsGroup || chat.Server == "g.us" || chat.Server == "broadcast" ||
+				chat.Server == "newsletter" || chat.User == "status" {
+				continue
+			}
+			// Resolve o remetente para telefone e exige usuário registrado/ativo —
+			// nunca jogar backlog de número desconhecido no funil de vendas.
+			senderJID, ok := resolveSenderJID(&msg.Info, client.Store.LIDs)
+			if !ok {
+				skippedUnresolved++
+				continue
+			}
+			var user *User
+			for _, variant := range normalizeBRPhone(senderJID.User) {
+				if u, e := h.db.GetUserByPhone(variant); e == nil {
+					user = u
+					break
+				}
+			}
+			if user == nil || !user.IsActive {
+				continue
+			}
+			if _, loaded := watermarks[user.ID]; !loaded {
+				if wm, ok, err := h.db.LastInboundAt(user.ID); err == nil && ok {
+					watermarks[user.ID] = wm
+				}
+			}
+			cands = append(cands, backfillCandidate{
+				MsgID:     msg.Info.ID,
+				UserID:    user.ID,
+				Timestamp: msg.Info.Timestamp,
+				FromMe:    msg.Info.IsFromMe,
+				msg:       msg,
+			})
+		}
+	}
+
+	selected, dropped := selectBackfill(cands, watermarks, time.Now(), backfillAgeCeiling, backfillCap)
+	if len(selected) == 0 {
+		if dropped > 0 || skippedUnresolved > 0 {
+			log.Printf("backfill: %d candidato(s), 0 selecionado(s), %d descartado(s) por teto, %d DM(s) de LID não resolvido", len(cands), dropped, skippedUnresolved)
+		}
+		return
+	}
+	log.Printf("backfill: %d candidato(s), %d selecionado(s), %d descartado(s) por teto, %d DM(s) de LID não resolvido — respondendo backlog do reconecte", len(cands), len(selected), dropped, skippedUnresolved)
+	for _, c := range selected {
+		h.handleMessage(c.msg)
 	}
 }
 
