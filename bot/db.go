@@ -764,6 +764,30 @@ func (db *DB) SecondsSinceLastAssistantMessage(userID int64) (float64, bool, err
 	return age.Float64, true, nil
 }
 
+// LastInboundAt devolve o created_at (UTC) da última mensagem role='user' do
+// usuário — a marca d'água do backfill: até esse instante o bot já tratou o que
+// chegou. ok=false se o usuário nunca teve uma mensagem inbound. Formatamos com
+// strftime('...Z') e parseamos em RFC3339 para obter um instante UTC sem
+// depender de como o driver interpreta o fuso de created_at (mesmo cuidado de
+// SecondsSinceLastAssistantMessage).
+func (db *DB) LastInboundAt(userID int64) (time.Time, bool, error) {
+	var s sql.NullString
+	err := db.conn.QueryRow(
+		`SELECT strftime('%Y-%m-%dT%H:%M:%SZ', MAX(created_at))
+		 FROM conversation_history WHERE user_id = ? AND role = 'user'`, userID).Scan(&s)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("last inbound at: %w", err)
+	}
+	if !s.Valid {
+		return time.Time{}, false, nil
+	}
+	ts, err := time.Parse(time.RFC3339, s.String)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("last inbound at: parse %q: %w", s.String, err)
+	}
+	return ts, true, nil
+}
+
 func (db *DB) GetConversationHistory(userID int64, limit int) ([]ConversationMessage, error) {
 	// Tiebreaker por id: com carimbos de tempo visiveis ao modelo, a ordem dos
 	// turnos eh load-bearing; created_at sozinho (resolucao de segundo) pode
