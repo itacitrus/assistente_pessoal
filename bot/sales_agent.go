@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	anthropic "github.com/liushuangls/go-anthropic/v2"
+	"github.com/giovannirambo/assistente_pessoal/bot/llm"
 )
 
 // maxLeadTurnsPerDay limita quantos turnos de LLM um numero frio consome em 24h.
@@ -45,9 +45,8 @@ func (a *Agent) RunSalesAgent(ctx context.Context, phone, pushName, message stri
 	messages := buildLeadMessages(history)
 
 	system := buildSalesSystemPrompt(strings.TrimSpace(pushName))
-	tools := []anthropic.ToolDefinition{salesCreateAccountTool()}
 
-	response, err := a.runSalesLoop(ctx, phone, messages, system, tools)
+	response, err := a.runSalesLoop(ctx, phone, messages, system)
 	if err != nil {
 		return "", err
 	}
@@ -60,45 +59,64 @@ func (a *Agent) RunSalesAgent(ctx context.Context, phone, pushName, message stri
 	return response, nil
 }
 
-// runSalesLoop roda Haiku com a tool criar_conta ate end_turn. Auto-contido
-// (sem *User): o lead ainda nao tem conta.
-func (a *Agent) runSalesLoop(ctx context.Context, phone string, messages []anthropic.Message, system string, tools []anthropic.ToolDefinition) (string, error) {
-	temp := float32(0.5)
+// runSalesLoop roda o provider de vendas com a tool criar_conta ate end_turn.
+// Auto-contido (sem *User): o lead ainda nao tem conta, entao nao passa pelo
+// roteador por sensibilidade — lead nao carrega dado de saude.
+//
+// Loop pequeno de proposito: 512 tokens, uma tool, sem cache, sem
+// output-guard (o guard depende de TurnContext e de User, que nao existem
+// aqui). Por isso e o piloto mais barato do repo pra validar um provider.
+func (a *Agent) runSalesLoop(ctx context.Context, phone string, messages []llm.Message, system string) (string, error) {
+	provider := a.salesChat
+	if provider == nil {
+		provider = a.chat
+	}
+	if provider == nil {
+		return "", fmt.Errorf("sales: nenhum ChatProvider configurado")
+	}
+
+	sys := []llm.SystemPart{{Text: system}}
+	tools := []llm.ToolDef{salesCreateAccountToolLLM()}
+	breaker := NewToolBreaker(2)
+
 	for i := 0; i < salesMaxIterations; i++ {
-		resp, err := a.client.CreateMessages(ctx, anthropic.MessagesRequest{
-			Model:       anthropic.ModelClaudeHaiku4Dot5,
-			MaxTokens:   512,
-			Temperature: &temp,
-			System:      system,
-			Messages:    messages,
-			Tools:       tools,
+		start := time.Now()
+		resp, err := provider.Chat(ctx, llm.ChatRequest{
+			System: sys, Messages: messages, Tools: tools,
+			MaxTokens: 512, Temperature: 0.5,
 		})
 		if err != nil {
-			return "", fmt.Errorf("claude API: %w", err)
+			return "", fmt.Errorf("sales chat: %w", err)
 		}
+		a.recordUsage(nil, "sales", provider.Name(), resp.ModelUsed, resp.Usage, time.Since(start).Milliseconds())
 
-		if resp.StopReason == anthropic.MessagesStopReasonToolUse {
-			messages = append(messages, anthropic.Message{Role: anthropic.RoleAssistant, Content: resp.Content})
-			var toolResults []anthropic.MessageContent
+		if resp.StopReason == llm.StopToolUse {
+			messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: resp.Content})
+			var toolResults []llm.ContentBlock
 			for _, c := range resp.Content {
-				if c.Type != anthropic.MessagesContentTypeToolUse || c.MessageContentToolUse == nil {
+				if c.Type != "tool_use" {
 					continue
 				}
-				result := a.handleSalesTool(ctx, phone, c.MessageContentToolUse.Name, c.MessageContentToolUse.Input)
-				toolResults = append(toolResults, anthropic.NewToolResultMessageContent(c.MessageContentToolUse.ID, result, false))
+				if !breaker.Allow(c.ToolName, c.ToolInput) {
+					toolResults = append(toolResults, llm.ContentBlock{
+						Type: "tool_result", ToolUseID: c.ToolUseID, IsError: true,
+						ToolResult: "Chamada repetida com os mesmos argumentos. Responda ao usuario com o que ja sabe.",
+					})
+					continue
+				}
+				result := a.handleSalesTool(ctx, phone, c.ToolName, c.ToolInput)
+				toolResults = append(toolResults, llm.ContentBlock{
+					Type: "tool_result", ToolUseID: c.ToolUseID, ToolResult: result,
+				})
 			}
-			messages = append(messages, anthropic.Message{Role: anthropic.RoleUser, Content: toolResults})
+			messages = append(messages, llm.Message{Role: llm.RoleUser, Content: toolResults})
 			continue
 		}
 
 		// end_turn / max_tokens: junta o texto e devolve.
-		var parts []string
-		for _, c := range resp.Content {
-			if c.Type == anthropic.MessagesContentTypeText {
-				parts = append(parts, c.GetText())
-			}
-		}
-		return strings.TrimSpace(strings.Join(parts, "\n")), nil
+		// sanitizeForWhatsApp aqui porque o loop de vendas nao passa pelo
+		// output-guard (que e quem aplica o envelope nos outros engines).
+		return sanitizeForWhatsApp(strings.TrimSpace(collectLLMText(resp.Content))), nil
 	}
 	// Esgotou iteracoes apos um tool-use sem fechamento textual: fallback seguro.
 	return "Pronto! Qualquer coisa, é só me chamar aqui. 😊", nil
@@ -191,32 +209,32 @@ func (a *Agent) sendWelcomeWithMagicLink(user *User) error {
 	return a.sendMsg(user.PhoneNumber, msg)
 }
 
-// buildLeadMessages converte o historico do lead em mensagens da API Anthropic.
-func buildLeadMessages(history []LeadMessage) []anthropic.Message {
-	msgs := make([]anthropic.Message, 0, len(history))
+// buildLeadMessages converte o historico do lead em mensagens canonicas.
+func buildLeadMessages(history []LeadMessage) []llm.Message {
+	msgs := make([]llm.Message, 0, len(history))
 	for _, h := range history {
-		role := anthropic.RoleUser
+		role := llm.RoleUser
 		if h.Role == "assistant" {
-			role = anthropic.RoleAssistant
+			role = llm.RoleAssistant
 		}
-		content := h.Content
-		msgs = append(msgs, anthropic.Message{
+		msgs = append(msgs, llm.Message{
 			Role:    role,
-			Content: []anthropic.MessageContent{{Type: "text", Text: &content}},
+			Content: []llm.ContentBlock{{Type: "text", Text: h.Content}},
 		})
 	}
-	// Defensivo: a API exige que a conversa comece com role=user. Se por algum
-	// motivo o historico abrir com assistant (poda), injeta um placeholder.
-	if len(msgs) == 0 || msgs[0].Role != anthropic.RoleUser {
-		oi := "Oi"
-		msgs = append([]anthropic.Message{{Role: anthropic.RoleUser, Content: []anthropic.MessageContent{{Type: "text", Text: &oi}}}}, msgs...)
+	// Defensivo: a conversa tem que comecar com role=user. Se por algum motivo
+	// o historico abrir com assistant (poda), injeta um placeholder.
+	if len(msgs) == 0 || msgs[0].Role != llm.RoleUser {
+		msgs = append([]llm.Message{{
+			Role: llm.RoleUser, Content: []llm.ContentBlock{{Type: "text", Text: "Oi"}},
+		}}, msgs...)
 	}
 	return msgs
 }
 
-// salesCreateAccountTool eh a definicao da tool de provisionamento.
-func salesCreateAccountTool() anthropic.ToolDefinition {
-	return anthropic.ToolDefinition{
+// salesCreateAccountToolLLM eh a definicao da tool de provisionamento.
+func salesCreateAccountToolLLM() llm.ToolDef {
+	return llm.ToolDef{
 		Name:        "criar_conta",
 		Description: "Cria a conta do usuário no Zello. Chame SOMENTE depois que a pessoa demonstrar interesse claro em usar a plataforma E você tiver confirmado o nome dela. A conta nasce como titular (quem cuida); depois ela cadastra os dependentes no painel. NUNCA diga que cadastrou antes de chamar esta tool e receber sucesso.",
 		InputSchema: json.RawMessage(`{

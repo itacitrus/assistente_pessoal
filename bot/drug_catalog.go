@@ -115,6 +115,16 @@ func (db *DB) drugIndex() ([]drugEntry, error) {
 // disso o match eh ruido (palavras sem parentesco real).
 const minDrugConfidence = 0.5
 
+// drugCatalogPopulated diz se ha indice de catalogo carregado.
+//
+// Sem isso, um ambiente sem catalogo (teste, primeira subida antes da
+// ingestao da CMED) anotaria "sem correspondencia" em TODO item de receita —
+// ruido que treina o agente a ignorar o alerta.
+func (db *DB) drugCatalogPopulated() bool {
+	idx, err := db.drugIndex()
+	return err == nil && len(idx) > 0
+}
+
 // ResolveDrug devolve ate `limit` apresentacoes mais provaveis para `query`,
 // ordenadas por confianca desc. query vazia ou catalogo vazio -> nil, nil.
 func (db *DB) ResolveDrug(query string, limit int) ([]DrugMatch, error) {
