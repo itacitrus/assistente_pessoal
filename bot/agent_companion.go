@@ -14,36 +14,46 @@ import (
 	"github.com/liushuangls/go-anthropic/v2"
 )
 
-// runCompanion conduz um turno do idoso pelo companion provider (DeepSeek em
-// prod) via a abstracao llm.ChatProvider, reaproveitando os mesmos toolHandlers
-// do caminho Anthropic. Diferencas em relacao ao runLoop Anthropic:
-//   - imagens sao pre-descritas pelo VisionProvider (Haiku) e injetadas como
-//     texto, pois o DeepSeek-chat nao tem vision;
-//   - sem prompt cache (DeepSeek concatena tudo) — a flag Cacheable e ignorada.
+// runViaProvider conduz UM turno completo pela abstracao llm.ChatProvider,
+// reaproveitando os mesmos toolHandlers do caminho Anthropic. E o caminho
+// unico de todos os engines apos a migracao DeepSeek — antes dela so o
+// companion passava por aqui, e o operacional falava direto com o SDK.
+//
+// Imagem: quando o provider TEM vision (Gemini, deepseek-vision), o bloco vai
+// nativo no turno. Quando NAO tem (deepseek-v4-flash chat, que recusa imagem
+// com HTTP 400), a imagem e pre-descrita pelo VisionProvider e injetada como
+// texto. Essa bifurcacao e o motivo de o provider carregar SupportsVision().
+//
+// Prompt cache: providers OpenAI-compatible nao tem cache_control — a flag
+// Cacheable e ignorada e a DeepSeek cacheia por prefixo automaticamente.
 //
 // systemParts ja vem montado por Run (core + dinamico + politica + regras
-// farmacologicas condicionais + [AGORA]), entao aqui so traduzimos pro formato
-// llm. tc eh o TurnContext do turno (mesmo now/loc do prompt — coerencia por
+// farmacologicas condicionais + [AGORA]); aqui so traduzimos pro formato llm.
+// tc eh o TurnContext do turno (mesmo now/loc do prompt — coerencia por
 // construcao).
-func (a *Agent) runCompanion(ctx context.Context, user *User, message string, images []ImageAttachment, systemParts []anthropic.MessageSystemPart, tc *TurnContext) (string, error) {
+func (a *Agent) runViaProvider(ctx context.Context, user *User, message string, images []ImageAttachment, systemParts []anthropic.MessageSystemPart, tc *TurnContext, provider llm.ChatProvider, engine string) (string, error) {
+	nativeVision := provider.SupportsVision()
+
 	augMsg := message
-	var descs []string
-	for _, img := range images {
-		if len(img.Data) == 0 {
-			continue
+	if !nativeVision {
+		var descs []string
+		for _, img := range images {
+			if len(img.Data) == 0 {
+				continue
+			}
+			if d := a.describeImageForCompanion(ctx, user, img); d != "" {
+				descs = append(descs, d)
+			}
 		}
-		if d := a.describeImageForCompanion(ctx, user, img); d != "" {
-			descs = append(descs, d)
+		if len(descs) > 0 {
+			var prefix strings.Builder
+			for _, d := range descs {
+				prefix.WriteString("[Imagem que ele te mandou: ")
+				prefix.WriteString(d)
+				prefix.WriteString("]\n")
+			}
+			augMsg = strings.TrimSpace(prefix.String() + augMsg)
 		}
-	}
-	if len(descs) > 0 {
-		var prefix strings.Builder
-		for _, d := range descs {
-			prefix.WriteString("[Imagem que ele te mandou: ")
-			prefix.WriteString(d)
-			prefix.WriteString("]\n")
-		}
-		augMsg = strings.TrimSpace(prefix.String() + augMsg)
 	}
 
 	history, _ := a.db.GetConversationHistory(user.ID, 30)
@@ -52,33 +62,64 @@ func (a *Agent) runCompanion(ctx context.Context, user *User, message string, im
 	// augMsg (que carrega prefixos de descricao de imagem).
 	history = dropCurrentTurnFromHistory(history, persistedUserContent(message, len(images)))
 	messages := buildMessagesLLM(history, augMsg, tc.Now, tc.Loc)
+
+	// Provider com vision nativa: anexa as imagens ao turno atual (ultima msg).
+	if nativeVision && len(images) > 0 && len(messages) > 0 {
+		last := &messages[len(messages)-1]
+		for _, img := range images {
+			if len(img.Data) == 0 {
+				continue
+			}
+			mime := img.Mime
+			if mime == "" {
+				mime = "image/jpeg"
+			}
+			last.Content = append(last.Content, llm.ContentBlock{
+				Type:       "image",
+				ImageMedia: mime,
+				ImageData:  base64.StdEncoding.EncodeToString(img.Data),
+			})
+		}
+	}
+
 	system := systemPartsToLLM(systemParts)
 	tools := toolDefsToLLM(buildToolDefinitions())
 
-	res, err := a.runLoopLLM(ctx, user, a.companionChat, system, messages, tools)
+	res, err := a.runLoopLLM(ctx, user, provider, system, messages, tools, engine)
 	if err != nil {
-		return "", fmt.Errorf("agent companion: %w", err)
+		return "", fmt.Errorf("agent %s: %w", engine, err)
 	}
-	// Salvaguarda deterministica: o companion (DeepSeek) as vezes NARRA "anotado"
-	// sem chamar marcar_remedio_tomado. Sem isso a dose fica 'pending' e a escalacao
-	// cutuca de novo ("o agente ignorou meu tomei"). Aqui, se a fala do idoso for
-	// confirmacao inequivoca E o LLM nao tocou nenhuma tool de remedio, persistimos
-	// pelos mesmos helpers idempotentes. Roda ANTES do envio: o proximo tick de
-	// escalacao (1min) ja ve a dose resolvida.
-	a.reconcileTakenAfterTurn(user, message, res.ToolsCalled)
 
-	// Output-guard (P1) — mesmo contrato do caminho operacional; regenerate
-	// tool-less sobre o provider do companion (DeepSeek).
+	// Salvaguarda deterministica: o modelo as vezes NARRA "anotado" sem chamar
+	// marcar_remedio_tomado. Sem isso a dose fica 'pending' e a escalacao
+	// cutuca de novo ("o agente ignorou meu tomei"). Se a fala do idoso for
+	// confirmacao inequivoca E o LLM nao tocou nenhuma tool de remedio,
+	// persistimos pelos mesmos helpers idempotentes. Roda ANTES do envio: o
+	// proximo tick de escalacao (1min) ja ve a dose resolvida.
+	//
+	// So no companion: e a salvaguarda desenhada pro dialogo do idoso.
+	if engine == "companion" {
+		a.reconcileTakenAfterTurn(user, message, res.ToolsCalled)
+	}
+
+	// Output-guard (P1) — mesmo contrato nos tres engines; regenerate
+	// tool-less sobre o MESMO provider do turno.
 	out, action := a.guardOutput(guardInput{
 		User: user, TC: tc, UserMsg: message,
 		ToolsCalled: res.ToolsCalled, ToolResults: res.ToolResults,
-		Engine: "companion",
-	}, res.Text, a.llmRewriteFn(ctx, a.companionChat, system, res.Messages))
+		Engine: engine,
+	}, res.Text, a.llmRewriteFn(ctx, provider, system, res.Messages))
 	if action != "none" {
 		log.Printf("[%s] guard action=%s", user.Name, action)
 	}
-	log.Printf("[%s] Companion final response (%d chars): %.100s", user.Name, len(out), out)
+	log.Printf("[%s] %s final response (%d chars): %.100s", user.Name, engine, len(out), out)
 	return out, nil
+}
+
+// runCompanion e o wrapper historico do turno do idoso. Mantido porque os
+// testes existentes chamam por este nome.
+func (a *Agent) runCompanion(ctx context.Context, user *User, message string, images []ImageAttachment, systemParts []anthropic.MessageSystemPart, tc *TurnContext) (string, error) {
+	return a.runViaProvider(ctx, user, message, images, systemParts, tc, a.companionChat, "companion")
 }
 
 // llmRewriteFn — regenerateFn sobre llm.ChatProvider: UMA chamada de reescrita
@@ -179,12 +220,20 @@ type llmLoopResult struct {
 // assinatura do handler ja e agnostica de provider: ctx, agent, user, json).
 // ToolsCalled lista os nomes das tools EFETIVAMENTE executadas (sem erro) ao
 // longo do loop — usado pela salvaguarda pos-turno e pelo guard.
-func (a *Agent) runLoopLLM(ctx context.Context, user *User, provider llm.ChatProvider, system []llm.SystemPart, messages []llm.Message, tools []llm.ToolDef) (llmLoopResult, error) {
+func (a *Agent) runLoopLLM(ctx context.Context, user *User, provider llm.ChatProvider, system []llm.SystemPart, messages []llm.Message, tools []llm.ToolDef, engine string) (llmLoopResult, error) {
 	const maxIterations = 8
 	var toolsCalled, toolResults []string
-	for i := 0; i < maxIterations; i++ {
-		log.Printf("[%s] Companion loop iteration %d (provider=%s, msgs=%d)", user.Name, i+1, provider.Name(), len(messages))
 
+	// Circuit breaker por turno. Loop de call identica e o modo de falha
+	// agentico mais documentado do DeepSeek — o modelo verbaliza que vai
+	// parar e reemite a mesma call. Teto de 2 repeticoes por (tool, args):
+	// uma repeticao legitima acontece (retry apos erro), tres nao.
+	breaker := NewToolBreaker(2)
+
+	for i := 0; i < maxIterations; i++ {
+		log.Printf("[%s] %s loop iteration %d (provider=%s, msgs=%d)", user.Name, engine, i+1, provider.Name(), len(messages))
+
+		start := time.Now()
 		resp, err := provider.Chat(ctx, llm.ChatRequest{
 			System:      system,
 			Messages:    messages,
@@ -193,10 +242,12 @@ func (a *Agent) runLoopLLM(ctx context.Context, user *User, provider llm.ChatPro
 			Temperature: 0.4,
 		})
 		if err != nil {
-			return llmLoopResult{ToolsCalled: toolsCalled, ToolResults: toolResults, Messages: messages}, fmt.Errorf("companion chat: %w", err)
+			return llmLoopResult{ToolsCalled: toolsCalled, ToolResults: toolResults, Messages: messages}, fmt.Errorf("%s chat: %w", engine, err)
 		}
-		log.Printf("[%s] Companion response: stop=%s blocks=%d tokens=in:%d/out:%d model=%s",
-			user.Name, resp.StopReason, len(resp.Content), resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.ModelUsed)
+		a.recordUsage(user, engine, provider.Name(), resp.ModelUsed, resp.Usage, time.Since(start).Milliseconds())
+		log.Printf("[%s] %s response: stop=%s blocks=%d tokens=in:%d/out:%d cache_read:%d model=%s",
+			user.Name, engine, resp.StopReason, len(resp.Content),
+			resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.CacheReadTokens, resp.ModelUsed)
 
 		if resp.StopReason != llm.StopToolUse {
 			messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: resp.Content})
@@ -214,6 +265,16 @@ func (a *Agent) runLoopLLM(ctx context.Context, user *User, provider llm.ChatPro
 			handler, ok := toolHandlers[c.ToolName]
 			if !ok {
 				results = append(results, errToolResultLLM(c.ToolUseID, fmt.Sprintf("Ferramenta desconhecida: %s", c.ToolName)))
+				continue
+			}
+			// Breaker: chamada identica repetida nao re-executa o handler. O
+			// modelo recebe o corte como tool_result de erro e segue o turno —
+			// melhor que queimar 8 iteracoes na mesma call e devolver o
+			// fallback generico ao usuario.
+			if !breaker.Allow(c.ToolName, c.ToolInput) {
+				log.Printf("[%s] breaker: cortou chamada repetida de %s", user.Name, c.ToolName)
+				results = append(results, errToolResultLLM(c.ToolUseID,
+					"Chamada repetida com os mesmos argumentos. Use o resultado que ja foi devolvido antes e responda ao usuario."))
 				continue
 			}
 			log.Printf("[%s] Tool call: %s input=%s", user.Name, c.ToolName, string(c.ToolInput))

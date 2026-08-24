@@ -206,7 +206,7 @@ func TestRunLoopLLM_TextOnly(t *testing.T) {
 	}}
 	a := &Agent{}
 	msgs := []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{{Type: "text", Text: "oi"}}}}
-	res, err := a.runLoopLLM(context.Background(), &User{Name: "X"}, prov, nil, msgs, nil)
+	res, err := a.runLoopLLM(context.Background(), &User{Name: "X"}, prov, nil, msgs, nil, "companion")
 	if err != nil {
 		t.Fatalf("runLoopLLM erro: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestRunLoopLLM_ToolThenText(t *testing.T) {
 	}}
 	a := &Agent{}
 	msgs := []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{{Type: "text", Text: "faz algo"}}}}
-	res, err := a.runLoopLLM(context.Background(), &User{Name: "X"}, prov, nil, msgs, nil)
+	res, err := a.runLoopLLM(context.Background(), &User{Name: "X"}, prov, nil, msgs, nil, "companion")
 	if err != nil {
 		t.Fatalf("runLoopLLM erro: %v", err)
 	}
