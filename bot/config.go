@@ -23,14 +23,31 @@ type Config struct {
 	DefaultReminderBefore     time.Duration
 	DefaultAutoConfirmTimeout time.Duration
 
-	// Fase 4 (idosos): provider abstraction.
-	// LLMProviderCompanion: "anthropic" | "deepseek". Default "anthropic"
-	// (sem mudanca de comportamento). Quando "deepseek", DEEPSEEK_API_KEY
-	// vira obrigatorio — caso ausente, main.go faz fallback graceful pra
-	// Anthropic com warning.
+	// Provider por papel (migracao DeepSeek). Cada um aceita
+	// "deepseek" | "gemini" | "anthropic"; ausente = "deepseek".
+	//
+	// A separacao OPERACIONAL x CLINICO nao e por tipo de agente e sim por
+	// SENSIBILIDADE do usuario (ver llm_router.go): quem PODERIA tocar dado
+	// de saude num turno vai pro clinico. Hoje os dois apontam pro DeepSeek;
+	// deixar parametrizado torna a troca do caminho clinico uma edicao de
+	// variavel, nao um redesenho.
+	LLMProviderOperacional string
+	LLMProviderClinico     string
+	LLMProviderSales       string
+	LLMProviderAnalysis    string
+	LLMProviderReport      string
+	LLMProviderVision      string
+
+	// LLMProviderCompanion e o nome legado de LLM_PROVIDER_CLINICO, mantido
+	// por compatibilidade com .env antigo.
 	LLMProviderCompanion string
-	DeepSeekAPIKey       string
-	DeepSeekBaseURL      string // default https://api.deepseek.com/v1
+
+	DeepSeekAPIKey  string
+	DeepSeekBaseURL string // vazio = https://api.deepseek.com (o /v1 e legado)
+	DeepSeekModel   string // default deepseek-v4-flash
+
+	GeminiAPIKey string
+	GeminiModel  string // default gemini-3.6-flash
 
 	// Output-guard (contrato de precisão temporal, P1).
 	// OUTPUT_GUARD_MODE: off | log | enforce. Default "log" — audita
@@ -74,12 +91,44 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("invalid DEFAULT_AUTO_CONFIRM_TIMEOUT: %w", err)
 	}
 
-	// Fase 4 (idosos): provider abstraction. Default "anthropic" pra
-	// preservar comportamento — nenhuma mudanca de config = usa Sonnet
-	// pra companion tambem (mesmo que operacional).
-	cfg.LLMProviderCompanion = strings.ToLower(strings.TrimSpace(envOrDefault("LLM_PROVIDER_COMPANION", "anthropic")))
+	// Migracao DeepSeek: provider por papel, default deepseek.
 	cfg.DeepSeekAPIKey = os.Getenv("DEEPSEEK_API_KEY")
 	cfg.DeepSeekBaseURL = strings.TrimSpace(os.Getenv("DEEPSEEK_BASE_URL"))
+	cfg.DeepSeekModel = strings.TrimSpace(envOrDefault("DEEPSEEK_MODEL", "deepseek-v4-flash"))
+	cfg.GeminiAPIKey = os.Getenv("GEMINI_API_KEY")
+	cfg.GeminiModel = strings.TrimSpace(envOrDefault("GEMINI_MODEL", "gemini-3.6-flash"))
+
+	// LLM_PROVIDER_COMPANION e o nome legado do papel clinico. Se estiver no
+	// .env e LLM_PROVIDER_CLINICO nao, ele vale — evita que um .env antigo
+	// mude de comportamento em silencio no deploy.
+	cfg.LLMProviderCompanion = normProvider(os.Getenv("LLM_PROVIDER_COMPANION"))
+	clinicoDefault := "deepseek"
+	if cfg.LLMProviderCompanion != "" && os.Getenv("LLM_PROVIDER_CLINICO") == "" {
+		clinicoDefault = cfg.LLMProviderCompanion
+	}
+
+	cfg.LLMProviderOperacional = normProvider(envOrDefault("LLM_PROVIDER_OPERACIONAL", "deepseek"))
+	cfg.LLMProviderClinico = normProvider(envOrDefault("LLM_PROVIDER_CLINICO", clinicoDefault))
+	cfg.LLMProviderSales = normProvider(envOrDefault("LLM_PROVIDER_SALES", "deepseek"))
+	cfg.LLMProviderAnalysis = normProvider(envOrDefault("LLM_PROVIDER_ANALYSIS", "deepseek"))
+	cfg.LLMProviderReport = normProvider(envOrDefault("LLM_PROVIDER_REPORT", "deepseek"))
+	// Visao na DeepSeek vive num modelo separado (deepseek-v4-flash-vision-exp):
+	// o modelo de chat recusa imagem com HTTP 400.
+	cfg.LLMProviderVision = normProvider(envOrDefault("LLM_PROVIDER_VISION", "deepseek-vision"))
+
+	roles := map[string]string{
+		"LLM_PROVIDER_OPERACIONAL": cfg.LLMProviderOperacional,
+		"LLM_PROVIDER_CLINICO":     cfg.LLMProviderClinico,
+		"LLM_PROVIDER_SALES":       cfg.LLMProviderSales,
+		"LLM_PROVIDER_ANALYSIS":    cfg.LLMProviderAnalysis,
+		"LLM_PROVIDER_REPORT":      cfg.LLMProviderReport,
+		"LLM_PROVIDER_VISION":      cfg.LLMProviderVision,
+	}
+	for env, prov := range roles {
+		if !validProvider(prov) {
+			return nil, fmt.Errorf("%s invalido %q (use deepseek|deepseek-vision|gemini|anthropic)", env, prov)
+		}
+	}
 
 	cfg.OutputGuardMode = strings.ToLower(strings.TrimSpace(envOrDefault("OUTPUT_GUARD_MODE", "log")))
 	if cfg.OutputGuardMode != "off" && cfg.OutputGuardMode != "log" && cfg.OutputGuardMode != "enforce" {
@@ -91,11 +140,14 @@ func LoadConfig() (*Config, error) {
 		}
 	}
 
-	// Validate required fields
+	// Validate required fields.
+	//
+	// ANTHROPIC_API_KEY deixou de ser incondicional: com todos os papeis em
+	// DeepSeek o bot precisa subir sem ela — era exatamente o que impedia o
+	// sistema de voltar ao ar com o cartao cancelado.
 	required := map[string]string{
 		"GOOGLE_CLIENT_ID":     cfg.GoogleClientID,
 		"GOOGLE_CLIENT_SECRET": cfg.GoogleClientSecret,
-		"ANTHROPIC_API_KEY":    cfg.AnthropicAPIKey,
 		"ENCRYPTION_KEY":       cfg.EncryptionKey,
 	}
 	for name, val := range required {
@@ -104,7 +156,41 @@ func LoadConfig() (*Config, error) {
 		}
 	}
 
+	// Cada papel exige a chave do provider que ele referencia. Falhar no boot
+	// e melhor que descobrir em runtime, no turno de um usuario.
+	keyFor := map[string]string{
+		"deepseek":        cfg.DeepSeekAPIKey,
+		"deepseek-vision": cfg.DeepSeekAPIKey,
+		"gemini":          cfg.GeminiAPIKey,
+		"anthropic":       cfg.AnthropicAPIKey,
+	}
+	envFor := map[string]string{
+		"deepseek":        "DEEPSEEK_API_KEY",
+		"deepseek-vision": "DEEPSEEK_API_KEY",
+		"gemini":          "GEMINI_API_KEY",
+		"anthropic":       "ANTHROPIC_API_KEY",
+	}
+	for role, prov := range roles {
+		if keyFor[prov] == "" {
+			return nil, fmt.Errorf("%s=%s exige %s, que nao esta setada", role, prov, envFor[prov])
+		}
+	}
+
 	return cfg, nil
+}
+
+// normProvider normaliza o valor de uma env var de papel.
+func normProvider(v string) string {
+	return strings.ToLower(strings.TrimSpace(v))
+}
+
+// validProvider diz se o nome de provider e reconhecido.
+func validProvider(v string) bool {
+	switch v {
+	case "deepseek", "deepseek-vision", "gemini", "anthropic":
+		return true
+	}
+	return false
 }
 
 func envOrDefault(key, fallback string) string {

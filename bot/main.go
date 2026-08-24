@@ -174,27 +174,20 @@ func runBot() {
 	transcription := NewTranscriptionClient(cfg.TranscriptionURL)
 	agent := NewAgent(cfg.AnthropicAPIKey, cal, db, cfg, nil)
 
-	// Fase 4 (idosos): provider abstraction. operacional sempre Anthropic;
-	// companion roteado para DeepSeek se DEEPSEEK_API_KEY setada — fallback
-	// pra Anthropic em todos os papeis se nao configurado.
-	opChat := llm.NewAnthropicChat(cfg.AnthropicAPIKey, "")
-	var companionChat llm.ChatProvider = opChat
-	switch cfg.LLMProviderCompanion {
-	case "deepseek":
-		if cfg.DeepSeekAPIKey == "" {
-			log.Printf("LLM_PROVIDER_COMPANION=deepseek mas DEEPSEEK_API_KEY vazia — fallback para Anthropic.")
-		} else {
-			companionChat = llm.NewDeepSeekChat(cfg.DeepSeekAPIKey, cfg.DeepSeekBaseURL, "")
-		}
-	case "anthropic", "":
-		// Mantem opChat como companion — nao troca.
-	default:
-		log.Printf("LLM_PROVIDER_COMPANION valor desconhecido %q — fallback para Anthropic.", cfg.LLMProviderCompanion)
-	}
-	analysis := llm.NewAnthropicAnalysis(cfg.AnthropicAPIKey, "")
-	report := llm.NewAnthropicReport(cfg.AnthropicAPIKey, "")
-	vision := llm.NewAnthropicVision(cfg.AnthropicAPIKey, "")
-	agent.WithProviders(opChat, companionChat, analysis, report, vision)
+	// Migracao DeepSeek: provider por papel, resolvido de env var. A validacao
+	// de que cada papel tem a chave do seu provider ja rodou em LoadConfig —
+	// aqui so construimos.
+	opChat := buildChatProvider(cfg, cfg.LLMProviderOperacional)
+	clinicoChat := buildChatProvider(cfg, cfg.LLMProviderClinico)
+	analysis := buildAnalysisProvider(cfg, cfg.LLMProviderAnalysis)
+	report := buildReportProvider(cfg, cfg.LLMProviderReport)
+	vision := buildVisionProvider(cfg, cfg.LLMProviderVision)
+	agent.WithProviders(opChat, clinicoChat, analysis, report, vision)
+	agent.salesChat = buildChatProvider(cfg, cfg.LLMProviderSales)
+
+	log.Printf("LLM roteamento: operacional=%s clinico=%s sales=%s analysis=%s report=%s vision=%s (deepseek_model=%s)",
+		cfg.LLMProviderOperacional, cfg.LLMProviderClinico, cfg.LLMProviderSales,
+		cfg.LLMProviderAnalysis, cfg.LLMProviderReport, cfg.LLMProviderVision, cfg.DeepSeekModel)
 
 	orchestrator := NewOrchestrator(agent, transcription, db)
 
@@ -652,4 +645,63 @@ func listAccess() {
 	}
 
 	fmt.Print(pm.FormatAccessList(user.Name, targets))
+}
+
+// ---------------------------------------------------------------------------
+// Construcao de providers por papel (migracao DeepSeek)
+// ---------------------------------------------------------------------------
+
+// providerParts resolve (chave, perfil) pro nome de provider de um papel.
+// LoadConfig ja garantiu que o nome e valido e que a chave existe.
+func providerParts(cfg *Config, name string) (string, llm.Profile) {
+	p, _ := llm.ProfileByName(name)
+	switch name {
+	case "gemini":
+		if cfg.GeminiModel != "" {
+			p.DefaultModel = cfg.GeminiModel
+		}
+		return cfg.GeminiAPIKey, p
+	case "deepseek", "deepseek-vision":
+		if cfg.DeepSeekBaseURL != "" {
+			p.BaseURL = cfg.DeepSeekBaseURL
+		}
+		// DEEPSEEK_MODEL so sobrescreve o chat: o modelo de visao e outro.
+		if name == "deepseek" && cfg.DeepSeekModel != "" {
+			p.DefaultModel = cfg.DeepSeekModel
+		}
+		return cfg.DeepSeekAPIKey, p
+	}
+	return "", p
+}
+
+func buildChatProvider(cfg *Config, name string) llm.ChatProvider {
+	if name == "anthropic" {
+		return llm.NewAnthropicChat(cfg.AnthropicAPIKey, "")
+	}
+	key, p := providerParts(cfg, name)
+	return llm.NewOpenAICompatChat(key, p, "")
+}
+
+func buildAnalysisProvider(cfg *Config, name string) llm.AnalysisProvider {
+	if name == "anthropic" {
+		return llm.NewAnthropicAnalysis(cfg.AnthropicAPIKey, "")
+	}
+	key, p := providerParts(cfg, name)
+	return llm.NewOpenAICompatAnalysis(key, p, "")
+}
+
+func buildReportProvider(cfg *Config, name string) llm.ReportProvider {
+	if name == "anthropic" {
+		return llm.NewAnthropicReport(cfg.AnthropicAPIKey, "")
+	}
+	key, p := providerParts(cfg, name)
+	return llm.NewOpenAICompatReport(key, p, "")
+}
+
+func buildVisionProvider(cfg *Config, name string) llm.VisionProvider {
+	if name == "anthropic" {
+		return llm.NewAnthropicVision(cfg.AnthropicAPIKey, "")
+	}
+	key, p := providerParts(cfg, name)
+	return llm.NewOpenAICompatVision(key, p, "")
 }

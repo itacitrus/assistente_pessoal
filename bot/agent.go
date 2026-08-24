@@ -35,11 +35,12 @@ type Agent struct {
 
 	// Provider abstraction (Fase 4). Operacional = Anthropic Sonnet;
 	// companion = DeepSeek (default) ou Anthropic se nao configurado.
-	chat          llm.ChatProvider     // operacional (default Anthropic Sonnet)
-	companionChat llm.ChatProvider     // idoso (default DeepSeek; fallback chat)
-	analysis      llm.AnalysisProvider // snapshot writer (Haiku)
-	report        llm.ReportProvider   // sintese pro responsavel (Sonnet)
-	vision        llm.VisionProvider   // descricao de imagem (Haiku)
+	chat          llm.ChatProvider     // operacional (usuario sem superficie de saude)
+	companionChat llm.ChatProvider     // clinico (idoso / quem toca dado de saude)
+	salesChat     llm.ChatProvider     // agente de vendas (lead, sem dado sensivel)
+	analysis      llm.AnalysisProvider // snapshot writer
+	report        llm.ReportProvider   // sintese pro responsavel
+	vision        llm.VisionProvider   // descricao de imagem
 
 	// Snapshot writer hook — interface no proprio pacote (snapshotwriter.go).
 	// Fase 5 vai injetar implementacao concreta; Fase 4 deixa o gancho.
