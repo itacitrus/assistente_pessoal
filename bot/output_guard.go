@@ -23,6 +23,7 @@ import (
 //	I3  narração de mecânica de transporte não provocada (strip silencioso)
 //	I4  display de OK_CRIADO deve aparecer verbatim na resposta (enforce)
 //	I5  carimbo de histórico ecoado no início (strip; SEMPRE ativo, todo modo)
+//	I6  caractere CJK na saída (strip; SEMPRE ativo, todo modo)
 //
 // Ações (enforce): UMA reescrita tool-less com feedback → re-checagem → strip
 // determinístico → safe-template período-correto. O guard nunca devolve vazio
@@ -66,7 +67,18 @@ const guardMinTextLen = 8
 
 // guardOutput aplica as invariantes e devolve o texto final (nunca vazio) e a
 // ação tomada ("none", "log", "regenerated", "stripped", "appended", "template").
+//
+// Envelope determinístico do transporte: sanitiza markdown que o WhatsApp não
+// renderiza. Fica FORA da cascata de propósito — vale em qualquer modo do
+// guard (inclusive off) porque não é questão de invariante, é de formato de
+// canal. O prompt já proibia `**`/`##`, mas isso dependia da obediência do
+// modelo: a Anthropic obedecia, o DeepSeek não.
 func (a *Agent) guardOutput(in guardInput, text string, regen regenerateFn) (string, string) {
+	out, action := a.guardOutputInner(in, text, regen)
+	return sanitizeForWhatsApp(out), action
+}
+
+func (a *Agent) guardOutputInner(in guardInput, text string, regen regenerateFn) (string, string) {
 	// Orçamento de latência ancorado na ENTRADA do guard, não no início do
 	// turno: o budget limita o custo do próprio regenerate. Ancorar em TC.Now
 	// desabilitaria o regenerate exatamente nos turnos pesados de tool
@@ -80,6 +92,20 @@ func (a *Agent) guardOutput(in guardInput, text string, regen regenerateFn) (str
 		a.auditGuard(in, "I5", "carimbo ecoado removido", "strip")
 	}
 	text = cleaned
+
+	// I6 — sempre ativo, em qualquer modo, como o I5. Vazamento de idioma é
+	// limitação DECLARADA pelo fornecedor do DeepSeek ("optimized for Chinese
+	// and English... may result in language mixing"). Público é idoso e o
+	// assunto é remédio: um caractere chinês quebra confiança de forma
+	// desproporcional. Strip determinístico da sentença — sem custo de
+	// regenerate, e por isso funciona também no modo log (default em prod).
+	if v := detectI6CJK(text); len(v) > 0 {
+		a.auditGuard(in, "I6", v[0].Detail, "strip")
+		text = stripSentences(text, v)
+		// Sobrou CJK solto fora de sentença detectável: remove o caractere.
+		text = cjkRe.ReplaceAllString(text, "")
+		text = strings.TrimSpace(text)
+	}
 
 	mode := a.guardModeFor(in.User)
 	if mode == guardOff || strings.TrimSpace(text) == "" {
@@ -207,6 +233,25 @@ func (a *Agent) detectViolations(in guardInput, text string) (enforceable, strip
 	enforceable = append(enforceable, detectI4DisplayCitation(text, in.ToolResults)...)
 	strippable = append(strippable, detectI3TransportNarration(text, in.UserMsg)...)
 	return enforceable, strippable
+}
+
+// cjkRe cobre CJK Unified Ideographs, Hiragana, Katakana e Hangul. NÃO pega
+// acento latino (á, ç, ã) nem emoji — só escrita do leste asiático.
+var cjkRe = regexp.MustCompile(`[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}]`)
+
+// detectI6CJK — vazamento de idioma na resposta. Ver comentário no
+// guardOutputInner sobre por que é strip sempre-ativo e não enforce.
+func detectI6CJK(text string) []guardViolation {
+	found := cjkRe.FindString(text)
+	if found == "" {
+		return nil
+	}
+	return []guardViolation{{
+		Invariant: "I6",
+		Detail:    "caractere CJK na resposta: " + found,
+		Sentence:  sentenceContaining(text, found),
+		Feedback:  "A resposta anterior tinha caractere de outro idioma. Responda inteiramente em português do Brasil.",
+	}}
 }
 
 var moonEmoji = "🌙"

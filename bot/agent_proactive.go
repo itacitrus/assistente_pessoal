@@ -77,7 +77,20 @@ func (a *Agent) RunProactive(ctx context.Context, user *User, hoursIdle int) (st
 	systemParts = a.appendMedicationPolicyPart(systemParts, user)
 	systemParts = a.appendCompanionAgoraPart(systemParts, user, tc)
 
-	res, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, systemParts)
+	// Roteia pelo mesmo criterio de sensibilidade do Run: o proativo so existe
+	// pra idoso, entao na pratica cai sempre no provider clinico. Nao usa
+	// runViaProvider porque aqui a resposta VAZIA e decisao legitima, e o
+	// runViaProvider aplica o guard (que nunca devolve vazio).
+	provider := a.chatFor(user)
+	if provider == nil {
+		// Sem provider injetado: caminho Anthropic via SDK direto.
+		return a.runProactiveAnthropic(ctx, user, tc, messages, systemParts)
+	}
+
+	res, err := a.runLoopLLM(ctx, user, provider,
+		systemPartsToLLM(systemParts),
+		buildMessagesLLM(history, syntheticPrompt, tc.Now, tc.Loc),
+		toolDefsToLLM(buildToolDefinitions()), "proactive")
 	if err != nil {
 		return "", fmt.Errorf("agent proactive: %w", err)
 	}
@@ -96,7 +109,7 @@ func (a *Agent) RunProactive(ctx context.Context, user *User, hoursIdle int) (st
 		User: user, TC: tc, UserMsg: "",
 		ToolsCalled: res.ToolsCalled, ToolResults: res.ToolResults,
 		Engine: "proactive",
-	}, res.Text, a.anthropicRewriteFn(ctx, user, res.Messages, systemParts, anthropic.ModelClaudeSonnet4Dot6))
+	}, res.Text, a.llmRewriteFn(ctx, provider, systemPartsToLLM(systemParts), res.Messages))
 	if action != "none" {
 		log.Printf("[%s] guard action=%s (proactive)", user.Name, action)
 	}
@@ -110,6 +123,34 @@ func (a *Agent) RunProactive(ctx context.Context, user *User, hoursIdle int) (st
 	// Nao persiste aqui: a mensagem proativa entra em conversation_history no
 	// transporte (Handler.persistOutbound) quando o scheduler a envia. O
 	// synthetic prompt [SISTEMA] nunca eh enviado, entao nunca eh persistido.
+	return response, nil
+}
+
+// runProactiveAnthropic e o caminho legado via SDK Anthropic direto, usado
+// apenas quando nenhum ChatProvider foi injetado (testes que constroem o
+// Agent sem WithProviders). Preserva o comportamento anterior a migracao.
+func (a *Agent) runProactiveAnthropic(ctx context.Context, user *User, tc *TurnContext, messages []anthropic.Message, systemParts []anthropic.MessageSystemPart) (string, error) {
+	res, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, systemParts)
+	if err != nil {
+		return "", fmt.Errorf("agent proactive: %w", err)
+	}
+	if strings.TrimSpace(res.Text) == "" {
+		log.Printf("[%s] RunProactive: agente decidiu nao puxar conversa", user.Name)
+		return "", nil
+	}
+	response, action := a.guardOutput(guardInput{
+		User: user, TC: tc, UserMsg: "",
+		ToolsCalled: res.ToolsCalled, ToolResults: res.ToolResults,
+		Engine: "proactive",
+	}, res.Text, a.anthropicRewriteFn(ctx, user, res.Messages, systemParts, anthropic.ModelClaudeSonnet4Dot6))
+	if action != "none" {
+		log.Printf("[%s] guard action=%s (proactive)", user.Name, action)
+	}
+	response = strings.TrimSpace(response)
+	if response == "" {
+		log.Printf("[%s] RunProactive: agente decidiu nao puxar conversa", user.Name)
+		return "", nil
+	}
 	return response, nil
 }
 

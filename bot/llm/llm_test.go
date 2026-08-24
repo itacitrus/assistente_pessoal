@@ -172,7 +172,7 @@ func TestToAnthropicMessage_UnsupportedType(t *testing.T) {
 
 func TestToOpenAIMessage_TextOnly(t *testing.T) {
 	m := Message{Role: RoleUser, Content: []ContentBlock{{Type: "text", Text: "oi"}}}
-	out, err := toOpenAIMessage(m)
+	out, err := toOpenAIMessage(m, ProfileDeepSeek())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestToOpenAIMessage_AssistantToolUse(t *testing.T) {
 			{Type: "tool_use", ToolUseID: "tool-1", ToolName: "buscar", ToolInput: json.RawMessage(`{"q":"x"}`)},
 		},
 	}
-	out, err := toOpenAIMessage(m)
+	out, err := toOpenAIMessage(m, ProfileDeepSeek())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestToOpenAIMessage_ToolResultEmittedAsRoleTool(t *testing.T) {
 			{Type: "tool_result", ToolUseID: "tool-1", ToolResult: `{"ok":true}`},
 		},
 	}
-	out, err := toOpenAIMessage(m)
+	out, err := toOpenAIMessage(m, ProfileDeepSeek())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestToOpenAIMessage_RejectsImage(t *testing.T) {
 		Role:    RoleUser,
 		Content: []ContentBlock{{Type: "image", ImageMedia: "image/jpeg", ImageData: "AAAA"}},
 	}
-	if _, err := toOpenAIMessage(m); err == nil {
+	if _, err := toOpenAIMessage(m, ProfileDeepSeek()); err == nil {
 		t.Fatal("DeepSeek-chat should not accept image content")
 	}
 }

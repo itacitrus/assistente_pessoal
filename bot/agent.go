@@ -35,11 +35,12 @@ type Agent struct {
 
 	// Provider abstraction (Fase 4). Operacional = Anthropic Sonnet;
 	// companion = DeepSeek (default) ou Anthropic se nao configurado.
-	chat          llm.ChatProvider     // operacional (default Anthropic Sonnet)
-	companionChat llm.ChatProvider     // idoso (default DeepSeek; fallback chat)
-	analysis      llm.AnalysisProvider // snapshot writer (Haiku)
-	report        llm.ReportProvider   // sintese pro responsavel (Sonnet)
-	vision        llm.VisionProvider   // descricao de imagem (Haiku)
+	chat          llm.ChatProvider     // operacional (usuario sem superficie de saude)
+	companionChat llm.ChatProvider     // clinico (idoso / quem toca dado de saude)
+	salesChat     llm.ChatProvider     // agente de vendas (lead, sem dado sensivel)
+	analysis      llm.AnalysisProvider // snapshot writer
+	report        llm.ReportProvider   // sintese pro responsavel
+	vision        llm.VisionProvider   // descricao de imagem
 
 	// Snapshot writer hook — interface no proprio pacote (snapshotwriter.go).
 	// Fase 5 vai injetar implementacao concreta; Fase 4 deixa o gancho.
@@ -179,13 +180,21 @@ func (a *Agent) Run(ctx context.Context, user *User, message string, images []Im
 	systemParts = a.appendCompanionPharmaPart(systemParts, user, message)
 	systemParts = a.appendCompanionAgoraPart(systemParts, user, tc)
 
-	// Idoso roteia para o companion provider (DeepSeek em prod). O loop usa a
-	// abstracao llm.ChatProvider, reaproveitando os mesmos toolHandlers. Imagens
-	// sao pre-descritas via VisionProvider (Haiku) e injetadas como texto, pois
-	// o DeepSeek-chat nao tem vision. Fallback (companionChat nil) cai no loop
-	// Anthropic abaixo.
-	if user.Type == UserTypeIdoso && a.companionChat != nil {
-		return a.runCompanion(ctx, user, message, images, systemParts, tc)
+	// Caminho unico apos a migracao DeepSeek: todo turno passa pela abstracao
+	// llm.ChatProvider. O provider vem do roteador por sensibilidade
+	// (chatFor): usuario que PODERIA tocar dado de saude vai pro provider
+	// clinico, o resto vai pro operacional. Ver llm_router.go.
+	//
+	// O caminho Anthropic abaixo (SDK direto) so roda quando NENHUM provider
+	// foi injetado — testes legados e configuracao incompleta.
+	if provider := a.chatFor(user); provider != nil {
+		return a.runViaProvider(ctx, user, message, images, systemParts, tc, provider, a.engineNameFor(user))
+	}
+	if a.client == nil {
+		// Nem provider injetado nem SDK Anthropic: erro claro em vez de nil
+		// dereference. Em prod nao acontece (NewAgent sempre monta o client),
+		// mas o turno de um usuario nao pode depender disso.
+		return "", fmt.Errorf("agent: nenhum LLM configurado (sem ChatProvider e sem cliente Anthropic)")
 	}
 
 	res, err := a.runLoop(ctx, user, messages, anthropic.ModelClaudeSonnet4Dot6, systemParts)

@@ -886,7 +886,9 @@ func handleExtrairReceitaImagem(ctx context.Context, agent *Agent, user *User, p
 		// catalogo. So anexa quando ha correspondencia forte (>=0.7) e ela
 		// difere do que foi lido — sinal pro agente CONFIRMAR a correcao, nunca
 		// aplicar sozinho. Falha/catalogo vazio: segue sem sugestao.
-		if matches, err := agent.db.ResolveDrug(it.Name, 1); err == nil && len(matches) > 0 {
+		matches, err := agent.db.ResolveDrug(it.Name, 1)
+		switch {
+		case err == nil && len(matches) > 0:
 			top := matches[0]
 			suggestion := top.CommercialName
 			if top.Concentration != "" {
@@ -897,6 +899,13 @@ func handleExtrairReceitaImagem(ctx context.Context, agent *Agent, user *User, p
 			if top.Confidence >= 0.7 && differs {
 				line += fmt.Sprintf(" [catálogo sugere: %s — confirmar com o usuário]", suggestion)
 			}
+		case err == nil && agent.db.drugCatalogPopulated():
+			// NENHUMA correspondencia no catalogo populado. Pode ser leitura
+			// ruim do OCR ou nome inventado pelo modelo — e com visao limitada
+			// a 384 tokens/imagem esse caso ficou mais provavel. Sem esta
+			// anotacao o item sai identico a um item lido corretamente, e o
+			// idoso pode so dizer "sim" pra um remedio que nunca existiu.
+			line += " [sem correspondência no catálogo — confirmar o nome com o usuário antes de cadastrar]"
 		}
 		sb.WriteString(line + "\n")
 	}

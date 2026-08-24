@@ -662,6 +662,11 @@ func (db *DB) migrate() error {
 	if err := db.migrateIntakeStatusCheck(); err != nil {
 		return fmt.Errorf("intake status check migration: %w", err)
 	}
+
+	// Contabilidade de LLM (migracao DeepSeek). Ver db_llm_usage.go.
+	if _, err := db.conn.Exec(llmUsageSchema); err != nil {
+		return fmt.Errorf("llm_usage migration: %w", err)
+	}
 	return nil
 }
 

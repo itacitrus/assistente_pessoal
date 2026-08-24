@@ -299,6 +299,11 @@ func humanizeIdleHours(h int) string {
 // Idempotencia: writer faz UPSERT por (user_id, snapshot_date).
 const psychCatchupWindowDays = 7
 
+// psychBackoff segura retentativas de snapshot que estao falhando. Ver
+// snapshot_backoff.go: sem isso, provider fora do ar vira ~21 chamadas
+// condenadas por hora (1.818 erros em 72h em producao).
+var psychBackoff = newSnapshotBackoff()
+
 func (s *Scheduler) runDailyPsychSnapshotCatchup() {
 	if !shouldRunPhase5("psych_snapshot_catchup", 60*time.Minute) {
 		return
@@ -322,7 +327,13 @@ func (s *Scheduler) runDailyPsychSnapshotCatchup() {
 			continue
 		}
 		for i := range elders {
-			s.catchupSnapshotForElder(writer, &elders[i], day)
+			if err := s.catchupSnapshotForElder(writer, &elders[i], day); err != nil && shouldAbortSweep(err) {
+				// Credencial/saldo nao melhora no proximo idoso da lista.
+				// Abortar a varredura inteira e o que impede a enxurrada de
+				// erros identicos no log.
+				log.Printf("Scheduler[psych_catchup]: abortando varredura — erro de credencial/saldo: %v", err)
+				return
+			}
 		}
 	}
 }
@@ -450,28 +461,33 @@ func (s *Scheduler) runDailyInsightsRefresh() {
 //
 // Reusa SnapshotWriter pra eliminar duplicacao com o caminho do handler —
 // MaybeUpdateSnapshot ja faz toda a pipeline.
-func (s *Scheduler) catchupSnapshotForElder(writer SnapshotWriter, elder *User, day time.Time) {
+func (s *Scheduler) catchupSnapshotForElder(writer SnapshotWriter, elder *User, day time.Time) error {
 	tz := s.db.GetEventTimezone(elder.ID, day)
 	if tz == nil {
 		tz = BRT()
 	}
 	localDay := day.In(tz)
 	dayDate := time.Date(localDay.Year(), localDay.Month(), localDay.Day(), 0, 0, 0, 0, tz)
+	dayKey := dayDate.Format(dateLayout)
+
+	if psychBackoff.ShouldSkip(elder.ID, dayKey) {
+		return nil // ainda em janela de espera, ou ja desistimos deste dia
+	}
 
 	existing, err := s.db.GetSnapshot(elder.ID, dayDate)
 	if err != nil {
 		log.Printf("Scheduler[psych_catchup] %s: GetSnapshot: %v", elder.Name, err)
-		return
+		return nil
 	}
 	if existing != nil && existing.Confidence >= 2 {
-		return // ja temos snapshot razoavel
+		return nil // ja temos snapshot razoavel
 	}
 
 	// Defesa em profundidade: se consent revoked em todos os links, skip.
 	guardians, _ := s.db.GetGuardians(elder.ID)
 	if len(guardians) > 0 && allGuardiansConsentRevoked(s.db, guardians) {
 		log.Printf("Scheduler[psych_catchup] %s: consent revoked em todos os links — skip", elder.Name)
-		return
+		return nil
 	}
 
 	// GetUsersWithMessagesOnDay usa janela com folga (+/-14h) pra tolerar fuso,
@@ -482,10 +498,10 @@ func (s *Scheduler) catchupSnapshotForElder(writer SnapshotWriter, elder *User, 
 	msgs, err := s.db.GetMessagesSinceForUser(elder.ID, dayDate)
 	if err != nil {
 		log.Printf("Scheduler[psych_catchup] %s: GetMessagesSinceForUser: %v", elder.Name, err)
-		return
+		return nil
 	}
 	if len(filterMessagesInLocalDay(msgs, dayDate, tz)) == 0 {
-		return // sem conversa nesse dia local — nada a backfillar
+		return nil // sem conversa nesse dia local — nada a backfillar
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -493,8 +509,11 @@ func (s *Scheduler) catchupSnapshotForElder(writer SnapshotWriter, elder *User, 
 	if err := writer.UpdateSnapshotForDay(ctx, elder.ID, dayDate); err != nil {
 		// Audit ja foi feito pelo writer; aqui so log nivel scheduler.
 		log.Printf("Scheduler[psych_catchup] %s: UpdateSnapshotForDay: %v", elder.Name, err)
-		return
+		psychBackoff.RecordFailure(elder.ID, dayKey)
+		return err
 	}
+	psychBackoff.RecordSuccess(elder.ID, dayKey)
+	return nil
 }
 
 // allGuardiansConsentRevoked retorna true se NAO ha nenhum link com
