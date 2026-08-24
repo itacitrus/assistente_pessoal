@@ -57,6 +57,10 @@ type Config struct {
 	// mesmo em modo log (admin primeiro).
 	OutputGuardMode    string
 	GuardEnforcePhones []string
+
+	// AdminPhones recebe alertas operacionais (ex: saldo/credencial de LLM
+	// recusada). Fonte: ADMIN_PHONES (CSV) com fallback ADMIN_PHONE.
+	AdminPhones []string
 }
 
 func LoadConfig() (*Config, error) {
@@ -129,6 +133,8 @@ func LoadConfig() (*Config, error) {
 			return nil, fmt.Errorf("%s invalido %q (use deepseek|deepseek-vision|gemini|anthropic)", env, prov)
 		}
 	}
+
+	cfg.AdminPhones = resolveAdminPhones()
 
 	cfg.OutputGuardMode = strings.ToLower(strings.TrimSpace(envOrDefault("OUTPUT_GUARD_MODE", "log")))
 	if cfg.OutputGuardMode != "off" && cfg.OutputGuardMode != "log" && cfg.OutputGuardMode != "enforce" {

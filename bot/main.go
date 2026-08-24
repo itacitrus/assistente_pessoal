@@ -182,6 +182,18 @@ func runBot() {
 	analysis := buildAnalysisProvider(cfg, cfg.LLMProviderAnalysis)
 	report := buildReportProvider(cfg, cfg.LLMProviderReport)
 	vision := buildVisionProvider(cfg, cfg.LLMProviderVision)
+
+	// Fallback POR REQUEST (nao por boot): se o provider primario cair em
+	// runtime, o turno seguinte tenta o reserva em vez de ficar morto ate
+	// alguem reiniciar o container. Reserva = Anthropic quando ha chave, senao
+	// nada (NewFallbackChat devolve o primario puro).
+	var reserva llm.ChatProvider
+	if cfg.AnthropicAPIKey != "" {
+		reserva = llm.NewAnthropicChat(cfg.AnthropicAPIKey, "")
+	}
+	opChat = NewFallbackChat(opChat, reserva, agent.llmFailoverAlert("operacional"))
+	clinicoChat = NewFallbackChat(clinicoChat, reserva, agent.llmFailoverAlert("clinico"))
+
 	agent.WithProviders(opChat, clinicoChat, analysis, report, vision)
 	agent.salesChat = buildChatProvider(cfg, cfg.LLMProviderSales)
 
