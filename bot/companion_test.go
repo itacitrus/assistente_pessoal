@@ -96,17 +96,8 @@ func uniqueSuffix(testName, name string) string {
 	return out
 }
 
-// fakeChat eh um stub de llm.ChatProvider — usado em TestPickChat.
-type fakeChat struct {
-	name string
-}
-
-func (f *fakeChat) Name() string         { return f.name }
-func (f *fakeChat) SupportsTools() bool  { return true }
-func (f *fakeChat) SupportsVision() bool { return false }
-func (f *fakeChat) Chat(_ context.Context, _ llm.ChatRequest) (llm.ChatResponse, error) {
-	return llm.ChatResponse{}, nil
-}
+// fakeChat vive em llm_router_test.go — stub completo de llm.ChatProvider,
+// compartilhado pelos testes de roteamento, convergencia e fallback.
 
 // =========================================================================
 // 13.1 / 13.2 — Persona switch e nao-vazamento.
