@@ -37,22 +37,25 @@ func (w *Watchdog) Start() {
 				continue
 			}
 
-			if !client.IsConnected() {
+			// IsLoggedIn (socket + autenticado), não IsConnected: num 405 o socket
+			// abre e Connect() devolve nil, mas o servidor recusa o login — o
+			// watchdog antigo reportou "reconnected successfully" 440x com o bot mudo.
+			if !client.IsLoggedIn() {
 				consecutiveFails++
-				log.Printf("Watchdog: WhatsApp disconnected (attempt %d)", consecutiveFails)
-
-				err := client.Connect()
-				if err != nil {
-					log.Printf("Watchdog: reconnect failed: %v", err)
-					if consecutiveFails >= 3 {
-						log.Printf("Watchdog: ALERT — 3 consecutive reconnect failures")
-					}
-					continue
+				log.Printf("Watchdog: WhatsApp not logged in (attempt %d)", consecutiveFails)
+				if consecutiveFails >= 3 {
+					log.Printf("Watchdog: ALERT — WhatsApp fora há %d verificações seguidas", consecutiveFails)
 				}
 
-				log.Println("Watchdog: reconnected successfully")
-				consecutiveFails = 0
+				client.Disconnect() // socket meio-aberto faria Connect devolver ErrAlreadyConnected
+				if err := client.Connect(); err != nil {
+					log.Printf("Watchdog: reconnect failed: %v", err)
+				}
+				// Sucesso só é confirmado no próximo tick, via IsLoggedIn.
 			} else {
+				if consecutiveFails > 0 {
+					log.Printf("Watchdog: WhatsApp logged in again after %d failed checks", consecutiveFails)
+				}
 				consecutiveFails = 0
 			}
 		}

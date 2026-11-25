@@ -96,6 +96,8 @@ func (h *Handler) HandleEvent(evt interface{}) {
 		h.handleMessage(v)
 	case *events.HistorySync:
 		h.handleHistorySync(v)
+	case *events.ClientOutdated:
+		go h.handleClientOutdated() // fora da goroutine de eventos: faz HTTP e Connect
 	}
 }
 
